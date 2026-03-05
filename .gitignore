@@ -42,3 +42,7 @@ Thumbs.db
 *.pem
 *.key
 .env
+
+# External repos (cloned separately)
+claude-dev-forge/
+kc_test/
