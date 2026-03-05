@@ -1,0 +1,44 @@
+# Build outputs
+build-*/
+tmp/
+sstate-cache/
+downloads/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Compiled
+*.o
+*.d
+*.elf
+*.bin
+*.hex
+*.map
+*.lst
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ML models (large binaries)
+models/*/exported/*.onnx
+models/*/exported/*.tflite
+models/*/dataset/
+
+# Yocto
+build-ortho-bender/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+*.pem
+*.key
+.env

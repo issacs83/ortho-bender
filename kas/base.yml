@@ -1,0 +1,43 @@
+header:
+  version: 14
+
+machine: ortho-bender-imx8mp
+distro: ortho-bender
+
+repos:
+  meta-ortho-bender:
+    path: ${KAS_WORK_DIR}/../meta-ortho-bender
+
+  meta-imx:
+    url: https://github.com/nxp-imx/meta-imx.git
+    branch: lf-6.6.36-2.1.0
+    layers:
+      meta-imx/meta-bsp:
+      meta-imx/meta-sdk:
+      meta-imx/meta-ml:
+
+  poky:
+    url: https://git.yoctoproject.org/poky
+    branch: scarthgap
+    layers:
+      meta:
+      meta-poky:
+
+  meta-openembedded:
+    url: https://git.openembedded.org/meta-openembedded
+    branch: scarthgap
+    layers:
+      meta-oe:
+      meta-networking:
+      meta-python:
+      meta-multimedia:
+
+  meta-qt6:
+    url: https://code.qt.io/yocto/meta-qt6.git
+    branch: 6.7
+
+local_conf_header:
+  base: |
+    SSTATE_DIR = "${TOPDIR}/../sstate-cache"
+    DL_DIR = "${TOPDIR}/../downloads"
+    PACKAGE_CLASSES = "package_ipk"

@@ -1,0 +1,14 @@
+header:
+  version: 14
+  includes:
+    - base.yml
+
+local_conf_header:
+  prod: |
+    # No debug tweaks in production
+    EXTRA_IMAGE_FEATURES:remove = "debug-tweaks"
+    # Security hardening
+    DISTRO_FEATURES:append = " seccomp"
+
+target:
+  - ortho-bender-image-prod

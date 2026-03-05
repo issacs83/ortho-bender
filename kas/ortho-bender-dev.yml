@@ -1,0 +1,13 @@
+header:
+  version: 14
+  includes:
+    - base.yml
+
+local_conf_header:
+  dev: |
+    EXTRA_IMAGE_FEATURES += "debug-tweaks tools-debug tools-sdk"
+    IMAGE_INSTALL:append = " gdb strace ltrace"
+    IMAGE_INSTALL:append = " python3 python3-pip"
+
+target:
+  - ortho-bender-image-dev

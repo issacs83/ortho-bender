@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bitbake *)",
+      "Bash(kas *)",
+      "Bash(uuu *)",
+      "Bash(sudo uuu *)",
+      "Bash(openocd *)",
+      "Bash(arm-none-eabi-* *)",
+      "Bash(west *)",
+      "Bash(minicom *)",
+      "Bash(picocom *)",
+      "Bash(pytest *)",
+      "Bash(python3 tools/*)"
+    ]
+  },
+  "preferences": {
+    "language": "ko"
+  }
+}

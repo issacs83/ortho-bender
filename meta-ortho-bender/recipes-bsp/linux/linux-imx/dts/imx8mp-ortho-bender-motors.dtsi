@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Motor control subsystem DTS overlay
+ * Stepper/servo motor GPIOs, PWM, SPI for motor drivers
+ */
+
+/* TODO: Define motor control pin assignments
+ *
+ * Feed axis (stepper):
+ *   - STEP: GPIOx_y (timer output compare)
+ *   - DIR:  GPIOx_y
+ *   - EN:   GPIOx_y
+ *
+ * Rotate axis (stepper):
+ *   - STEP: GPIOx_y
+ *   - DIR:  GPIOx_y
+ *   - EN:   GPIOx_y
+ *
+ * Bend axis (servo):
+ *   - PWM:  PWMx (or CAN for external servo drive)
+ *   - ENCODER_A: GPIOx_y
+ *   - ENCODER_B: GPIOx_y
+ *
+ * E-STOP:
+ *   - GPIO interrupt (highest priority)
+ *
+ * Note: Actual pin assignments will be determined during
+ * custom board design. Using EVK pins for initial development.
+ */

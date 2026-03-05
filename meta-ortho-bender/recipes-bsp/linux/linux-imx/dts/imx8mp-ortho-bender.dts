@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Device Tree Source for Ortho-Bender Wire Bending Machine
+ * Based on NXP i.MX8MP
+ *
+ * Copyright (C) 2024 Ortho-Bender Project
+ */
+
+/dts-v1/;
+
+#include "imx8mp-evk.dts"
+
+/ {
+	model = "Ortho-Bender Wire Bending Machine";
+	compatible = "ortho-bender,imx8mp", "fsl,imx8mp";
+};
+
+/* Motor control subsystem */
+#include "imx8mp-ortho-bender-motors.dtsi"
+
+/* Sensor subsystem */
+#include "imx8mp-ortho-bender-sensors.dtsi"
+
+/* Camera subsystem */
+#include "imx8mp-ortho-bender-camera.dtsi"

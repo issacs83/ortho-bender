@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Sensor subsystem DTS overlay
+ * I2C force sensor, temperature sensor, ADC configuration
+ */
+
+/* TODO: Define sensor pin assignments
+ *
+ * Force sensor (load cell + ADC):
+ *   - I2C or SPI ADC (e.g., HX711, ADS1115)
+ *
+ * Temperature sensor:
+ *   - I2C (e.g., TMP117 for wire temperature)
+ *   - Thermocouple ADC for heater temperature
+ *
+ * Limit switches:
+ *   - GPIO inputs with pull-up
+ *   - Feed home, Rotate home, Bend home
+ *
+ * Note: Actual pin assignments TBD during board design
+ */
