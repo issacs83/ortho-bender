@@ -161,96 +161,138 @@ tmc5160_driver.c/.h
 6. Periodic: Compare against known stop for drift correction
 ```
 
-## Revised Timeline (12-14 months)
+## Development Strategy: EVK-First
 
-### Phase 1-A: Foundation (Month 1-3)
-
-**Goal: HW platform + basic motor + QMS start**
+All features are verified on commercial EVK boards before custom board design.
+Custom PCB is designed only after feature set is proven on EVK.
 
 ```
-Month 1: Procurement + Regulatory Start
-  [] SoM EVK order (Variscite DART-MX8MP + Symphony carrier)
-  [] TMC5160-BOB eval boards x2
-  [] NEMA 17 stepper + planetary gear
-  [] IMX219 camera module
-  [] 7" LVDS touch display
+EVK Hardware:
+  - i.MX8MP EVK (8MPLUSLPD4-EVK) -- already available
+  - TMC5160-BOB eval board x2 (SPI breakout)
+  - NEMA 17 stepper + planetary gear
+  - IMX219 camera module (MIPI-CSI)
+  - 7" LVDS touch display
+
+EVK Wiring (no isolation in EVK phase):
+  i.MX8MP EVK (M7 ECSPI)
+    |-- SPI bus (SCLK, MOSI, MISO)
+    |-- GPIO CS0 --> TMC5160-BOB #1 (FEED)
+    |-- GPIO CS1 --> TMC5160-BOB #2 (BEND)
+    |-- GPIO      --> E-STOP button
+    |-- GPIO      --> Solenoid MOSFET (breadboard)
+    |-- MIPI-CSI  --> IMX219 camera
+    |-- LVDS      --> 7" touch display
+
+Note: Galvanic isolation (ISO7741) is NOT used in EVK phase.
+      Isolation is added in custom board design phase.
+```
+
+## Revised Timeline (12-14 months)
+
+### Phase 1-A: EVK Feature Development (Month 1-3)
+
+**Goal: All core features verified on EVK + TMC5160-BOB**
+
+```
+Month 1: EVK Setup + SW Foundation
+  [] i.MX8MP EVK setup (already available)
+  [] TMC5160-BOB eval boards x2 order
+  [] NEMA 17 stepper + planetary gear order
+  [] IMX219 camera module order
+  [] Yocto BSP build (kas, scarthgap lf-6.6.36-2.1.0)
+  [] M7 FreeRTOS boot verify
+  [] A53 <-> M7 RPMsg communication verify
+  [] Fix ipc_protocol.h critical issues (payload size, axis count, CRC)
+  [] Fix timestamp_us overflow
   [] QMS framework setup (design control, risk mgmt)
   [] FDA classification research + predicate device search
   [] FTO patent search initiation ($5K-15K)
   [] DHF writing begins (concurrent with development)
 
-Month 2: SW Foundation + Motor Standalone Test
-  [] Yocto BSP build (kas)
-  [] M7 FreeRTOS boot + RPMsg verify
-  [] TMC5160 SPI comm test on EVK
-    - Register read/write through ISO7741
-    - Position mode basic operation
-    - StallGuard2 threshold initial tuning
-  [] Camera V4L2 streaming verify
-  [] Fix ipc_protocol.h critical issues (payload size, axis count)
-  [] FTO results review
-
-Month 3: Mechanical Prototype + Board Design
-  [] 3D printed mechanism v1 (bend die + roller + clamp)
-  [] Motor + gearbox assembly
-  [] TMC5160 -> motor direct drive test
-    - S-curve acceleration tuning (internal ramp generator)
+Month 2: TMC5160 SPI + Motor Control on EVK
+  [] M7 ECSPI pin assignment (avoid A53 conflict, see evk-remoteproc-analysis.md)
+  [] TMC5160 SPI comm test (direct wire, no isolation)
+    - Register read/write verify
+    - GCONF, CHOPCONF, IHOLD_IRUN init sequence
+    - Position mode (XTARGET) basic operation
+  [] TMC5160 driver module (tmc5160_driver.c/.h)
+    - SPI 40-bit transaction abstraction
+    - Internal ramp generator control (VMAX, AMAX, DMAX)
+    - StallGuard2 threshold tuning
+    - DRV_STATUS/SG_RESULT monitoring
+  [] Motor standalone tests on TMC5160-BOB
+    - S-curve acceleration profile tuning
     - Compound homing sequence validation
     - Wire insertion detection (Nudge Test)
+  [] Camera V4L2 streaming verify on EVK
+  [] Unit tests for TMC5160 driver (mock SPI, host build)
+  [] FTO results review
+
+Month 3: Full Feature Integration on EVK
+  [] RPMsg command protocol implementation
+    - A53 -> M7: bend_point_t commands via IPC
+    - M7 -> A53: status/torque data reporting
+  [] Solenoid control (GPIO -> MOSFET on breadboard)
+  [] CAM engine: complete discretize_curve() + simulate()
+  [] Camera pipeline (GStreamer: MIPI-CSI -> ISP -> preview)
+  [] OpenCV: ROI crop + Canny + Hough (angle measurement)
+  [] Qt6 UI prototype (live preview, material select, bend/stop/home)
+  [] Wire material presets (SS/TMA/NiTi) end-to-end test
+  [] 3D printed mechanism v1 (bend die + roller + clamp)
+  [] Motor + gearbox assembly + TMC5160-BOB wired to EVK
+  [] FIRST BENDING TEST ON EVK!
+    - Single bend point, manual wire feed
+    - Verify: SPI -> TMC5160 -> motor -> bend -> camera measure
+    - Target: end-to-end pipeline working (precision not critical yet)
+```
+
+### Phase 1-B: Mechanical Integration + Custom Board (Month 4-6)
+
+**Goal: Custom board design informed by EVK results, first retainer (+-2 deg)**
+
+```
+Month 4: Mechanism Refinement + Springback on EVK
+  [] Mechanism v2 (improved from v1 feedback)
+  [] Springback LUT construction on EVK
+    - SS 0.016x0.022 baseline: 10-120 deg range, 5 deg intervals
+    - Camera-based direct measurement
+  [] Adaptive springback compensation (adaptive_gain)
+  [] Multi-point bending sequence test
+    - 3-to-3 fixed retainer (8 bend points)
+    - Target: +-2 deg precision on EVK
+  [] Lighting control (backlight/ring LED GPIO)
+  [] Custom board requirements freeze (based on EVK lessons)
+
+Month 5: Custom Board Design + Order
   [] Main board carrier PCB design (4-layer)
     - SoM connector + MIPI-CSI + LVDS
     - ISO7741 x2 isolation circuit
     - TLP291 photocoupler (SOL + ESTOP)
+    - HW watchdog (TPS3823)
   [] Motor board PCB design (2-layer)
     - TMC5160 x2 (+ Phase 2 footprints x2 unpopulated)
     - MOSFET solenoid driver
-    - HW watchdog (TPS3823)
     - 24V->5V DCDC
+    - DRV_ENN hard-wire to E-STOP
+    - DIAG0/DIAG1 breakout
+    - 14-16 pin inter-board connector
   [] PCB order (JLCPCB/PCBWay, ~2 week lead)
-```
+  [] Continue SW development on EVK in parallel
 
-### Phase 1-B: Integration + First Bending (Month 4-6)
-
-**Goal: 2D bending + camera vision basic pipeline (+-2 deg)**
-
-```
-Month 4: Board Assembly + HW Integration
+Month 6: Custom Board Bring-up
   [] Main board + motor board assembly + power-on test
-  [] Isolated SPI verify (through ISO7741)
+  [] Isolated SPI verify (ISO7741 x2)
   [] E-STOP dual-path verify (SW ISR + HW DRV_ENN)
   [] HW watchdog verify (TPS3823)
   [] Dual SMPS power stability test
-  [] Mechanism v2 assembly (with boards)
-
-Month 5: M7 Firmware Core
-  [] TMC5160 driver complete (tmc5160_driver.c/.h)
-    - SPI read/write (isolated)
-    - Motion commands (position/velocity/stop via internal ramp)
-    - StallGuard2 compound homing
-    - Wire insertion detection (Nudge Test)
-    - Torque monitoring (SG_RESULT, CS_ACTUAL)
-  [] Solenoid control (CLAMP ON/OFF)
-  [] RPMsg command protocol implementation
-    - A53 -> M7: bend_point_t commands
-    - M7 -> A53: status/torque data reporting
-  [] Wire material presets (SS/TMA/NiTi)
-  [] Unit tests for TMC5160 driver (mock SPI)
-
-Month 6: A53 Software + First Bending
-  [] Camera pipeline (GStreamer: MIPI-CSI -> ISP -> preview)
-  [] OpenCV: ROI crop + Canny + Hough (angle measurement)
-  [] Lighting control (backlight/ring LED GPIO)
-  [] Qt6 UI prototype
-    - Live camera preview
-    - Wire material selection
-    - Bend start/stop/home buttons
-    - SG/CS real-time graph
-  [] Springback LUT construction
-    - SS 0.016x0.022 baseline: 10-120 deg range, 5 deg intervals
-    - Camera-based direct measurement
-  [] FIRST RETAINER BENDING TEST!
+  [] Port all EVK-verified firmware to custom board
+    - SPI pin reassignment (if changed from EVK)
+    - Isolation timing validation (ISO7741 propagation delay)
+  [] Mechanism v2 assembly with custom boards
+  [] FIRST RETAINER BENDING ON CUSTOM BOARD!
     - 3-to-3 fixed retainer (8 bend points)
-    - Target: +-2 deg precision
+    - Target: +-2 deg precision (matching EVK result)
 ```
 
 ### Phase 1-C: Precision + Product Polish (Month 7-9)
