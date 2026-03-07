@@ -52,7 +52,9 @@ endif()
 
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/board
+    ${CMAKE_CURRENT_SOURCE_DIR}/hal
     ${CMAKE_CURRENT_SOURCE_DIR}/source
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/drivers
     ${CMAKE_CURRENT_SOURCE_DIR}/../shared
 )
 
