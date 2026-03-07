@@ -28,39 +28,43 @@ sudo uuu -b emmc_all imx-boot ortho-bender-image-dev.wic
 
 ### Architecture
 ```
-┌──────────────────────────────────────────────────────┐
-│                    i.MX8MP SoC                        │
-│                                                       │
-│  ┌─────────────────────────┐  ┌──────────────────┐   │
-│  │   Cortex-A53 x4 (Linux) │  │  Cortex-M7       │   │
-│  │                         │  │  (FreeRTOS)      │   │
-│  │  ┌─────────┐ ┌────────┐│  │                   │   │
-│  │  │ Qt6 GUI │ │ PatDB  ││  │ ┌──────────────┐ │   │
-│  │  └─────────┘ └────────┘│  │ │Motion Control│ │   │
-│  │  ┌─────────┐ ┌────────┐│  │ │  - PID       │ │   │
-│  │  │   CAM   │ │  NPU   ││  │ │  - Stepper   │ │   │
-│  │  │ Engine  │ │Infer.  ││  │ │  - Servo     │ │   │
-│  │  └─────────┘ └────────┘│  │ └──────────────┘ │   │
-│  │  ┌─────────┐           │  │ ┌──────────────┐ │   │
-│  │  │ Vision  │           │  │ │   Sensors    │ │   │
-│  │  │Pipeline │           │  │ │ Force/Enc/T  │ │   │
-│  │  └─────────┘           │  │ └──────────────┘ │   │
-│  │         RPMsg IPC      │  │ ┌──────────────┐ │   │
-│  │  <────────────────────>│  │ │   Safety     │ │   │
-│  │                         │  │ │ E-STOP/WDT  │ │   │
-│  └─────────────────────────┘  │ └──────────────┘ │   │
-│                                └──────────────────┘   │
-│  ┌────────────┐                                       │
-│  │ NPU 2.3T   │  Springback ML + Defect Detection    │
-│  └────────────┘                                       │
-└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                       i.MX8MP SoC                        │
+│                                                          │
+│  ┌──────────────────────────┐  ┌───────────────────────┐ │
+│  │  Cortex-A53 x4 (Linux)   │  │  Cortex-M7 (FreeRTOS) │ │
+│  │                          │  │                       │ │
+│  │  ┌──────────┐ ┌────────┐│  │ ┌───────────────────┐ │ │
+│  │  │ Qt6 GUI  │ │ PatDB  ││  │ │Trajectory Manager │ │ │
+│  │  └──────────┘ └────────┘│  │ │ (100 Hz loop)     │ │ │
+│  │  ┌──────────┐ ┌────────┐│  │ └───────────────────┘ │ │
+│  │  │  CAM     │ │  NPU   ││  │ ┌───────────────────┐ │ │
+│  │  │ Engine   │ │ Infer. ││  │ │TMC5160 SPI Driver │ │ │
+│  │  └──────────┘ └────────┘│  │ │ x4 axes (StallG2) │ │ │
+│  │  ┌──────────┐           │  │ └───────────────────┘ │ │
+│  │  │ Vision   │           │  │ ┌───────────────────┐ │ │
+│  │  │ Pipeline │           │  │ │TMC Diagnostics    │ │ │
+│  │  └──────────┘           │  │ │ (200 Hz poll)     │ │ │
+│  │         RPMsg IPC       │  │ └───────────────────┘ │ │
+│  │  <─────────────────────>│  │ ┌───────────────────┐ │ │
+│  │                          │  │ │Safety: E-STOP/WDT│ │ │
+│  └──────────────────────────┘  │ │ + HW DRV_ENN     │ │ │
+│                                 │ └───────────────────┘ │ │
+│  ┌────────────┐                └───────────────────────┘ │
+│  │ NPU 2.3T   │  Springback ML + Defect Detection       │
+│  └────────────┘                                          │
+└──────────────────────────────────────────────────────────┘
+
+Motor Axes (TMC5160 via SPI, galvanically isolated ISO7741 x2):
+  Phase 1: FEED (axis 0) + BEND (axis 1)
+  Phase 2: ROTATE (axis 2) + LIFT (axis 3)
 ```
 
 ### Key Directories
 | Path | Description |
 |------|-------------|
 | `src/app/` | A53 Linux applications (GUI, CAM, NPU, Vision, DB) |
-| `src/firmware/` | M7 FreeRTOS firmware (motion, sensors, safety) |
+| `src/firmware/` | M7 FreeRTOS firmware (TMC5160 trajectory, diagnostics, safety) |
 | `src/shared/` | Shared headers between A53 and M7 |
 | `meta-ortho-bender/` | Custom Yocto layer |
 | `kas/` | KAS build manifests |
@@ -71,7 +75,7 @@ sudo uuu -b emmc_all imx-boot ortho-bender-image-dev.wic
 
 ### Agents
 This project uses claude-dev-forge global agents plus 3 custom agents:
-- **motion-control-engineer**: Multi-axis motion, PID, trajectory planning
+- **motion-control-engineer**: Multi-axis TMC5160 trajectory, StallGuard2 homing
 - **cam-algorithm-engineer**: 3D curve -> B-code, springback compensation
 - **orthodontic-domain-expert**: Clinical requirements, wire materials
 

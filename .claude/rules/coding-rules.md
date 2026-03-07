@@ -14,11 +14,11 @@
 - Exceptions disabled in embedded-facing code; use error codes
 
 ## Firmware Naming (M7)
-- Functions: module_action_object (e.g., pid_compute_output, stepper_set_frequency)
-- Macros: MODULE_DEFINE (e.g., MOTION_MAX_VELOCITY)
-- Types: module_type_t (e.g., motion_state_t, sensor_reading_t)
-- Files: module_name.c/.h (e.g., pid_controller.c)
-- ISR handlers: MODULE_IRQHandler (e.g., STEPPER_TIMER_IRQHandler)
+- Functions: module_action_object (e.g., tmc5160_set_vmax, motion_execute_step)
+- Macros: MODULE_DEFINE (e.g., MOTION_MAX_VELOCITY, TMC_SPI_CLOCK_HZ)
+- Types: module_type_t (e.g., motion_state_t, tmc_status_t)
+- Files: module_name.c/.h (e.g., tmc5160_driver.c, motion_controller.c)
+- ISR handlers: MODULE_IRQHandler (e.g., TMC_DIAG_IRQHandler)
 
 ## Application Naming (A53)
 - Classes: PascalCase (e.g., CamEngine, SpringbackModel)
@@ -38,7 +38,7 @@
 - Stack overflow detection enabled in FreeRTOS
 - Assert macros for debug builds, fault handler for production
 - CRC32 for all stored configuration data
-- Force/position/temperature: dual-read with comparison
+- TMC5160 DRV_STATUS: check on every poll cycle for overtemp/short/open-load
 
 ## Yocto Rules
 - BBFILE_PRIORITY for meta-ortho-bender: 10 (highest)

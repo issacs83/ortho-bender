@@ -6,12 +6,12 @@
  * IEC 62304 SW Class: B
  *
  * Task Architecture (priority descending):
- *   safety_task  (6) - 10 kHz: E-STOP, limits, watchdog
- *   motion_task  (5) -  1 kHz: PID loops, trajectory execution
- *   sensor_task  (4) -  1 kHz: ADC, encoder, force, temperature
- *   ipc_task     (3) - Event:  RPMsg command processing
- *   status_task  (2) - 100 Hz: Periodic status reporting to A53
- *   idle_task    (0) - Idle:   WDT pet, power management
+ *   safety_task     (6) -  1 kHz: E-STOP (SW + HW DRV_ENN), watchdog
+ *   motion_task     (5) - 100 Hz: trajectory sequence manager (TMC5160 ramp)
+ *   tmc_poll_task   (4) - 200 Hz: TMC5160 DRV_STATUS/SG_RESULT via SPI
+ *   ipc_task        (3) - Event:  RPMsg command processing
+ *   status_task     (2) -  10 Hz: periodic status reporting to A53
+ *   idle_task        (0) - Idle:   WDT pet, power management
  */
 
 #include <stdint.h>
@@ -27,11 +27,11 @@
  * Task Handles
  * ────────────────────────────────────────────── */
 
-static TaskHandle_t h_safety_task   = NULL;
-static TaskHandle_t h_motion_task   = NULL;
-static TaskHandle_t h_sensor_task   = NULL;
-static TaskHandle_t h_ipc_task      = NULL;
-static TaskHandle_t h_status_task   = NULL;
+static TaskHandle_t h_safety_task    = NULL;
+static TaskHandle_t h_motion_task    = NULL;
+static TaskHandle_t h_tmc_poll_task  = NULL;
+static TaskHandle_t h_ipc_task       = NULL;
+static TaskHandle_t h_status_task    = NULL;
 
 /* ──────────────────────────────────────────────
  * Task Priorities
@@ -39,7 +39,7 @@ static TaskHandle_t h_status_task   = NULL;
 
 #define PRIORITY_SAFETY     (configMAX_PRIORITIES - 1)  /* Highest */
 #define PRIORITY_MOTION     (configMAX_PRIORITIES - 2)
-#define PRIORITY_SENSOR     (configMAX_PRIORITIES - 3)
+#define PRIORITY_TMC_POLL   (configMAX_PRIORITIES - 3)
 #define PRIORITY_IPC        (configMAX_PRIORITIES - 4)
 #define PRIORITY_STATUS     (configMAX_PRIORITIES - 5)
 
@@ -49,7 +49,7 @@ static TaskHandle_t h_status_task   = NULL;
 
 #define STACK_SAFETY        512U
 #define STACK_MOTION        1024U
-#define STACK_SENSOR        512U
+#define STACK_TMC_POLL      512U
 #define STACK_IPC           1024U
 #define STACK_STATUS        512U
 
@@ -59,7 +59,7 @@ static TaskHandle_t h_status_task   = NULL;
 
 extern void safety_task(void *params);
 extern void motion_task(void *params);
-extern void sensor_task(void *params);
+extern void tmc_poll_task(void *params);
 extern void ipc_task(void *params);
 extern void status_task(void *params);
 
@@ -92,11 +92,11 @@ int main(void)
     hw_init();
 
     /* Phase 2: Create tasks */
-    xTaskCreate(safety_task, "safety", STACK_SAFETY, NULL, PRIORITY_SAFETY, &h_safety_task);
-    xTaskCreate(motion_task, "motion", STACK_MOTION, NULL, PRIORITY_MOTION, &h_motion_task);
-    xTaskCreate(sensor_task, "sensor", STACK_SENSOR, NULL, PRIORITY_SENSOR, &h_sensor_task);
-    xTaskCreate(ipc_task,    "ipc",    STACK_IPC,    NULL, PRIORITY_IPC,    &h_ipc_task);
-    xTaskCreate(status_task, "status", STACK_STATUS, NULL, PRIORITY_STATUS, &h_status_task);
+    xTaskCreate(safety_task,   "safety",   STACK_SAFETY,    NULL, PRIORITY_SAFETY,   &h_safety_task);
+    xTaskCreate(motion_task,   "motion",   STACK_MOTION,    NULL, PRIORITY_MOTION,   &h_motion_task);
+    xTaskCreate(tmc_poll_task, "tmc_poll", STACK_TMC_POLL,  NULL, PRIORITY_TMC_POLL, &h_tmc_poll_task);
+    xTaskCreate(ipc_task,      "ipc",      STACK_IPC,       NULL, PRIORITY_IPC,      &h_ipc_task);
+    xTaskCreate(status_task,   "status",   STACK_STATUS,    NULL, PRIORITY_STATUS,   &h_status_task);
 
     /* Phase 3: Start scheduler (never returns) */
     vTaskStartScheduler();
