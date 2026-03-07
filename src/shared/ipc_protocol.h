@@ -231,6 +231,56 @@ typedef struct __attribute__((packed)) {
 } ipc_message_t;
 
 /* ──────────────────────────────────────────────
+ * CRC-32 (ISO 3309 / ITU-T V.42, same as zlib)
+ * Computed over header (excluding crc32 field) + payload.
+ * ────────────────────────────────────────────── */
+
+static inline uint32_t ipc_crc32_update(uint32_t crc, const uint8_t *data, uint32_t len)
+{
+    /* CRC-32 with polynomial 0xEDB88320 (reflected) */
+    crc = ~crc;
+    while (len--) {
+        crc ^= *data++;
+        for (int i = 0; i < 8; i++) {
+            crc = (crc >> 1) ^ (0xEDB88320U & (-(crc & 1U)));
+        }
+    }
+    return ~crc;
+}
+
+/**
+ * @brief Compute CRC-32 for an IPC message (header + payload)
+ * @param msg Pointer to ipc_message_t
+ * @return CRC-32 value
+ * @note The crc32 field in the header is treated as 0 during computation
+ */
+static inline uint32_t ipc_compute_crc32(const ipc_message_t *msg)
+{
+    /* CRC over header fields before crc32 */
+    const uint32_t pre_crc_len = (uint32_t)(
+        (const uint8_t *)&msg->header.crc32 - (const uint8_t *)&msg->header);
+    uint32_t crc = ipc_crc32_update(0, (const uint8_t *)&msg->header, pre_crc_len);
+
+    /* Skip crc32 field (4 bytes), include nothing after it in header */
+
+    /* CRC over payload */
+    if (msg->header.payload_len > 0) {
+        crc = ipc_crc32_update(crc, msg->payload, msg->header.payload_len);
+    }
+
+    return crc;
+}
+
+/**
+ * @brief Verify CRC-32 of a received IPC message
+ * @return 1 if valid, 0 if mismatch
+ */
+static inline int ipc_verify_crc32(const ipc_message_t *msg)
+{
+    return msg->header.crc32 == ipc_compute_crc32(msg);
+}
+
+/* ──────────────────────────────────────────────
  * Validation Helpers
  * ────────────────────────────────────────────── */
 

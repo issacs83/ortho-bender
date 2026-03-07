@@ -58,7 +58,7 @@ ipc_msg_header_t RpmsgClient::build_header(ipc_msg_type_t type, uint16_t payload
     hdr.sequence    = sequence_++;
     hdr.timestamp_us = static_cast<uint64_t>(ts.tv_sec) * 1000000ULL
                      + static_cast<uint64_t>(ts.tv_nsec / 1000UL);
-    hdr.crc32       = 0; /* TODO: compute CRC-32 over header + payload */
+    hdr.crc32       = 0; /* computed after payload is copied into message */
 
     return hdr;
 }
@@ -75,6 +75,8 @@ bool RpmsgClient::send(ipc_msg_type_t type, const void* payload, uint16_t payloa
     if (payload && payload_len > 0) {
         std::memcpy(msg.payload, payload, payload_len);
     }
+
+    msg.header.crc32 = ipc_compute_crc32(&msg);
 
     ssize_t written = ::write(fd_, &msg,
         sizeof(ipc_msg_header_t) + payload_len);
@@ -145,6 +147,10 @@ bool RpmsgClient::poll(uint32_t timeout_ms)
     }
 
     if (msg.header.payload_len > IPC_MAX_PAYLOAD_SIZE) {
+        return false;
+    }
+
+    if (!ipc_verify_crc32(&msg)) {
         return false;
     }
 
