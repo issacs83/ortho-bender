@@ -56,8 +56,9 @@ ipc_msg_header_t RpmsgClient::build_header(ipc_msg_type_t type, uint16_t payload
     hdr.msg_type    = static_cast<uint16_t>(type);
     hdr.payload_len = payload_len;
     hdr.sequence    = sequence_++;
-    hdr.timestamp_us = static_cast<uint32_t>(
-        ts.tv_sec * 1000000UL + ts.tv_nsec / 1000UL);
+    hdr.timestamp_us = static_cast<uint64_t>(ts.tv_sec) * 1000000ULL
+                     + static_cast<uint64_t>(ts.tv_nsec / 1000UL);
+    hdr.crc32       = 0; /* TODO: compute CRC-32 over header + payload */
 
     return hdr;
 }
@@ -83,8 +84,13 @@ bool RpmsgClient::send(ipc_msg_type_t type, const void* payload, uint16_t payloa
 
 bool RpmsgClient::send_bcode(const msg_motion_bcode_t& bcode)
 {
-    uint16_t len = sizeof(uint16_t) * 2 + sizeof(float) +
-                   bcode.step_count * sizeof(bcode_step_t);
+    if (bcode.step_count > BCODE_SEQUENCE_MAX_STEPS) {
+        return false;
+    }
+
+    uint16_t len = static_cast<uint16_t>(
+        offsetof(msg_motion_bcode_t, steps) +
+        bcode.step_count * sizeof(bcode_step_t));
     return send(MSG_MOTION_EXECUTE_BCODE, &bcode, len);
 }
 
@@ -126,9 +132,23 @@ bool RpmsgClient::poll(uint32_t timeout_ms)
     ipc_message_t msg{};
     ssize_t bytes = ::read(fd_, &msg, sizeof(msg));
 
-    if (bytes >= static_cast<ssize_t>(sizeof(ipc_msg_header_t)) &&
-        msg.header.magic == IPC_MAGIC &&
-        callback_) {
+    if (bytes < static_cast<ssize_t>(sizeof(ipc_msg_header_t))) {
+        return false;
+    }
+
+    if (msg.header.magic != IPC_MAGIC) {
+        return false;
+    }
+
+    if (!ipc_msg_type_valid(msg.header.msg_type)) {
+        return false;
+    }
+
+    if (msg.header.payload_len > IPC_MAX_PAYLOAD_SIZE) {
+        return false;
+    }
+
+    if (callback_) {
         callback_(msg);
         return true;
     }

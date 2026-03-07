@@ -65,17 +65,28 @@ motion_state_t motion_get_state(void);
 
 /**
  * @brief Get current position for all axes
- * @param positions Array of AXIS_COUNT floats to fill
+ * @param positions Array of AXIS_MAX floats to fill
  */
-void motion_get_positions(float positions[AXIS_COUNT]);
+void motion_get_positions(float positions[AXIS_MAX]);
 
 /**
- * @brief Set PID parameters for an axis
+ * @brief Set TMC5160 motion parameters for an axis
  */
 error_code_t motion_set_params(const msg_motion_param_t *params);
 
 /**
- * @brief Motion control loop tick (called at 1 kHz from motion_task)
+ * @brief Execute homing for specific axes
+ * @param axis_mask Bitmask of axes to home (0 = all enabled)
+ */
+error_code_t motion_home_axes(uint8_t axis_mask);
+
+/**
+ * @brief Trigger wire insertion detection (Nudge Test)
+ */
+error_code_t motion_wire_detect(void);
+
+/**
+ * @brief Motion trajectory manager tick (called at 100 Hz from motion_task)
  */
 void motion_tick(void);
 
