@@ -43,3 +43,7 @@ target_include_directories(kc_test_motor_only PRIVATE ${CMAKE_CURRENT_SOURCE_DIR
 target_link_libraries(kc_test_motor_only PRIVATE serial pthread)
 target_compile_definitions(kc_test_motor_only PRIVATE USE_MOTOR)
 # Note: USE_CAMERA is intentionally NOT defined for motor-only build
+
+# Motor simulator (virtual serial port, no hardware needed)
+add_executable(motor_sim motor_sim.cpp)
+target_link_libraries(motor_sim PRIVATE pthread util)

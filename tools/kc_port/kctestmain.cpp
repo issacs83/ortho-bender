@@ -232,18 +232,38 @@ int main(int argc, char* argv[])
 
     QueryPerformanceFrequency(&g_frequency);
 
-#ifdef USE_CAMERA
+    /* Parse arguments: [camera_idx_or_device] [--port /dev/ttyXXX] */
     int camIdx = 0;
-    if (argc > 1)
+    std::string serialPort;
+
+    for (int i = 1; i < argc; i++)
     {
-        camIdx = stoi(argv[1]);
+        if (string("--port") == argv[i] && i + 1 < argc)
+        {
+            serialPort = argv[++i];
+        }
+        else if (string("--help") == argv[i] || string("-h") == argv[i])
+        {
+            printf("Usage: %s [camera_index] [--port /dev/ttyXXX]\n", argv[0]);
+            printf("  camera_index   V4L2 camera device index (default: 0)\n");
+            printf("  --port PATH    Serial port for motor controller\n");
+            printf("                 (default: auto-detect, use with motor_sim)\n");
+            return 0;
+        }
+        else
+        {
+#ifdef USE_CAMERA
+            camIdx = stoi(argv[i]);
+#endif
+        }
     }
 
-    VideoCapture cap;
-#endif
-
 #ifdef USE_CAMERA
+    VideoCapture cap;
+
     // Linux: use V4L2 backend instead of DirectShow
+    // On i.MX8MP, CSI MIPI cameras appear as /dev/videoN via ISI pipeline.
+    // Use v4l2-ctl --list-devices to find the correct device node.
     cap.open(camIdx, cv::CAP_V4L2);
     if (!StartCamera(cap))
         return -1;
@@ -251,7 +271,32 @@ int main(int argc, char* argv[])
 
 #ifdef USE_MOTOR
     g_motorthread_flag.store(true);
-    m_pMotorThread = new std::thread(MotorThread);
+    if (!serialPort.empty())
+    {
+        /* Direct connection to specified port (e.g., motor_sim PTY) */
+        m_pMotorThread = new std::thread([serialPort]() {
+            bool bConnected = mcConnectComm(serialPort);
+            if (!bConnected)
+            {
+                printf("* Failed to connect to %s\n", serialPort.c_str());
+                std::exit(-1);
+            }
+            printf("* Connected to %s\n", serialPort.c_str());
+            try
+            {
+                MotorInitProc();
+                MotorBendingProc();
+            }
+            catch (int e)
+            {
+                printf("* Exception Code: %d\n", e);
+            }
+        });
+    }
+    else
+    {
+        m_pMotorThread = new std::thread(MotorThread);
+    }
 #endif
 
 #ifdef USE_CAMERA
