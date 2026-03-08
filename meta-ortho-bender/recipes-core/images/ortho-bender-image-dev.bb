@@ -12,6 +12,13 @@ IMAGE_INSTALL += " \
     packagegroup-ortho-bender-ml \
 "
 
+# Hardware test tools (kc_test B2 motor/camera verification)
+IMAGE_INSTALL += " \
+    kc-test \
+    kc-test-motor-only \
+    kc-test-sim \
+"
+
 # Development tools
 IMAGE_INSTALL += " \
     gdb \
