@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Motor Control - Ortho-Bender</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav>
+        <span class="logo">Ortho-Bender</span>
+        <a href="/">Dashboard</a>
+        <a href="/motor" class="active">Motor Control</a>
+        <a href="/bcode">B-code Editor</a>
+        <span class="spacer"></span>
+        <span class="status-dot" id="nav-status"></span>
+    </nav>
+
+    <div class="container">
+        <div class="toolbar">
+            <button class="btn btn-success" onclick="initAll()">Home All</button>
+            <button class="btn btn-danger btn-lg" onclick="stopAll()">STOP ALL</button>
+        </div>
+
+        <div class="grid grid-2" id="motor-panels"></div>
+    </div>
+
+    <button class="estop" onclick="stopAll()">STOP<br>ALL</button>
+
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/websocket.js"></script>
+    <script>
+        const motors = ['bender', 'feeder', 'lifter', 'cutter'];
+        const units = { bender: 'deg', feeder: 'mm', lifter: 'deg', cutter: 'deg' };
+
+        function createMotorPanel(name) {
+            return `
+            <div class="card motor-card" id="panel-${name}">
+                <h3>${name.charAt(0).toUpperCase() + name.slice(1)}</h3>
+                <div class="position">
+                    <span id="pos-${name}">0.00</span>
+                    <span class="unit">${units[name]}</span>
+                </div>
+                <span class="state unknown" id="state-${name}">unknown</span>
+
+                <div class="jog-controls">
+                    <button class="btn btn-primary btn-sm" onclick="jog('${name}','ccw')">CCW</button>
+                    <div>
+                        <label>Steps</label>
+                        <input type="number" id="jog-steps-${name}" value="1000" min="1">
+                    </div>
+                    <div>
+                        <label>Speed</label>
+                        <input type="number" id="jog-speed-${name}" value="1000" min="1">
+                    </div>
+                    <button class="btn btn-primary btn-sm" onclick="jog('${name}','cw')">CW</button>
+                </div>
+
+                <div class="toolbar" style="margin-top:8px">
+                    <button class="btn btn-success btn-sm" onclick="homeMotor('${name}')">Home</button>
+                    <button class="btn btn-danger btn-sm" onclick="stopMotor('${name}')">Stop</button>
+                </div>
+            </div>`;
+        }
+
+        document.getElementById('motor-panels').innerHTML = motors.map(createMotorPanel).join('');
+
+        async function jog(name, dir) {
+            const steps = parseInt(document.getElementById(`jog-steps-${name}`).value) || 1000;
+            const speed = parseInt(document.getElementById(`jog-speed-${name}`).value) || 1000;
+            await API.motorJog(name, dir, steps, speed);
+        }
+
+        async function homeMotor(name) { await API.motorInit(name); }
+        async function stopMotor(name) { await API.motorStop(name); }
+        async function stopAll() { await API.stopAll(); }
+        async function initAll() { await API.initAll(); }
+
+        statusWS.onMessage(data => {
+            document.getElementById('nav-status').className =
+                'status-dot' + (data.connected ? ' connected' : '');
+
+            if (data.motors) {
+                for (const [name, m] of Object.entries(data.motors)) {
+                    const posEl = document.getElementById('pos-' + name);
+                    const stateEl = document.getElementById('state-' + name);
+                    if (posEl) posEl.textContent = (m.pos_physical ?? 0).toFixed(2);
+                    if (stateEl) {
+                        stateEl.textContent = m.state || 'unknown';
+                        stateEl.className = 'state ' + (m.state || 'unknown');
+                    }
+                }
+            }
+        });
+
+        statusWS.connect();
+    </script>
+</body>
+</html>

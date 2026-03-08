@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ortho-Bender Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav>
+        <span class="logo">Ortho-Bender</span>
+        <a href="/" class="active">Dashboard</a>
+        <a href="/motor">Motor Control</a>
+        <a href="/bcode">B-code Editor</a>
+        <span class="spacer"></span>
+        <span class="status-dot" id="nav-status"></span>
+        <span id="nav-status-text" style="font-size:13px;color:var(--fg2)">Disconnected</span>
+    </nav>
+
+    <div class="container">
+        <!-- Connection -->
+        <div class="connect-panel">
+            <input type="text" id="serial-port" value="/tmp/b2_motor_sim" placeholder="Serial port">
+            <button class="btn btn-primary" id="btn-connect" onclick="doConnect()">Connect</button>
+            <button class="btn btn-danger" id="btn-disconnect" onclick="doDisconnect()" style="display:none">Disconnect</button>
+            <span class="version" id="version-info"></span>
+        </div>
+
+        <!-- Motor Status Cards -->
+        <div class="grid grid-4" id="motor-cards">
+            <div class="card motor-card" id="card-bender">
+                <h3>Bender</h3>
+                <div class="position"><span id="pos-bender">0.00</span> <span class="unit" id="unit-bender">deg</span></div>
+                <span class="state unknown" id="state-bender">unknown</span>
+            </div>
+            <div class="card motor-card" id="card-feeder">
+                <h3>Feeder</h3>
+                <div class="position"><span id="pos-feeder">0.00</span> <span class="unit" id="unit-feeder">mm</span></div>
+                <span class="state unknown" id="state-feeder">unknown</span>
+            </div>
+            <div class="card motor-card" id="card-lifter">
+                <h3>Lifter</h3>
+                <div class="position"><span id="pos-lifter">0.00</span> <span class="unit" id="unit-lifter">deg</span></div>
+                <span class="state unknown" id="state-lifter">unknown</span>
+            </div>
+            <div class="card motor-card" id="card-cutter">
+                <h3>Cutter</h3>
+                <div class="position"><span id="pos-cutter">0.00</span> <span class="unit" id="unit-cutter">deg</span></div>
+                <span class="state unknown" id="state-cutter">unknown</span>
+            </div>
+        </div>
+
+        <div class="grid grid-2" style="margin-top:16px">
+            <!-- Sensors -->
+            <div class="card">
+                <h3>Sensors</h3>
+                <div class="sensor-grid">
+                    <div class="sensor"><span class="dot" id="sen-bending"></span> Bending</div>
+                    <div class="sensor"><span class="dot" id="sen-feed0"></span> Feed 0</div>
+                    <div class="sensor"><span class="dot" id="sen-feed1"></span> Feed 1</div>
+                    <div class="sensor"><span class="dot" id="sen-retract"></span> Retract</div>
+                    <div class="sensor"><span class="dot" id="sen-cutter"></span> Cutter</div>
+                </div>
+            </div>
+
+            <!-- B-code Execution -->
+            <div class="card">
+                <h3>B-code Execution</h3>
+                <div class="progress" style="margin-bottom:8px">
+                    <div class="progress-bar" id="bcode-progress" style="width:0%">0%</div>
+                </div>
+                <span id="bcode-status" style="font-size:13px;color:var(--fg2)">Idle</span>
+            </div>
+        </div>
+    </div>
+
+    <button class="estop" onclick="doStopAll()">STOP<br>ALL</button>
+
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/websocket.js"></script>
+    <script>
+        let isConnected = false;
+
+        async function doConnect() {
+            const port = document.getElementById('serial-port').value;
+            const res = await API.connect(port);
+            if (res.ok) {
+                isConnected = true;
+                document.getElementById('btn-connect').style.display = 'none';
+                document.getElementById('btn-disconnect').style.display = '';
+                document.getElementById('version-info').textContent = 'FW: ' + (res.version || '?');
+                statusWS.connect();
+            } else {
+                alert('Connection failed: ' + (res.error || 'unknown'));
+            }
+        }
+
+        async function doDisconnect() {
+            await API.disconnect();
+            isConnected = false;
+            document.getElementById('btn-connect').style.display = '';
+            document.getElementById('btn-disconnect').style.display = 'none';
+            document.getElementById('version-info').textContent = '';
+        }
+
+        async function doStopAll() {
+            await API.stopAll();
+        }
+
+        statusWS.onMessage(data => {
+            // Connection status
+            const dot = document.getElementById('nav-status');
+            const txt = document.getElementById('nav-status-text');
+            dot.className = 'status-dot' + (data.connected ? ' connected' : '');
+            txt.textContent = data.connected ? 'Connected' : 'Disconnected';
+
+            // Motor cards
+            if (data.motors) {
+                for (const [name, m] of Object.entries(data.motors)) {
+                    const posEl = document.getElementById('pos-' + name);
+                    const unitEl = document.getElementById('unit-' + name);
+                    const stateEl = document.getElementById('state-' + name);
+                    if (posEl) posEl.textContent = (m.pos_physical ?? 0).toFixed(2);
+                    if (unitEl) unitEl.textContent = m.unit || 'deg';
+                    if (stateEl) {
+                        stateEl.textContent = m.state || 'unknown';
+                        stateEl.className = 'state ' + (m.state || 'unknown');
+                    }
+                }
+            }
+
+            // Sensors
+            if (data.sensors) {
+                for (const [name, val] of Object.entries(data.sensors)) {
+                    const el = document.getElementById('sen-' + name);
+                    if (el) el.className = 'dot' + (val ? ' active' : '');
+                }
+            }
+
+            // B-code execution
+            if (data.bcode) {
+                const bar = document.getElementById('bcode-progress');
+                const status = document.getElementById('bcode-status');
+                if (data.bcode.running && data.bcode.total > 0) {
+                    const pct = Math.round((data.bcode.step / data.bcode.total) * 100);
+                    bar.style.width = pct + '%';
+                    bar.textContent = pct + '%';
+                    status.textContent = `Step ${data.bcode.step} / ${data.bcode.total}`;
+                } else {
+                    bar.style.width = '0%';
+                    bar.textContent = '';
+                    status.textContent = 'Idle';
+                }
+            }
+        });
+    </script>
+</body>
+</html>

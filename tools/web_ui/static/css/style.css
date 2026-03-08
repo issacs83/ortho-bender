@@ -1,0 +1,233 @@
+:root {
+    --bg: #1a1a2e;
+    --bg2: #16213e;
+    --bg3: #0f3460;
+    --fg: #e0e0e0;
+    --fg2: #a0a0a0;
+    --accent: #00d4ff;
+    --green: #00e676;
+    --red: #ff5252;
+    --yellow: #ffd740;
+    --blue: #448aff;
+    --card-bg: #1e2a3a;
+    --border: #2a3a4a;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+    background: var(--bg);
+    color: var(--fg);
+    min-height: 100vh;
+}
+
+/* Navigation */
+nav {
+    background: var(--bg2);
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    border-bottom: 1px solid var(--border);
+}
+nav .logo { font-size: 18px; font-weight: bold; color: var(--accent); }
+nav a { color: var(--fg2); text-decoration: none; padding: 6px 12px; border-radius: 4px; }
+nav a:hover, nav a.active { color: var(--fg); background: var(--bg3); }
+nav .spacer { flex: 1; }
+nav .status-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--red);
+    display: inline-block;
+}
+nav .status-dot.connected { background: var(--green); }
+
+/* Layout */
+.container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+.grid { display: grid; gap: 16px; }
+.grid-2 { grid-template-columns: 1fr 1fr; }
+.grid-4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 900px) {
+    .grid-4 { grid-template-columns: 1fr 1fr; }
+    .grid-2 { grid-template-columns: 1fr; }
+}
+
+/* Cards */
+.card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+}
+.card h3 { color: var(--accent); margin-bottom: 12px; font-size: 14px; text-transform: uppercase; }
+
+/* Connection panel */
+.connect-panel {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+.connect-panel input {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 8px 12px;
+    border-radius: 4px;
+    width: 280px;
+    font-family: monospace;
+}
+.connect-panel .version { color: var(--fg2); font-size: 13px; }
+
+/* Buttons */
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    transition: opacity 0.2s;
+}
+.btn:hover { opacity: 0.85; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary { background: var(--accent); color: #000; }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-success { background: var(--green); color: #000; }
+.btn-warning { background: var(--yellow); color: #000; }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-lg { padding: 12px 32px; font-size: 16px; }
+
+/* Motor card */
+.motor-card .position { font-size: 28px; font-weight: bold; font-family: monospace; }
+.motor-card .position .unit { font-size: 14px; color: var(--fg2); }
+.motor-card .state {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    margin-top: 4px;
+}
+.motor-card .state.idle { background: rgba(0,230,118,0.15); color: var(--green); }
+.motor-card .state.moving { background: rgba(68,138,255,0.15); color: var(--blue); }
+.motor-card .state.error { background: rgba(255,82,82,0.15); color: var(--red); }
+.motor-card .state.unknown { background: rgba(160,160,160,0.15); color: var(--fg2); }
+
+/* Sensor indicators */
+.sensor-grid { display: flex; gap: 12px; flex-wrap: wrap; }
+.sensor {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+}
+.sensor .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--fg2);
+}
+.sensor .dot.active { background: var(--green); }
+
+/* Jog controls */
+.jog-controls { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.jog-controls input {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 6px;
+    border-radius: 4px;
+    width: 80px;
+    font-family: monospace;
+    text-align: center;
+}
+.jog-controls label { font-size: 12px; color: var(--fg2); }
+
+/* B-code table */
+.bcode-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.bcode-table th {
+    background: var(--bg2);
+    padding: 8px;
+    text-align: left;
+    font-size: 12px;
+    color: var(--fg2);
+    border-bottom: 1px solid var(--border);
+}
+.bcode-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    font-family: monospace;
+    font-size: 13px;
+}
+.bcode-table input {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 4px 6px;
+    border-radius: 3px;
+    width: 80px;
+    font-family: monospace;
+    text-align: right;
+}
+.bcode-table tr.error td { background: rgba(255,82,82,0.1); }
+
+/* Progress bar */
+.progress { background: var(--bg2); border-radius: 4px; height: 24px; overflow: hidden; }
+.progress-bar {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s;
+    display: flex;
+    align-items: center;
+    padding-left: 8px;
+    font-size: 12px;
+    color: #000;
+    font-weight: bold;
+}
+
+/* Material info */
+.material-info {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    font-size: 12px;
+    margin-top: 8px;
+}
+.material-info .item { background: var(--bg2); padding: 6px 8px; border-radius: 4px; }
+.material-info .label { color: var(--fg2); }
+.material-info .value { font-weight: bold; font-family: monospace; }
+
+/* Wire preview */
+#wire-preview { width: 100%; height: 300px; background: var(--bg2); border-radius: 4px; }
+
+/* E-STOP button */
+.estop {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: var(--red);
+    color: #fff;
+    font-weight: bold;
+    font-size: 12px;
+    border: 4px solid #900;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(255,82,82,0.4);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.estop:hover { background: #d32f2f; }
+
+/* Toolbar */
+.toolbar { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; align-items: center; }
+.toolbar select, .toolbar input {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-family: monospace;
+}

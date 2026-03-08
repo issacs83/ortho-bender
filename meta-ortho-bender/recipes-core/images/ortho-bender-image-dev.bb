@@ -19,6 +19,11 @@ IMAGE_INSTALL += " \
     kc-test-sim \
 "
 
+# Web dashboard
+IMAGE_INSTALL += " \
+    ortho-bender-web \
+"
+
 # Development tools
 IMAGE_INSTALL += " \
     gdb \

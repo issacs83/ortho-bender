@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>B-code Editor - Ortho-Bender</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav>
+        <span class="logo">Ortho-Bender</span>
+        <a href="/">Dashboard</a>
+        <a href="/motor">Motor Control</a>
+        <a href="/bcode" class="active">B-code Editor</a>
+        <span class="spacer"></span>
+        <span class="status-dot" id="nav-status"></span>
+    </nav>
+
+    <div class="container">
+        <!-- Material & Wire Config -->
+        <div class="card">
+            <h3>Wire Configuration</h3>
+            <div class="toolbar">
+                <select id="material-select" onchange="updateMaterial()">
+                    <option value="0">SS304 - Stainless Steel</option>
+                    <option value="1">NiTi - Nickel-Titanium</option>
+                    <option value="2">Beta-Ti - TMA</option>
+                    <option value="3">CuNiTi - Copper-NiTi</option>
+                </select>
+                <label style="color:var(--fg2);font-size:13px">Diameter (mm):</label>
+                <input type="number" id="wire-diameter" value="0.4" step="0.05" min="0.1" max="2.0" style="width:80px">
+            </div>
+            <div class="material-info" id="material-info"></div>
+        </div>
+
+        <div class="grid grid-2" style="margin-top:16px">
+            <!-- Step Table -->
+            <div class="card">
+                <h3>B-code Steps</h3>
+                <div class="toolbar">
+                    <button class="btn btn-primary btn-sm" onclick="addStep()">+ Add Step</button>
+                    <button class="btn btn-warning btn-sm" onclick="validateBcode()">Validate</button>
+                    <button class="btn btn-success btn-sm" onclick="compensateSpringback()">Apply Springback</button>
+                    <button class="btn btn-primary" onclick="executeBcode()">Execute</button>
+                    <button class="btn btn-danger btn-sm" onclick="stopExecution()">Stop</button>
+                </div>
+                <div style="overflow-x:auto">
+                    <table class="bcode-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>L (mm)</th>
+                                <th>Beta (deg)</th>
+                                <th>Theta (deg)</th>
+                                <th>Comp (deg)</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="bcode-body"></tbody>
+                    </table>
+                </div>
+                <div class="toolbar">
+                    <button class="btn btn-sm btn-primary" onclick="importBcode()">Import JSON</button>
+                    <button class="btn btn-sm btn-primary" onclick="exportBcode()">Export JSON</button>
+                    <input type="file" id="import-file" accept=".json" style="display:none" onchange="handleImport(event)">
+                </div>
+                <div id="validation-msg" style="margin-top:8px;font-size:13px"></div>
+            </div>
+
+            <!-- Preview + Execution -->
+            <div>
+                <div class="card">
+                    <h3>Wire Preview</h3>
+                    <svg id="wire-preview"></svg>
+                </div>
+                <div class="card" style="margin-top:16px">
+                    <h3>Execution</h3>
+                    <div class="progress" style="margin-bottom:8px">
+                        <div class="progress-bar" id="exec-progress" style="width:0%"></div>
+                    </div>
+                    <span id="exec-status" style="font-size:13px;color:var(--fg2)">Idle</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <button class="estop" onclick="API.stopAll()">STOP<br>ALL</button>
+
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/websocket.js"></script>
+    <script src="/static/js/wire_preview.js"></script>
+    <script>
+        let materialsDB = [];
+        let steps = [];
+
+        // Load materials
+        (async () => {
+            materialsDB = await API.materials();
+            updateMaterial();
+        })();
+
+        function updateMaterial() {
+            const id = parseInt(document.getElementById('material-select').value);
+            const m = materialsDB.find(x => x.id === id);
+            if (!m) return;
+            document.getElementById('material-info').innerHTML = `
+                <div class="item"><span class="label">Springback K:</span> <span class="value">${m.springback_ratio}</span></div>
+                <div class="item"><span class="label">Max Bend:</span> <span class="value">${m.max_bend_angle_deg}&deg;</span></div>
+                <div class="item"><span class="label">Young's Mod:</span> <span class="value">${m.youngs_modulus_gpa} GPa</span></div>
+                <div class="item"><span class="label">Yield:</span> <span class="value">${m.yield_strength_mpa} MPa</span></div>
+                <div class="item"><span class="label">Heating:</span> <span class="value">${m.requires_heating ? m.af_temperature_c + '&deg;C' : 'No'}</span></div>
+                <div class="item"><span class="label">Min Radius:</span> <span class="value">${m.min_bend_radius_factor}x dia</span></div>
+            `;
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('bcode-body');
+            tbody.innerHTML = steps.map((s, i) => `
+                <tr>
+                    <td>${i + 1}</td>
+                    <td><input type="number" value="${s.L_mm}" step="0.5" min="0.5" onchange="updateStep(${i},'L_mm',this.value)"></td>
+                    <td><input type="number" value="${s.beta_deg}" step="1" onchange="updateStep(${i},'beta_deg',this.value)"></td>
+                    <td><input type="number" value="${s.theta_deg}" step="1" min="0" onchange="updateStep(${i},'theta_deg',this.value)"></td>
+                    <td style="font-family:monospace;color:var(--accent)">${(s.theta_compensated_deg || 0).toFixed(1)}</td>
+                    <td><button class="btn btn-danger btn-sm" onclick="removeStep(${i})">X</button></td>
+                </tr>
+            `).join('');
+            updatePreview();
+        }
+
+        function addStep() {
+            steps.push({ L_mm: 10, beta_deg: 0, theta_deg: 45, theta_compensated_deg: 0 });
+            renderTable();
+        }
+
+        function removeStep(i) {
+            steps.splice(i, 1);
+            renderTable();
+        }
+
+        function updateStep(i, field, value) {
+            steps[i][field] = parseFloat(value) || 0;
+            updatePreview();
+        }
+
+        function updatePreview() {
+            const svg = document.getElementById('wire-preview');
+            renderWirePreview(svg, steps);
+        }
+
+        function getSequence() {
+            return {
+                material_id: parseInt(document.getElementById('material-select').value),
+                wire_diameter_mm: parseFloat(document.getElementById('wire-diameter').value),
+                steps: steps,
+            };
+        }
+
+        async function validateBcode() {
+            const res = await API.bcodeValidate(getSequence());
+            const el = document.getElementById('validation-msg');
+            if (res.valid) {
+                el.innerHTML = '<span style="color:var(--green)">Valid</span>';
+                if (res.warnings.length) el.innerHTML += '<br>' + res.warnings.map(w => `<span style="color:var(--yellow)">${w}</span>`).join('<br>');
+            } else {
+                el.innerHTML = res.errors.map(e => `<span style="color:var(--red)">${e}</span>`).join('<br>');
+            }
+        }
+
+        async function compensateSpringback() {
+            const res = await API.bcodeCompensate(getSequence());
+            if (res.steps) {
+                steps = res.steps;
+                renderTable();
+                document.getElementById('validation-msg').innerHTML = '<span style="color:var(--accent)">Springback compensation applied</span>';
+            }
+        }
+
+        async function executeBcode() {
+            const res = await API.bcodeExecute(getSequence());
+            if (!res.ok) {
+                alert('Execute failed: ' + JSON.stringify(res.detail || res.error));
+            }
+        }
+
+        async function stopExecution() {
+            await API.bcodeStop();
+        }
+
+        function importBcode() { document.getElementById('import-file').click(); }
+
+        function handleImport(ev) {
+            const file = ev.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (data.material_id !== undefined) document.getElementById('material-select').value = data.material_id;
+                    if (data.wire_diameter_mm) document.getElementById('wire-diameter').value = data.wire_diameter_mm;
+                    steps = data.steps || [];
+                    renderTable();
+                    updateMaterial();
+                } catch (err) { alert('Invalid JSON'); }
+            };
+            reader.readAsText(file);
+        }
+
+        function exportBcode() {
+            const data = JSON.stringify(getSequence(), null, 2);
+            const blob = new Blob([data], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'bcode_sequence.json';
+            a.click();
+        }
+
+        // WebSocket updates
+        statusWS.onMessage(data => {
+            document.getElementById('nav-status').className =
+                'status-dot' + (data.connected ? ' connected' : '');
+            if (data.bcode) {
+                const bar = document.getElementById('exec-progress');
+                const status = document.getElementById('exec-status');
+                if (data.bcode.running && data.bcode.total > 0) {
+                    const pct = Math.round((data.bcode.step / data.bcode.total) * 100);
+                    bar.style.width = pct + '%';
+                    bar.textContent = pct + '%';
+                    status.textContent = `Executing step ${data.bcode.step} / ${data.bcode.total}`;
+                } else {
+                    bar.style.width = '0%';
+                    bar.textContent = '';
+                    status.textContent = 'Idle';
+                }
+            }
+        });
+
+        statusWS.connect();
+        // Start with one example step
+        addStep();
+    </script>
+</body>
+</html>
