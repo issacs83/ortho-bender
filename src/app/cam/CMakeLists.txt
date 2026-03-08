@@ -4,5 +4,6 @@ add_library(ortho-bender-cam STATIC
 
 target_include_directories(ortho-bender-cam PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../shared
 )
+
+target_link_libraries(ortho-bender-cam PUBLIC ortho-bender-shared)

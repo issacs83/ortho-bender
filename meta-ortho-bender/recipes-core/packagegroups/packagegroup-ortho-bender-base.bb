@@ -4,6 +4,6 @@ LICENSE = "MIT"
 inherit packagegroup
 
 RDEPENDS:${PN} = " \
-    ortho-bender-ipc \
+    ortho-bender-app \
     imx-m7-demos \
 "

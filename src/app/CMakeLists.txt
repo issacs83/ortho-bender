@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 project(ortho-bender-app
     VERSION 0.1.0
-    LANGUAGES CXX
+    LANGUAGES C CXX
     DESCRIPTION "Ortho-Bender A53 Linux Application"
 )
 
@@ -14,10 +14,18 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 include(GNUInstallDirs)
 
 # ──────────────────────────────────────────────
-# Shared headers
+# Shared library (C sources from src/shared/)
 # ──────────────────────────────────────────────
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../shared)
+set(SHARED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
+
+add_library(ortho-bender-shared STATIC
+    ${SHARED_DIR}/wire_materials.c
+)
+
+target_include_directories(ortho-bender-shared PUBLIC
+    ${SHARED_DIR}
+)
 
 # ──────────────────────────────────────────────
 # Submodules

@@ -4,9 +4,10 @@ add_library(ortho-bender-ipc STATIC
 
 target_include_directories(ortho-bender-ipc PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../shared>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/ortho-bender>
 )
+
+target_link_libraries(ortho-bender-ipc PUBLIC ortho-bender-shared)
 
 include(GNUInstallDirs)
 
