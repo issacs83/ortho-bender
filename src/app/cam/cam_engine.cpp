@@ -120,7 +120,7 @@ bcode_validation_t CamEngine::validate_bcode(const bcode_sequence_t& bcode)
     return BCODE_VALID;
 }
 
-std::vector<Point3D> CamEngine::simulate(const bcode_sequence_t& bcode)
+std::vector<Point3D> CamEngine::simulate(const bcode_sequence_t& bcode [[maybe_unused]])
 {
     std::vector<Point3D> result;
 

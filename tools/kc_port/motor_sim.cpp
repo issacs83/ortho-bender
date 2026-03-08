@@ -130,7 +130,7 @@ struct motor_state_t {
 };
 
 static motor_state_t g_motors[MAX_MOTORS];
-static std::mutex    g_motor_mutex;
+static std::recursive_mutex g_motor_mutex;
 static std::atomic<bool> g_running{true};
 static float g_speed_factor = 1.0f;
 
@@ -167,7 +167,7 @@ static int microstep_value(uint8_t res)
 /* Update motor positions based on elapsed time */
 static void update_motors()
 {
-    std::lock_guard<std::mutex> lock(g_motor_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
     auto now = std::chrono::steady_clock::now();
 
     for (int i = 0; i < MAX_MOTORS; i++) {
@@ -238,7 +238,7 @@ static int handle_init(const uint8_t *data, uint8_t *out)
 
     int idx = motor_index(id);
     if (idx >= 0) {
-        std::lock_guard<std::mutex> lock(g_motor_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
         motor_state_t &m = g_motors[idx];
         m.homing = true;
         m.moving = true;
@@ -270,7 +270,7 @@ static int handle_movevel(const uint8_t *data, uint8_t *out)
 
     int idx = motor_index(id);
     if (idx >= 0) {
-        std::lock_guard<std::mutex> lock(g_motor_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
         motor_state_t &m = g_motors[idx];
         m.moving = true;
         m.direction = dir;
@@ -301,7 +301,7 @@ static int handle_moveabs(const uint8_t *data, uint8_t *out)
 
     int idx = motor_index(id);
     if (idx >= 0) {
-        std::lock_guard<std::mutex> lock(g_motor_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
         motor_state_t &m = g_motors[idx];
         m.moving = true;
         m.direction = dir;
@@ -320,7 +320,7 @@ static int handle_stop(const uint8_t *data, uint8_t *out)
 
     int idx = motor_index(id);
     if (idx >= 0) {
-        std::lock_guard<std::mutex> lock(g_motor_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
         g_motors[idx].moving = false;
         g_motors[idx].target = g_motors[idx].position;
     }
@@ -335,7 +335,7 @@ static int handle_stopdecl(const uint8_t *data, uint8_t *out)
 
     int idx = motor_index(id);
     if (idx >= 0) {
-        std::lock_guard<std::mutex> lock(g_motor_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
         g_motors[idx].moving = false;
         g_motors[idx].target = g_motors[idx].position;
     }
@@ -351,7 +351,7 @@ static int handle_getstate(const uint8_t *data, uint8_t *out)
 
     uint8_t state = 0x00; /* 0=stopped */
     if (idx >= 0) {
-        std::lock_guard<std::mutex> lock(g_motor_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
         update_motors();
         if (g_motors[idx].moving)
             state = 0x01; /* moving */
@@ -375,7 +375,7 @@ static int handle_geterror(const uint8_t *data, uint8_t *out)
 
     uint8_t err = 0x00;
     if (idx >= 0) {
-        std::lock_guard<std::mutex> lock(g_motor_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
         update_motors();
         if (!g_motors[idx].moving)
             err = 0x80; /* bit7 = stopped */
@@ -392,7 +392,7 @@ static int handle_getposition(const uint8_t *data, uint8_t *out)
 
     int32_t pos = 0;
     if (idx >= 0) {
-        std::lock_guard<std::mutex> lock(g_motor_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
         update_motors();
         pos = g_motors[idx].position;
     }
@@ -419,7 +419,7 @@ static int handle_settorque(const uint8_t *data, uint8_t *out)
 
     int idx = motor_index(id);
     if (idx >= 0) {
-        std::lock_guard<std::mutex> lock(g_motor_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
         g_motors[idx].torque = torque;
     }
 
@@ -435,7 +435,7 @@ static int handle_setresolution(const uint8_t *data, uint8_t *out)
 
     int idx = motor_index(id);
     if (idx >= 0) {
-        std::lock_guard<std::mutex> lock(g_motor_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
         g_motors[idx].resolution = res;
     }
 
@@ -450,7 +450,7 @@ static int handle_setstallguard(const uint8_t *data, uint8_t *out)
 
     int idx = motor_index(id);
     if (idx >= 0) {
-        std::lock_guard<std::mutex> lock(g_motor_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
         g_motors[idx].sg_threshold = thr;
     }
 
@@ -560,7 +560,7 @@ static void status_thread_func()
         std::this_thread::sleep_for(std::chrono::seconds(5));
         if (!g_running.load()) break;
 
-        std::lock_guard<std::mutex> lock(g_motor_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
         update_motors();
 
         printf("\n[SIM] === Motor Status ===\n");
@@ -672,7 +672,7 @@ int main(int argc, char *argv[])
         }
         if (ret == 0) {
             /* Timeout — update motor positions */
-            std::lock_guard<std::mutex> lock(g_motor_mutex);
+            std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
             update_motors();
             continue;
         }

@@ -34,7 +34,7 @@ repos:
 
   meta-qt6:
     url: https://code.qt.io/yocto/meta-qt6.git
-    branch: 6.7
+    branch: "6.7"
 
 local_conf_header:
   base: |
