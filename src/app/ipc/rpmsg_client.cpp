@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <poll.h>
+#include <cstddef>
 #include <cstring>
 #include <ctime>
 

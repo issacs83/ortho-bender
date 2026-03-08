@@ -15,6 +15,7 @@
 
 extern "C" {
 #include "bcode_types.h"
+#include "machine_config.h"
 #include "wire_materials.h"
 }
 
