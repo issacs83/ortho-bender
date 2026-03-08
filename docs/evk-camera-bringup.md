@@ -11,11 +11,14 @@ base board (SPF-46370 B1) using the NXP MINISASTOCSI camera adapter (SCH-29853 A
 
 | Connector | Function | I2C Bus | MIPI Controller |
 |-----------|----------|---------|-----------------|
-| J14 | CSI1 (Camera 1#) | I2C2 (bus 1, 0x30a30000) | csi@32e40000 |
-| J12 | CSI2 (Camera 2#) | I2C3 (bus 2, 0x30a40000) | csi@32e50000 |
-| J13 | MIPI DSI | — | — |
-| J16 | LVDS | — | — |
-| J15 | HDMI | — | — |
+| J12 | CSI1 (Camera 1#) | I2C2 (bus 1, 0x30a30000) | csi@32e40000 |
+| J13 | CSI2 (Camera 2#) | I2C3 (bus 2, 0x30a40000) | csi@32e50000 |
+| J14 | MIPI DSI (Display) | — | — |
+| J15 | LVDS0 | — | — |
+| J16 | LVDS1 | — | — |
+
+> **Note:** Verified from BB schematic SPF-46370_B1 page 12 (Camera CSI)
+> and page 13 (DSI Display). Previous mapping had J14/J12/J13 wrong.
 
 ### Camera Adapter Board (MINISASTOCSI)
 
@@ -30,7 +33,7 @@ OV5640 camera module.
 
 ### Shared GPIO (EVK Hardware Limitation)
 
-**IMPORTANT:** Camera 1# (J14) and Camera 2# (J12) share the same power-down
+**IMPORTANT:** Camera 1# (J12) and Camera 2# (J13) share the same power-down
 and reset GPIO pins on the EVK base board:
 
 | Signal | GPIO | Phandle | Pin | Flags |
@@ -43,15 +46,30 @@ This means:
 - The CSI2 DT node must use the same GPIO pins as CSI1
 - The default CSI2 DT node uses GPIO4_IO01/IO00 which are WRONG
 
+### Stock DTB PWDN GPIO Bug
+
+The stock NXP DTB (`imx8mp-evk.dtb`) has a mismatch in the CSI1 OV5640 node:
+- `powerdown-gpios` property: **GPIO2_IO11** (phandle 0x38, pin 11)
+- `pinctrl csi0_pwn_grp`: SAI2_MCLK pad muxed as **GPIO4_IO27** (ALT5)
+
+These are different physical pads. The driver toggles GPIO2_IO11 but the
+actual PWDN hardware path goes through GPIO4_IO27. Fix:
+
+```
+fdt set /soc@0/bus@30800000/i2c@30a30000/ov5640_mipi@3c powerdown-gpios <0x3b 0x1b 0x00>
+```
+
+GPIO phandle map (stock DTB): GPIO1=0x31, GPIO2=0x38, GPIO3=0xa4, GPIO4=0x3b, GPIO5=0x25
+
 Reference: [NXP KB - OV5640 support on imx8mp](https://community.nxp.com/t5/i-MX-Processors-Knowledge-Base/ov5640-support-on-imx8mp/ta-p/1305725)
 
 ## Device Tree Configuration
 
-### CSI1 (Default, camera on J14)
+### CSI1 (Default, camera on J12)
 
-Use the stock `imx8mp-evk.dtb` — CSI1 OV5640 is enabled with correct GPIO.
+Use the stock `imx8mp-evk.dtb` with PWDN GPIO fix (see above).
 
-### CSI2 (Camera on J12)
+### CSI2 (Camera on J13)
 
 The CSI2 OV5640 node requires DTB modification. The following U-Boot `fdt`
 commands fix the GPIO definitions and enable the CSI2 pipeline:
@@ -122,11 +140,13 @@ ov5640 2-003c: ov5640_check_chip_id: failed to read chip identifier
 **Check in order:**
 
 1. **Physical connection**: Camera module FPC seated in adapter P1 connector?
-2. **Mini-SAS cable**: Run `i2cdetect -y 2` — EEPROM at 0x50 should respond
-3. **Correct I2C bus**: Camera on J14 = bus 1, Camera on J12 = bus 2
-4. **GPIO pins**: CSI2 node MUST use GPIO2_IO11/GPIO1_IO06 (not GPIO4)
-5. **MCLK**: Check `cat /sys/kernel/debug/clk/ipp_do_clko2/clk_enable_count`
-6. **Camera module**: Try a known-good OV5640 module
+2. **Mini-SAS cable**: Firmly connected to J12 (CSI1) or J13 (CSI2)?
+3. **Correct I2C bus**: Camera on J12 = bus 1 (I2C2), Camera on J13 = bus 2 (I2C3)
+4. **PWDN GPIO**: CSI1 must use GPIO4_IO27 (fix stock DTB bug, see above)
+5. **GPIO pins**: CSI2 node MUST use GPIO2_IO11/GPIO1_IO06 (not GPIO4)
+6. **MCLK**: Check `cat /sys/kernel/debug/clk/ipp_do_clko2/clk_enable_count`
+7. **U-Boot bare-metal test**: `i2c dev 1; i2c probe` — if 0x3c missing, HW fault
+8. **Camera module**: Try a known-good OV5640 module
 
 ### Dummy regulators warning
 

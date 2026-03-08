@@ -2,15 +2,20 @@
 """
 evk-csi2-ov5640-boot.py — Boot i.MX8MP EVK with CSI2 OV5640 GPIO fix
 
+Connector mapping: J12=CSI1(I2C2), J13=CSI2(I2C3), J14=DSI(Display)
+
 Problem: CSI2 OV5640 DT node uses GPIO4_IO01/IO00 for PWDN/RESET,
 but EVK HW shares PWDN/RESET between CSI1 and CSI2:
   - PWDN:  GPIO2_IO11 (phandle 0x38, pin 11, active-high)
   - RESET: GPIO1_IO06 (phandle 0x31, pin 6,  active-low)
 
+Note: Stock DTB also has CSI1 PWDN bug — pinctrl muxes GPIO4_IO27 but
+powerdown-gpios references GPIO2_IO11. Fix with: <0x3b 0x1b 0x00>
+
 This script:
-1. Reboots EVK via SSH
+1. Reboots EVK via serial (reboot -f)
 2. Interrupts U-Boot
-3. Loads Medit kernel + DTB from eMMC
+3. Loads quarkers kernel + DTB from eMMC
 4. Fixes CSI2 OV5640 GPIO phandles via fdt commands
 5. Boots Linux
 
@@ -36,9 +41,9 @@ UBOOT_COMMANDS = [
     # Setup FDT
     ("fdt addr 0x43000000", 1),
     ("fdt resize 8192", 1),
-    # Disable CSI1 OV5640 (camera not on J14)
+    # Disable CSI1 OV5640 (camera not on J12)
     ("fdt set /soc@0/bus@30800000/i2c@30a30000/ov5640_mipi@3c status disabled", 1),
-    # Enable CSI2 OV5640 (camera on J12)
+    # Enable CSI2 OV5640 (camera on J13)
     ("fdt set /soc@0/bus@30800000/i2c@30a40000/ov5640_mipi@3c status okay", 1),
     # Enable CSI2 MIPI controller
     ("fdt set /soc@0/bus@32c00000/camera/csi@32e50000 status okay", 1),
@@ -91,13 +96,15 @@ def wait_for(ser, pattern, timeout=60):
 def main():
     print("=== EVK CSI2 OV5640 Boot with GPIO Fix ===\n")
 
-    # Step 1: Reboot EVK via SSH
-    print("[1/4] Rebooting EVK via SSH...")
+    # Step 1: Reboot EVK via serial
+    print("[1/4] Rebooting EVK via serial...")
     try:
-        subprocess.run(
-            ["ssh", "-o", "ConnectTimeout=3", "root@192.168.77.2", "reboot"],
-            timeout=5, capture_output=True
-        )
+        reboot_ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+        reboot_ser.write(b"\r\nroot\r\n")
+        time.sleep(2)
+        reboot_ser.write(b"reboot -f\r\n")
+        time.sleep(1)
+        reboot_ser.close()
     except Exception:
         pass
     print("  Reboot command sent")
