@@ -137,6 +137,12 @@ static float g_speed_factor = 1.0f;
 /* Simulated sensor states: [bending, feed0, feed1, retract, cutter] */
 static bool g_sensors[5] = {true, false, false, true, true};
 
+/* Wire presence flag — simulates wire loaded in machine */
+static bool g_wire_loaded = true;
+
+/* Feed distance accumulated (steps) for wire sensor simulation */
+static int32_t g_feed_accumulated = 0;
+
 /* Simulated EEPROM (3KB) */
 static uint8_t g_eeprom[0xC00];
 
@@ -195,6 +201,54 @@ static void update_motors()
     }
 }
 
+/* Update sensor states based on motor positions.
+ * Called under g_motor_mutex.
+ *
+ * Real machine sensor behavior:
+ *   - Bending sensor: ON when bender is near home (pos ~0)
+ *   - Feed sensors: ON when wire passes through (F0=entry, F1=exit)
+ *   - Retract sensor: ON when retract mechanism is in home position
+ *   - Cutter sensor: ON when cutter is in home (open) position
+ *
+ * Thresholds in steps (resolution=1 → 128 microsteps):
+ *   DEG2STEP(x) = x / (1.8 / 128) = x * 71.11
+ *   1 degree ≈ 71 steps
+ */
+static void update_sensors()
+{
+    const motor_state_t &bender = g_motors[MID_BENDER - 1];
+    const motor_state_t &feeder = g_motors[MID_FEEDER - 1];
+    const motor_state_t &cutter = g_motors[MID_CUTTER - 1];
+
+    /* Bending sensor: ON when bender position is near zero (within ±5°)
+     * After 360° rotation, position is -25600 → sensor OFF
+     * After homing (INIT), position is 0 → sensor ON */
+    int32_t bend_threshold = 356; /* ~5 degrees in steps at 128 microsteps */
+    g_sensors[0] = (abs(bender.position) < bend_threshold);
+
+    /* Feed sensors: simulate wire passing through
+     * F0 (entry sensor): ON when wire has been fed since last cut
+     * F1 (exit sensor): ON when wire is fully through
+     * Feeder moves CCW, position decreases. Use absolute position as feed distance. */
+    if (g_wire_loaded) {
+        int32_t feed_distance = abs(feeder.position) - g_feed_accumulated;
+        /* F0: wire at entry — ON after any feeding */
+        g_sensors[1] = (feed_distance > 0) || feeder.moving;
+        /* F1: wire at exit — ON with small delay */
+        g_sensors[2] = (feed_distance > 30) || feeder.moving;
+    } else {
+        g_sensors[1] = false;
+        g_sensors[2] = false;
+    }
+
+    /* Retract sensor: ON when bender is not extended (near home or idle) */
+    g_sensors[3] = !bender.moving;
+
+    /* Cutter sensor: ON when cutter is near home position (within ±5°) */
+    int32_t cut_threshold = 356;
+    g_sensors[4] = (abs(cutter.position) < cut_threshold);
+}
+
 /* ── Frame Builder ── */
 
 static int build_reply(uint8_t *out, uint8_t cmd_ack, const uint8_t *data, int data_len)
@@ -251,6 +305,12 @@ static int handle_init(const uint8_t *data, uint8_t *out)
         m.position = 0;
         m.moving = false;
         m.homing = false;
+
+        /* Cutter homing simulates wire cut — mark current feeder position
+         * as the cut point so feed sensors reset */
+        if (id == MID_CUTTER) {
+            g_feed_accumulated = abs(g_motors[MID_FEEDER - 1].position);
+        }
     }
 
     return build_reply(out, CMD_INIT + 0x10, data, 5);
@@ -321,6 +381,7 @@ static int handle_stop(const uint8_t *data, uint8_t *out)
     int idx = motor_index(id);
     if (idx >= 0) {
         std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
+        update_motors(); /* update position before stopping */
         g_motors[idx].moving = false;
         g_motors[idx].target = g_motors[idx].position;
     }
@@ -336,6 +397,7 @@ static int handle_stopdecl(const uint8_t *data, uint8_t *out)
     int idx = motor_index(id);
     if (idx >= 0) {
         std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
+        update_motors(); /* update position before stopping */
         g_motors[idx].moving = false;
         g_motors[idx].target = g_motors[idx].position;
     }
@@ -466,6 +528,10 @@ static int handle_setbrightness(const uint8_t *data, uint8_t *out)
 
 static int handle_getsensorstate(uint8_t *out)
 {
+    std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
+    update_motors();
+    update_sensors();
+
     uint8_t reply_data[5];
     reply_data[0] = g_sensors[0] ? 0 : 1; /* bending (inverted in client) */
     reply_data[1] = g_sensors[1] ? 1 : 0; /* feed0 */
@@ -508,6 +574,11 @@ static int handle_read(const uint8_t *data, uint8_t *out)
     return build_reply(out, CMD_READ + 0x10, reply_data, 3 + size);
 }
 
+/* ── Command Statistics ── */
+
+static uint32_t g_cmd_count = 0;
+static uint32_t g_crc_errors = 0;
+
 /* ── Frame Parser & Dispatcher ── */
 
 static int process_frame(const uint8_t *frame, int frame_len, uint8_t *out)
@@ -524,8 +595,10 @@ static int process_frame(const uint8_t *frame, int frame_len, uint8_t *out)
     uint16_t calc = calc_crc(frame, frame_len - 3);
     if (rx_crc != calc) {
         printf("[SIM] CRC mismatch: rx=0x%04X calc=0x%04X\n", rx_crc, calc);
+        g_crc_errors++;
         /* Respond anyway for compatibility — B2 firmware may differ */
     }
+    g_cmd_count++;
 
     switch (cmd) {
     case CMD_HELLO:         return handle_hello(out);
@@ -557,20 +630,27 @@ static int process_frame(const uint8_t *frame, int frame_len, uint8_t *out)
 static void status_thread_func()
 {
     while (g_running.load()) {
-        std::this_thread::sleep_for(std::chrono::seconds(5));
+        std::this_thread::sleep_for(std::chrono::seconds(2));
         if (!g_running.load()) break;
 
         std::lock_guard<std::recursive_mutex> lock(g_motor_mutex);
         update_motors();
+        update_sensors();
 
-        printf("\n[SIM] === Motor Status ===\n");
-        for (int i = 0; i < MAX_MOTORS; i++) {
-            const motor_state_t &m = g_motors[i];
-            printf("  %s: pos=%d target=%d %s\n",
-                   motor_name(i + 1), m.position, m.target,
-                   m.moving ? "MOVING" : "IDLE");
-        }
-        printf("[SIM] =====================\n\n");
+        /* Structured status output for dashboard parsing.
+         * Format: [STATUS] AXIS pos=N target=N speed=N state=IDLE|MOVING */
+        printf("[STATUS] BENDER pos=%d target=%d speed=%d state=%s\n",
+               g_motors[0].position, g_motors[0].target, g_motors[0].speed,
+               g_motors[0].moving ? "MOVING" : "IDLE");
+        printf("[STATUS] FEEDER pos=%d target=%d speed=%d state=%s\n",
+               g_motors[1].position, g_motors[1].target, g_motors[1].speed,
+               g_motors[1].moving ? "MOVING" : "IDLE");
+        printf("[STATUS] CUTTER pos=%d target=%d speed=%d state=%s\n",
+               g_motors[3].position, g_motors[3].target, g_motors[3].speed,
+               g_motors[3].moving ? "MOVING" : "IDLE");
+        printf("[STATUS] SENSORS B=%d F0=%d F1=%d R=%d C=%d\n",
+               g_sensors[0], g_sensors[1], g_sensors[2], g_sensors[3], g_sensors[4]);
+        printf("[STATUS] STATS cmds=%u crc_err=%u\n", g_cmd_count, g_crc_errors);
     }
 }
 
