@@ -1,8 +1,8 @@
 /**
  * @file tmc_poll_task.c
- * @brief FreeRTOS task: TMC5160 status polling at 200 Hz
+ * @brief FreeRTOS task: TMC260C-PA status polling at 200 Hz
  *
- * Reads DRV_STATUS/SG_RESULT/XACTUAL from all active TMC5160 drivers.
+ * Reads status/SG_RESULT from all active TMC260C-PA drivers via SPI.
  * Raises alarms on overtemp, short-circuit, open-load, or stall events.
  *
  * IEC 62304 SW Class: B
@@ -11,7 +11,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-#include "tmc5160.h"
+#include "tmc260c.h"
 #include "machine_config.h"
 #include "error_codes.h"
 #include "ipc_protocol.h"
@@ -20,16 +20,16 @@
  * Module State
  * ────────────────────────────────────────────── */
 
-static tmc5160_t g_tmc[TMC5160_CHIP_COUNT];
+static tmc260c_t g_tmc[AXIS_MAX];
 static msg_status_tmc_t g_tmc_status;
 
 /* ──────────────────────────────────────────────
  * Accessors (used by motion_controller and status_task)
  * ────────────────────────────────────────────── */
 
-tmc5160_t *tmc_get_driver(uint8_t axis)
+tmc260c_t *tmc_get_driver(uint8_t axis)
 {
-    if (axis >= TMC5160_CHIP_COUNT) {
+    if (axis >= AXIS_MAX) {
         return NULL;
     }
     return &g_tmc[axis];
@@ -70,10 +70,11 @@ void tmc_poll_task(void *params)
 
     const TickType_t period = pdMS_TO_TICKS(TMC_POLL_PERIOD_US / 1000);
 
-    /* Initialize TMC5160 drivers */
-    for (uint8_t i = 0; i < TMC5160_CHIP_COUNT; i++) {
-        tmc5160_init(&g_tmc[i], i, i);
-        tmc5160_enable(&g_tmc[i]);
+    /* Initialize TMC260C-PA drivers.
+     * cs_index == axis index (each axis has dedicated CS GPIO).
+     * DRV_ENN is controlled by the safety_task via GPIO, not here. */
+    for (uint8_t i = 0; i < AXIS_MAX; i++) {
+        tmc260c_init(&g_tmc[i], i, i);
     }
 
     TickType_t last_wake = xTaskGetTickCount();
@@ -82,22 +83,24 @@ void tmc_poll_task(void *params)
         vTaskDelayUntil(&last_wake, period);
 
         /* Poll all active drivers */
-        for (uint8_t i = 0; i < TMC5160_CHIP_COUNT; i++) {
+        for (uint8_t i = 0; i < AXIS_MAX; i++) {
             if (!g_tmc[i].initialized) {
                 continue;
             }
 
-            tmc5160_poll_status(&g_tmc[i]);
+            tmc260c_read_status(&g_tmc[i]);
 
-            /* Update shared status structure */
-            g_tmc_status.drv_status[i] = g_tmc[i].drv_status;
-            g_tmc_status.sg_result[i] = g_tmc[i].sg_result;
-            g_tmc_status.cs_actual[i] = g_tmc[i].cs_actual;
-            g_tmc_status.xactual[i] = g_tmc[i].xactual;
+            /* Update shared status structure.
+             * TMC260C-PA has no internal position register (STEP/DIR mode);
+             * xactual is tracked in software by step_gen.c. */
+            g_tmc_status.drv_status[i] = (uint32_t)g_tmc[i].status_flags;
+            g_tmc_status.sg_result[i]  = g_tmc[i].sg_result;
+            g_tmc_status.cs_actual[i]  = (uint16_t)g_tmc[i].current_scale;
+            g_tmc_status.xactual[i]    = 0;    /* provided by step_gen.c */
 
             /* Check for faults */
-            if (tmc5160_has_fault(&g_tmc[i])) {
-                tmc_check_faults(i, g_tmc[i].drv_status);
+            if (tmc260c_has_fault(&g_tmc[i])) {
+                tmc_check_faults(i, (uint32_t)g_tmc[i].status_flags);
             }
         }
     }

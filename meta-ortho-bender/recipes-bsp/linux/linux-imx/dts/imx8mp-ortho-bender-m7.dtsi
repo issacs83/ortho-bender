@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * M7 remoteproc — RPMsg virtio transport (MU-based doorbell)
+ *
+ * Purpose : Configure the Cortex-M7 remoteproc node and its shared memory
+ *           regions so that the Linux imx_rproc driver can load M7 firmware
+ *           and establish an RPMsg link via the Messaging Unit (MU).
+ *
+ * Memory map (must match M7 firmware rsc_table.c):
+ *   0x5500_0000  vdev0vring0    32 KiB   vring0 descriptors
+ *   0x5500_8000  vdev0vring1    32 KiB   vring1 descriptors
+ *   0x550F_F000  rsc-table       4 KiB   resource table
+ *   0x5540_0000  vdevbuffer      1 MiB   virtio shared buffers
+ *
+ * Mailbox (MU B-side):
+ *   tx   = MU channel 0, doorbell 1
+ *   rx   = MU channel 1, doorbell 1
+ *   rxdb = MU channel 3, doorbell 1
+ *
+ * The startup-delay-ms is set to 1500 ms to allow the M7 firmware enough
+ * time to initialize rpmsg_lite and arm the MU IRQ before Linux sends
+ * the DRIVER_OK kick.  500 ms (NXP default) is too tight for production.
+ *
+ * Author   : Ortho-Bender BSP team
+ * SW Class : IEC 62304 Class B (BSP / non-safety kernel layer)
+ */
+
+/ {
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/* Vring 0: M7 -> A53 (TX from remote perspective) */
+		vdev0vring0: vdev0vring0@55000000 {
+			reg = <0 0x55000000 0 0x8000>;
+			no-map;
+		};
+
+		/* Vring 1: A53 -> M7 (RX from remote perspective) */
+		vdev0vring1: vdev0vring1@55008000 {
+			reg = <0 0x55008000 0 0x8000>;
+			no-map;
+		};
+
+		/* Resource table: shared between Linux imx_rproc and M7 rsc_table.c */
+		rsc_table: rsc-table@550ff000 {
+			reg = <0 0x550ff000 0 0x1000>;
+			no-map;
+		};
+
+		/* Virtio shared buffers: 1 MiB for RPMsg data payloads */
+		vdevbuffer: vdevbuffer@55400000 {
+			reg = <0 0x55400000 0 0x100000>;
+			no-map;
+		};
+	};
+
+	/*
+	 * M7 remoteproc node.
+	 *
+	 * compatible: "fsl,imx8mn-cm7" covers i.MX8MP as well (shared driver).
+	 * rsc-da: device address of the resource table in M7 address space.
+	 * memory-region: order matters — vdevbuffer first, then vrings, then rsc.
+	 */
+	imx8mp-cm7 {
+		compatible = "fsl,imx8mn-cm7";
+		rsc-da = <0x55000000>;
+		mbox-names = "tx", "rx", "rxdb";
+		mboxes = <&mu 0 1>, <&mu 1 1>, <&mu 3 1>;
+		memory-region = <&vdevbuffer>, <&vdev0vring0>,
+				<&vdev0vring1>, <&rsc_table>;
+		status = "okay";
+		fsl,startup-delay-ms = <1500>;
+	};
+};
+
+/*
+ * Disable peripherals that the M7 firmware uses exclusively.
+ * ecspi2 is already disabled in imx8mp-ortho-bender-motors.dtsi.
+ * uart4 is disabled here to avoid Linux claiming the debug UART
+ * that the M7 uses for RTT/SWO output.
+ */
+&uart4 {
+	status = "disabled";
+};

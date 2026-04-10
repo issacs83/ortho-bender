@@ -15,6 +15,7 @@
  */
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -67,19 +68,30 @@ extern void status_task(void *params);
  * Hardware Initialization
  * ────────────────────────────────────────────── */
 
+/* rpmsg_mu_init_early declared in board.c — enables MU IRQ only */
+extern void rpmsg_mu_init_early(void);
+
 static void hw_init(void)
 {
-    /* Board-level initialization */
+    /* Board-level initialization (clocks, pin-mux) */
     board_init();
 
-    /* TODO: Initialize HAL peripherals */
-    /* hal_gpio_init(); */
-    /* hal_spi_init(); */
-    /* hal_i2c_init(); */
-    /* hal_pwm_init(); */
-    /* hal_adc_init(); */
-    /* hal_timer_init(); */
-    /* hal_uart_init(); */
+    /*
+     * Enable the MU (Messaging Unit) IRQ BEFORE the FreeRTOS scheduler starts.
+     *
+     * The Linux remoteproc driver sends a MU kick immediately after loading
+     * the firmware to signal virtio DRIVER_OK.  If MU1_M7_IRQn is not
+     * enabled at that point, the kick times out (err:-62) and the virtio
+     * link never comes up.
+     *
+     * rpmsg_mu_init_early() ONLY enables the MU interrupt hardware.  It does
+     * NOT create rpmsg_lite structures or wait for link-up.
+     *
+     * Full RPMsg initialization (with scheduler-safe vTaskDelay-based link-up
+     * wait, endpoint creation, and NS announce) happens in ipc_task() via
+     * rpmsg_hal_init() after the scheduler is running.
+     */
+    rpmsg_mu_init_early();
 }
 
 /* ──────────────────────────────────────────────

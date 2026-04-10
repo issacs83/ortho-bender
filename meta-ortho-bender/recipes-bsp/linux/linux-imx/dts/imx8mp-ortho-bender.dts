@@ -1,9 +1,25 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
  * Device Tree Source for Ortho-Bender Wire Bending Machine
- * Based on NXP i.MX8MP
+ * Based on NXP i.MX8MP EVK
  *
  * Copyright (C) 2024 Ortho-Bender Project
+ *
+ * Build target : freescale/imx8mp-ortho-bender.dtb
+ * Machine conf : meta-ortho-bender/conf/machine/ortho-bender-imx8mp.conf
+ *
+ * Subsystem overlays (applied in order):
+ *   motors  — TMC260C-PA SPI + M7-reserved GPIO4 pins
+ *   sensors — I2C3 sensor expansion bus (Phase 1 placeholder)
+ *   camera  — USB3 host for Allied Vision Alvium 1800 U-158m
+ *   wifi    — AW-CM358MA SDIO WiFi + UART Bluetooth
+ *
+ * EVK base provides: HDMI (LCDIF/HDMI-TX), Ethernet (FEC), UART console,
+ * eMMC (usdhc3), LPDDR4, and audio codec (WM8960 — depopulated on
+ * ortho-bender development builds to free SAI1 pads for motor GPIOs).
+ *
+ * Author   : Ortho-Bender BSP team
+ * SW Class : IEC 62304 Class B
  */
 
 /dts-v1/;
@@ -15,11 +31,17 @@
 	compatible = "ortho-bender,imx8mp", "fsl,imx8mp";
 };
 
-/* Motor control subsystem */
+/* M7 remoteproc — RPMsg virtio transport over MU */
+#include "imx8mp-ortho-bender-m7.dtsi"
+
+/* Motor control subsystem — TMC260C-PA x2, M7-reserved GPIO4 */
 #include "imx8mp-ortho-bender-motors.dtsi"
 
-/* Sensor subsystem */
+/* Sensor expansion bus — I2C3 (Phase 1 placeholder) */
 #include "imx8mp-ortho-bender-sensors.dtsi"
 
-/* Camera subsystem */
+/* Camera subsystem — USB3 host for Alvium 1800 U-158m */
 #include "imx8mp-ortho-bender-camera.dtsi"
+
+/* WiFi/BT subsystem — AW-CM358MA SDIO + UART */
+#include "imx8mp-ortho-bender-wifi.dtsi"
