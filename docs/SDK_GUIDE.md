@@ -271,4 +271,4 @@ Mock 은 실 API 와 동일한 envelope / 필드를 반환하므로 프로덕션
 | `src/app/sdk-examples/python/` | 예제 스크립트 |
 
 상세 IPC 프로토콜은 `src/shared/ipc_protocol.h`, 아키텍처 전반은
-`CLAUDE.md` 를 참고하세요.
+[`docs/ARCHITECTURE.md`](ARCHITECTURE.md) 를 참고하세요.

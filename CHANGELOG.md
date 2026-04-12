@@ -61,7 +61,7 @@ Ortho-Bender 프로젝트의 주요 변경 사항. [Keep a Changelog](https://ke
 - **camera_service CTI 경로 기본값**
   - `/opt/VimbaX_2026-1/cti` 로 업데이트 (EVK VimbaX 설치 위치)
 
-- **CLAUDE.md 및 프로젝트 규칙**
+- **프로젝트 규칙 정리**
   - SDK 아키텍처 섹션 추가 (FastAPI 백엔드가 유일한 SW 인터페이스)
   - 카메라 프로토콜 U3V 명시 (UVC 아님)
   - TMC260C-PA STEP/DIR + M7 GPT timer 구동 모델 명문화
