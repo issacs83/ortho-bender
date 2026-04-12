@@ -76,11 +76,25 @@
 };
 
 /*
- * Disable peripherals that the M7 firmware uses exclusively.
- * ecspi2 is already disabled in imx8mp-ortho-bender-motors.dtsi.
- * uart4 is disabled here to avoid Linux claiming the debug UART
- * that the M7 uses for RTT/SWO output.
+ * Disable peripherals that the M7 firmware or motor subsystem uses exclusively.
+ *
+ * ecspi2  — disabled in motors.dtsi (M7 SPI for all motor axes).
+ * uart4   — M7 debug UART (RTT/SWO); Linux must not claim it.
+ * sai5    — SAI5 pads repurposed as Phase 2 motor GPIO (GPIO3_IO19-25).
+ *           Disable here to prevent the audio subsystem binding the pads.
+ *           EVK base enables sai5 for HDMI audio; ortho-bender does not
+ *           use HDMI audio output, so this is safe to disable.
+ * sai3    — SAI3 RX/TX pads repurposed as Phase 2 motor GPIO (GPIO4_IO28-31).
+ *           EVK base does not enable sai3, but disable explicitly to be safe.
  */
 &uart4 {
+	status = "disabled";
+};
+
+&sai5 {
+	status = "disabled";
+};
+
+&sai3 {
 	status = "disabled";
 };

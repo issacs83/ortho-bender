@@ -1,21 +1,48 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
- * Sensor subsystem DTS overlay
- * I2C force sensor, temperature sensor, ADC configuration
+ * Sensor subsystem - Phase 1 placeholder
+ *
+ * Purpose : Reserve I2C3 bus for future sensor expansion.
+ *           Phase 1 hardware carries no external sensors beyond the
+ *           motor diagnostic GPIOs (defined in motors.dtsi) and the
+ *           TMC260C-PA internal temperature sense (read via SPI).
+ *
+ * Planned Phase 2 additions:
+ *   - TMP117 high-accuracy temperature sensor (wire temperature)
+ *   - Additional limit switches (FEED home, ROTATE home)
+ *
+ * Author   : Ortho-Bender BSP team
+ * SW Class : IEC 62304 Class B
  */
 
-/* TODO: Define sensor pin assignments
+/*
+ * I2C3 — sensor expansion bus
  *
- * Force sensor (load cell + ADC):
- *   - I2C or SPI ADC (e.g., HX711, ADS1115)
+ * Bus is enabled and left empty so that i2cdetect can scan it during
+ * bring-up.  Populate child nodes when physical sensors are installed.
  *
- * Temperature sensor:
- *   - I2C (e.g., TMP117 for wire temperature)
- *   - Thermocouple ADC for heater temperature
+ * Expected address map (Phase 2):
+ *   0x48 — TMP117 (default I2C address, ADD0=GND)
  *
- * Limit switches:
- *   - GPIO inputs with pull-up
- *   - Feed home, Rotate home, Bend home
- *
- * Note: Actual pin assignments TBD during board design
+ * EVK default: I2C3 SCL = GPIO5_IO18, SDA = GPIO5_IO19 (already in
+ * imx8mp-evk.dts).  No pinmux change needed.
  */
+&i2c3 {
+	clock-frequency = <400000>; /* Fast mode — 400 kHz */
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_i2c3>;
+	status = "okay";
+
+	/*
+	 * TMP117 — high-precision digital temperature sensor
+	 *
+	 * Uncomment and populate when the sensor is physically fitted.
+	 * Requires CONFIG_SENSORS_TMP117=y in the kernel config fragment.
+	 *
+	 * tmp117: temperature-sensor@48 {
+	 *     compatible = "ti,tmp117";
+	 *     reg = <0x48>;
+	 *     #thermal-sensor-cells = <0>;
+	 * };
+	 */
+};

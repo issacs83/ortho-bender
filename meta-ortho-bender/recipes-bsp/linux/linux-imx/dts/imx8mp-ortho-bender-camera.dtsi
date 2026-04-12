@@ -1,15 +1,82 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
- * Camera subsystem DTS overlay
- * MIPI CSI-2, ISP configuration for wire inspection
+ * Camera subsystem - Allied Vision Alvium 1800 U-158m
+ *
+ * Purpose : Enable USB3 host controller so that the Alvium camera
+ *           (USB3 Vision protocol) is enumerated as a UVC/bulk device.
+ *           No MIPI-CSI2 or ISP pipeline is used; the Allied Vision
+ *           Vimba X SDK communicates with the camera entirely from
+ *           user-space over the USB3 xHCI stack.
+ *
+ * Hardware : Alvium 1800 U-158m — USB3 Vision (USB 3.2 Gen 1, 5 Gbps)
+ *            Connected to i.MX8MP USB1 (OTG1) port configured as host.
+ *            USB2 (OTG2) remains available for host peripherals.
+ *
+ * VBUS power : Controlled by USB1_PWR GPIO (EVK default: GPIO1_IO12).
+ *              EVK reference schematic D2 OTG-PWR-EN; confirm on your
+ *              revision. No change needed if EVK default is used.
+ *
+ * Author   : Ortho-Bender BSP team
+ * SW Class : IEC 62304 Class B
  */
 
-/* TODO: Define camera configuration
+/*
+ * USB1 (OTG1) — configured as permanent host for Alvium camera.
  *
- * Wire inspection camera:
- *   - MIPI CSI-2 interface
- *   - ISP pipeline configuration
- *   - LED illumination GPIO
+ * The EVK imx8mp-evk.dts already enables usb_dwc3_0 in peripheral
+ * mode for ADB/gadget use.  Here we override it to host mode so that
+ * the camera enumerates on boot without a host cable detected.
  *
- * Note: Camera selection and ISP configuration TBD
+ * dr_mode = "host" forces the DWC3 core into host-only mode;
+ * the USB-C / micro-B connector VBUS path is controlled separately
+ * by the regulator below.
+ */
+&usb_dwc3_0 {
+	status = "okay";
+	dr_mode = "host";
+	snps,dis_u2_susphy_quirk;
+	snps,dis_enblslpm_quirk;
+	maximum-speed = "super-speed"; /* USB 3.2 Gen 1 — 5 Gbps */
+};
+
+/*
+ * USB2 (OTG2) — retained as host for general-purpose peripherals
+ * (USB hub, keyboard, etc. during development).
+ * Change dr_mode to "peripheral" or "otg" if a gadget is needed.
+ *
+ * VBUS power : GPIO1_IO14 muxed as USB2_PWR (ALT1) controls
+ *              NXP5P3363 VBUS load switch enable on J7 USB-A port.
+ *              pinctrl_usb1_vbus is defined in the EVK base DTS;
+ *              explicit reference here guards against accidental removal.
+ */
+&usb_dwc3_1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_usb1_vbus>;
+	dr_mode = "host";
+	snps,dis-u2-freeclk-exists-quirk;
+	status = "okay";
+};
+
+/*
+ * USB1 PHY — super-speed PHY must be enabled alongside the controller.
+ * The EVK BSP enables this by default; explicit "okay" ensures it is
+ * not accidentally disabled by another overlay.
+ */
+&usb3_phy0 {
+	status = "okay";
+};
+
+&usb3_phy1 {
+	status = "okay";
+};
+
+/*
+ * USB1 VBUS regulator
+ *
+ * The EVK VBUS supply for USB1 (Type-C) is controlled by a separate
+ * fixed-regulator driven by GPIO1_IO12 (OTG_PWR_EN).  The NXP EVK
+ * base DTS already enables this regulator.  No override needed.
+ *
+ * NOTE: Alvium U-series cameras are bus-powered (< 900 mA @ 5 V).
+ *       Ensure the VBUS regulator supplies at least 1 A on the USB1 port.
  */

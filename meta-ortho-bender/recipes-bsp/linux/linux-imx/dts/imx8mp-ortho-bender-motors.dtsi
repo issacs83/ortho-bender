@@ -1,29 +1,492 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
- * Motor control subsystem DTS overlay
- * Stepper/servo motor GPIOs, PWM, SPI for motor drivers
+ * Motor control subsystem - TMC260C-PA Phase 1 (FEED + BEND) +
+ *                           TMC5160 Phase 2 (ROTATE + LIFT)
+ *
+ * Purpose : Reserve SPI2, GPIO4, GPIO3 pins for M7 Cortex exclusive use.
+ *           Linux must not touch these resources; only pinmux is
+ *           configured here so that the M7 firmware can drive them
+ *           directly via the Cortex-M7 peripheral bus.
+ *
+ * Hardware : Phase 1 — TMC260C-PA x2 on ECSPI2 (CS0: FEED, CS1: BEND)
+ *                       STEP/DIR from M7 GPT1/GPT2, DRV_ENN shared
+ *            Phase 2 — TMC5160 x2 on ECSPI2 (CS2: ROTATE, CS3: LIFT)
+ *                       CS2/CS3 are GPIO soft-CS on the same ECSPI2 bus
+ *                       TMC5160 max SPI = 4 MHz; M7 reconfigures bus clock
+ *                       per transfer when switching between TMC260C (2 MHz)
+ *                       and TMC5160 (4 MHz) chip selects
+ *
+ * Pin mapping is based on i.MX8MP EVK J3/J21 expansion header.
+ * Verify against final EVK revision schematic before assembly.
+ * Phase 1 GPIO4_IO00-08 → SAI1 pad group
+ * Phase 2 GPIO3_IO19-25 → SAI5 pad group; GPIO4_IO28-31 → SAI3 RX pad group
+ *
+ * Author   : Ortho-Bender BSP team
+ * SW Class : IEC 62304 Class B (BSP / non-safety kernel layer)
  */
 
-/* TODO: Define motor control pin assignments
+/*
+ * USB RESOURCE PROTECTION (HARD STOP — DO NOT MODIFY)
  *
- * Feed axis (stepper):
- *   - STEP: GPIOx_y (timer output compare)
- *   - DIR:  GPIOx_y
- *   - EN:   GPIOx_y
+ * The following nodes and GPIOs are owned by camera.dtsi.
+ * Assigning motor pins here will break the Alvium 1800 U-158m.
  *
- * Rotate axis (stepper):
- *   - STEP: GPIOx_y
- *   - DIR:  GPIOx_y
- *   - EN:   GPIOx_y
+ * FORBIDDEN: usb_dwc3_0, usb3_phy0  -- USB1 camera SuperSpeed host
+ *            usb_dwc3_1, usb3_phy1  -- USB2 host
+ *            GPIO1_IO12             -- USB1 VBUS enable (OTG_PWR_EN)
+ *            GPIO1_IO14             -- USB2 VBUS (NXP5P3363 switch)
+ *            pinctrl_usb1_vbus group
  *
- * Bend axis (servo):
- *   - PWM:  PWMx (or CAN for external servo drive)
- *   - ENCODER_A: GPIOx_y
- *   - ENCODER_B: GPIOx_y
- *
- * E-STOP:
- *   - GPIO interrupt (highest priority)
- *
- * Note: Actual pin assignments will be determined during
- * custom board design. Using EVK pins for initial development.
+ * Last audit: Phase 2 motor pin allocation — see git log
  */
+
+/*
+ * ECSPI2 — SPI bus for TMC260C-PA SPI daisy chain
+ *
+ * Both axes share the bus; CS0 = FEED, CS1 = BEND.
+ * Bus is owned by the M7 firmware through the i.MX8MP inter-core
+ * resource partitioning (RPMsg + SCFW); Linux only configures iomux
+ * and leaves the controller disabled.
+ *
+ * SPI mode 3 (CPOL=1 CPHA=1), max 2 MHz — TMC260C datasheet §5.1
+ */
+&ecspi2 {
+	/*
+	 * M7 exclusive — Linux must not claim this controller.
+	 * Pinmux is still applied by Linux iomuxc at boot so that
+	 * the M7 can use the pads immediately after RPMsg handshake.
+	 */
+	status = "disabled";
+
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_ecspi2_motor &pinctrl_m7_motor2_gpio>;
+
+	/* CS0: FEED axis TMC260C-PA */
+	tmc260_feed: motor@0 {
+		compatible = "trinamic,tmc260";
+		reg = <0>;
+		spi-max-frequency = <2000000>;
+		spi-cpol;
+		spi-cpha;
+		/* Driver registers are configured entirely from M7 firmware.
+		 * This stub node exists only for documentation purposes. */
+		status = "disabled";
+	};
+
+	/* CS1: BEND axis TMC260C-PA */
+	tmc260_bend: motor@1 {
+		compatible = "trinamic,tmc260";
+		reg = <1>;
+		spi-max-frequency = <2000000>;
+		spi-cpol;
+		spi-cpha;
+		status = "disabled";
+	};
+
+	/*
+	 * CS2: ROTATE axis TMC5160 (Phase 2)
+	 *
+	 * CS is driven by M7 as a soft GPIO chip-select (GPIO3_IO19).
+	 * The M7 firmware reconfigures ECSPI2 clock to 4 MHz before
+	 * asserting this CS; it reverts to 2 MHz for TMC260C-PA frames.
+	 * SPI mode 3 (CPOL=1, CPHA=1) — same as TMC260C-PA.
+	 * reg = <2> is a placeholder; actual CS selection is managed by
+	 * the M7 HAL layer via GPIO, not HW SS lines.
+	 */
+	tmc5160_rotate: motor@2 {
+		compatible = "trinamic,tmc5160";
+		reg = <2>;
+		spi-max-frequency = <4000000>;
+		spi-cpol;
+		spi-cpha;
+		/* M7 firmware configures all registers directly via SPI.
+		 * This stub node is for documentation and Linux exclusion. */
+		status = "disabled";
+	};
+
+	/*
+	 * CS3: LIFT axis TMC5160 (Phase 2)
+	 *
+	 * CS driven by M7 as soft GPIO chip-select (GPIO3_IO20).
+	 * Same ECSPI2 bus clock management as CS2 above.
+	 */
+	tmc5160_lift: motor@3 {
+		compatible = "trinamic,tmc5160";
+		reg = <3>;
+		spi-max-frequency = <4000000>;
+		spi-cpol;
+		spi-cpha;
+		status = "disabled";
+	};
+};
+
+/*
+ * M7 reserved GPIO node — Linux gpio-hog style reservation.
+ *
+ * gpio4 pins 0-8 are exclusively driven by the M7.  Declaring them
+ * as output/input hogs here prevents Linux drivers (e.g. gpio-keys)
+ * from accidentally claiming them.  The hog direction matches the
+ * electrical function; actual logic level at runtime is set by M7.
+ *
+ * NOTE: gpio-hog reserves the pin in the Linux gpio layer but does NOT
+ * change the physical level — the M7 controls that via its own GPIO block.
+ */
+&gpio4 {
+	/* FEED axis STEP — M7 GPT1 compare output */
+	step0-hog {
+		gpio-hog;
+		gpios = <0 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "FEED-STEP-M7";
+	};
+
+	/* FEED axis DIR — M7 GPIO output */
+	dir0-hog {
+		gpio-hog;
+		gpios = <1 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "FEED-DIR-M7";
+	};
+
+	/* BEND axis STEP — M7 GPT2 compare output */
+	step1-hog {
+		gpio-hog;
+		gpios = <2 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "BEND-STEP-M7";
+	};
+
+	/* BEND axis DIR — M7 GPIO output */
+	dir1-hog {
+		gpio-hog;
+		gpios = <3 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "BEND-DIR-M7";
+	};
+
+	/*
+	 * DRV_ENN — active-low shared driver enable.
+	 * Held HIGH (disabled) until M7 completes safety check sequence.
+	 * Dual-path E-STOP: SW via M7 GPIO + HW via this line.
+	 */
+	drv-enn-hog {
+		gpio-hog;
+		gpios = <4 GPIO_ACTIVE_LOW>;
+		output-high;	/* disabled = safe default */
+		line-name = "TMC-DRV-ENN-M7";
+	};
+
+	/* DIAG0 — FEED axis StallGuard2 output (open-drain, pull-up) */
+	diag0-hog {
+		gpio-hog;
+		gpios = <5 GPIO_ACTIVE_HIGH>;
+		input;
+		line-name = "FEED-DIAG-M7";
+	};
+
+	/* DIAG1 — BEND axis StallGuard2 output (open-drain, pull-up) */
+	diag1-hog {
+		gpio-hog;
+		gpios = <6 GPIO_ACTIVE_HIGH>;
+		input;
+		line-name = "BEND-DIAG-M7";
+	};
+
+	/*
+	 * ESTOP_IN — hardware E-STOP button / safety interlock.
+	 * Falling edge triggers M7 ISR that asserts DRV_ENN < 1 ms.
+	 * Physical pull-up on PCB; pad pull-up also enabled in pinmux.
+	 */
+	estop-hog {
+		gpio-hog;
+		gpios = <7 GPIO_ACTIVE_LOW>;
+		input;
+		line-name = "ESTOP-IN-M7";
+	};
+
+	/*
+	 * HOME_BEND — BEND axis home microswitch (NC type, pull-up).
+	 * M7 polls this during homing sequence.
+	 */
+	home-bend-hog {
+		gpio-hog;
+		gpios = <8 GPIO_ACTIVE_LOW>;
+		input;
+		line-name = "HOME-BEND-M7";
+	};
+};
+
+/*
+ * Phase 2 GPIO reservation — SAI5 pads as M7-exclusive GPIO (gpio3).
+ * SAI5_RXFS/RXC → CS2/CS3 soft chip-selects for TMC5160 on ECSPI2.
+ * SAI5_RXD1/RXD3/MCLK → ROTATE STEP/DIR + LIFT STEP.
+ * GPIO3_IO21 (SAI5_RXD0) and IO23 (SAI5_RXD2) are EVK LEDs — skipped.
+ */
+&gpio3 {
+	/* CS2 — ROTATE TMC5160 soft CS (GPIO3_IO19, SAI5_RXFS) */
+	cs2-hog {
+		gpio-hog;
+		gpios = <19 GPIO_ACTIVE_LOW>;
+		output-high;
+		line-name = "ROTATE-SPI-CS-M7";
+	};
+
+	/* CS3 — LIFT TMC5160 soft CS (GPIO3_IO20, SAI5_RXC) */
+	cs3-hog {
+		gpio-hog;
+		gpios = <20 GPIO_ACTIVE_LOW>;
+		output-high;
+		line-name = "LIFT-SPI-CS-M7";
+	};
+
+	/* ROTATE STEP — GPT3 OC (GPIO3_IO22, SAI5_RXD1; IO21 = EVK LED) */
+	step2-hog {
+		gpio-hog;
+		gpios = <22 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "ROTATE-STEP-M7";
+	};
+
+	/* ROTATE DIR — (GPIO3_IO24, SAI5_RXD3; IO23 = EVK LED) */
+	dir2-hog {
+		gpio-hog;
+		gpios = <24 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "ROTATE-DIR-M7";
+	};
+
+	/* LIFT STEP — GPT4 OC (GPIO3_IO25, SAI5_MCLK) */
+	step3-hog {
+		gpio-hog;
+		gpios = <25 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "LIFT-STEP-M7";
+	};
+};
+
+&gpio4 {
+	/* LIFT DIR — M7 GPIO output (GPIO4_IO28, SAI3_RXFS) */
+	dir3-hog {
+		gpio-hog;
+		gpios = <28 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "LIFT-DIR-M7";
+	};
+
+	/*
+	 * ROTATE DIAG — ROTATE axis StallGuard2 output (open-drain).
+	 * GPIO4_IO29, SAI3_RXC pad.  Pull-up on PCB; pad pull also enabled.
+	 */
+	diag2-hog {
+		gpio-hog;
+		gpios = <29 GPIO_ACTIVE_HIGH>;
+		input;
+		line-name = "ROTATE-DIAG-M7";
+	};
+
+	/*
+	 * LIFT DIAG — LIFT axis StallGuard2 output (open-drain).
+	 * GPIO4_IO30, SAI3_RXD pad.
+	 */
+	diag3-hog {
+		gpio-hog;
+		gpios = <30 GPIO_ACTIVE_HIGH>;
+		input;
+		line-name = "LIFT-DIAG-M7";
+	};
+
+	/*
+	 * HOME_ROTATE — ROTATE axis home microswitch (NC, pull-up).
+	 * GPIO4_IO31, SAI3_TXFS pad.
+	 * M7 polls this during homing sequence (StallGuard2 backup).
+	 */
+	home-rotate-hog {
+		gpio-hog;
+		gpios = <31 GPIO_ACTIVE_LOW>;
+		input;
+		line-name = "HOME-ROTATE-M7";
+	};
+};
+
+/*
+ * iomuxc pinmux configuration
+ *
+ * Pad register values follow the i.MX8MP Reference Manual (Rev 3).
+ * Format: MX8MP_IOMUXC_<PAD>__<MUX>  <SION | 0x0>  <pad_cfg>
+ *
+ * Pad config field (16-bit):
+ *   [15:14] HYS  [13] PUE  [12] PUS  [7:6] SPEED  [5:3] DSE  [0] SRE
+ *
+ * 0x00000146 = DSE6, FSEL1 (100 MHz), no pull, no hys  — SPI SCK/MOSI
+ * 0x00000106 = DSE6, FSEL0 (50 MHz),  no pull, no hys  — SPI CS
+ * 0x00000146 = same as SCK                              — GPIO outputs
+ * 0x000001C6 = DSE6, PUE+PUS (pull-up enabled)         — GPIO inputs
+ *
+ * SAI1 pad group is repurposed: EVK uses SAI1 for audio codec WM8960.
+ * Ortho-Bender does not use audio; confirm WM8960 is depopulated on
+ * the development board or remap to unused pads before first bring-up.
+ */
+&iomuxc {
+	pinctrl_ecspi2_motor: ecspi2-motorgrp {
+		fsl,pins = <
+			/* ECSPI2 — SPI bus (M7 exclusive, shared by all 4 axes) */
+			MX8MP_IOMUXC_ECSPI2_SCLK__ECSPI2_SCLK		0x00000146
+			MX8MP_IOMUXC_ECSPI2_MOSI__ECSPI2_MOSI		0x00000146
+			MX8MP_IOMUXC_ECSPI2_MISO__ECSPI2_MISO		0x00000146
+			MX8MP_IOMUXC_ECSPI2_SS0__ECSPI2_SS0		0x00000106 /* CS0: FEED */
+			/*
+			 * CS1 (BEND): ECSPI2 has only one HW chip-select (SS0).
+			 * The M7 firmware uses a dedicated GPIO for the second
+			 * chip select.  No iomux entry needed here.
+			 *
+			 * CS2 (ROTATE) and CS3 (LIFT): soft GPIO chip-selects.
+			 * Their iomux entries appear in pinctrl_m7_motor2_gpio
+			 * below (SAI5_RXFS → GPIO3_IO19, SAI5_RXC → GPIO3_IO20).
+			 */
+		>;
+	};
+
+	pinctrl_m7_motor_gpio: m7-motorgpiogrp {
+		fsl,pins = <
+			/*
+			 * GPIO4_IO00 — FEED STEP (M7 GPT1 OC output)
+			 * Mux alt: SAI1_RXFS → GPIO4_IO00 (ALT5)
+			 */
+			MX8MP_IOMUXC_SAI1_RXFS__GPIO4_IO00		0x00000146
+
+			/*
+			 * GPIO4_IO01 — FEED DIR (M7 GPIO output)
+			 * Mux alt: SAI1_RXC → GPIO4_IO01 (ALT5)
+			 */
+			MX8MP_IOMUXC_SAI1_RXC__GPIO4_IO01		0x00000146
+
+			/*
+			 * GPIO4_IO02 — BEND STEP (M7 GPT2 OC output)
+			 * Mux alt: SAI1_RXD0 → GPIO4_IO02 (ALT5)
+			 */
+			MX8MP_IOMUXC_SAI1_RXD0__GPIO4_IO02		0x00000146
+
+			/*
+			 * GPIO4_IO03 — BEND DIR (M7 GPIO output)
+			 * Mux alt: SAI1_RXD1 → GPIO4_IO03 (ALT5)
+			 */
+			MX8MP_IOMUXC_SAI1_RXD1__GPIO4_IO03		0x00000146
+
+			/*
+			 * GPIO4_IO04 — DRV_ENN (active-low, M7 safety output)
+			 * Mux alt: SAI1_RXD2 → GPIO4_IO04 (ALT5)
+			 * High-drive strength for fast disable path.
+			 */
+			MX8MP_IOMUXC_SAI1_RXD2__GPIO4_IO04		0x00000146
+
+			/*
+			 * GPIO4_IO05 — FEED DIAG / StallGuard2 (open-drain input)
+			 * Mux alt: SAI1_RXD3 → GPIO4_IO05 (ALT5)
+			 * Pull-up enabled: 0x1C6 (PUE=1, PUS=1)
+			 */
+			MX8MP_IOMUXC_SAI1_RXD3__GPIO4_IO05		0x000001C6
+
+			/*
+			 * GPIO4_IO06 — BEND DIAG / StallGuard2 (open-drain input)
+			 * Mux alt: SAI1_RXD4 → GPIO4_IO06 (ALT5)
+			 */
+			MX8MP_IOMUXC_SAI1_RXD4__GPIO4_IO06		0x000001C6
+
+			/*
+			 * GPIO4_IO07 — ESTOP_IN (active-low, falling-edge IRQ)
+			 * Mux alt: SAI1_RXD5 → GPIO4_IO07 (ALT5)
+			 * Pull-up + hysteresis (HYS=1): 0x1D6
+			 * M7 ISR must assert DRV_ENN within 1 ms of edge.
+			 */
+			MX8MP_IOMUXC_SAI1_RXD5__GPIO4_IO07		0x000001D6
+
+			/*
+			 * GPIO4_IO08 — HOME_BEND microswitch (NC, pull-up input)
+			 * Mux alt: SAI1_RXD6 → GPIO4_IO08 (ALT5)
+			 */
+			MX8MP_IOMUXC_SAI1_RXD6__GPIO4_IO08		0x000001C6
+		>;
+	};
+
+	/*
+	 * Phase 2 pinctrl group — TMC5160 ROTATE + LIFT axes
+	 *
+	 * SAI5 pad group → GPIO3 (EVK SAI5 audio not populated on
+	 * ortho-bender dev board; verify before production bring-up).
+	 *
+	 * Skipped SAI5 pads (GPIO3_IO21, GPIO3_IO23):
+	 *   These are EVK on-board LEDs (gpio3_21-gpios, gpio3_23-gpios
+	 *   in imx8mp-evk.dts gpio-leds node).  Do not use.
+	 *
+	 * SAI3 RX/TX pads → GPIO4_IO28-31 (SAI3 audio not used on EVK
+	 * ortho-bender; WM8960 uses SAI1 which is already depopulated).
+	 *
+	 * Pad config:
+	 *   0x00000146 = DSE6, FSEL1 (fast slew),  no pull — outputs
+	 *   0x000001C6 = DSE6, PUE+PUS (pull-up)   — open-drain inputs
+	 *   0x000001D6 = DSE6, PUE+PUS+HYS         — input with hysteresis
+	 */
+	pinctrl_m7_motor2_gpio: m7-motor2gpiogrp {
+		fsl,pins = <
+			/*
+			 * GPIO3_IO19 — CS2 ROTATE TMC5160 soft chip-select
+			 * SAI5_RXFS → GPIO3_IO19 (ALT5)
+			 * Output-high (de-asserted) at reset; M7 drives low to select.
+			 */
+			MX8MP_IOMUXC_SAI5_RXFS__GPIO3_IO19		0x00000146
+
+			/*
+			 * GPIO3_IO20 — CS3 LIFT TMC5160 soft chip-select
+			 * SAI5_RXC → GPIO3_IO20 (ALT5)
+			 */
+			MX8MP_IOMUXC_SAI5_RXC__GPIO3_IO20		0x00000146
+
+			/*
+			 * GPIO3_IO22 — ROTATE STEP (M7 GPT3 OC output)
+			 * SAI5_RXD1 → GPIO3_IO22 (ALT5)
+			 * NOTE: SAI5_RXD0 (GPIO3_IO21) is an EVK LED — skipped.
+			 */
+			MX8MP_IOMUXC_SAI5_RXD1__GPIO3_IO22		0x00000146
+
+			/*
+			 * GPIO3_IO24 — ROTATE DIR (M7 GPIO output)
+			 * SAI5_RXD3 → GPIO3_IO24 (ALT5)
+			 * NOTE: SAI5_RXD2 (GPIO3_IO23) is an EVK LED — skipped.
+			 */
+			MX8MP_IOMUXC_SAI5_RXD3__GPIO3_IO24		0x00000146
+
+			/*
+			 * GPIO3_IO25 — LIFT STEP (M7 GPT4 OC output)
+			 * SAI5_MCLK → GPIO3_IO25 (ALT5)
+			 */
+			MX8MP_IOMUXC_SAI5_MCLK__GPIO3_IO25		0x00000146
+
+			/*
+			 * GPIO4_IO28 — LIFT DIR (M7 GPIO output)
+			 * SAI3_RXFS → GPIO4_IO28 (ALT5)
+			 * SAI3 is not used by EVK audio subsystem.
+			 */
+			MX8MP_IOMUXC_SAI3_RXFS__GPIO4_IO28		0x00000146
+
+			/*
+			 * GPIO4_IO29 — ROTATE DIAG / StallGuard2 (open-drain input)
+			 * SAI3_RXC → GPIO4_IO29 (ALT5)
+			 * Pull-up enabled: 0x1C6 (PUE=1, PUS=1)
+			 */
+			MX8MP_IOMUXC_SAI3_RXC__GPIO4_IO29		0x000001C6
+
+			/*
+			 * GPIO4_IO30 — LIFT DIAG / StallGuard2 (open-drain input)
+			 * SAI3_RXD → GPIO4_IO30 (ALT5)
+			 */
+			MX8MP_IOMUXC_SAI3_RXD__GPIO4_IO30		0x000001C6
+
+			/*
+			 * GPIO4_IO31 — HOME_ROTATE microswitch (NC, pull-up)
+			 * SAI3_TXFS → GPIO4_IO31 (ALT5)
+			 * HYS enabled for clean edge detection: 0x1D6
+			 */
+			MX8MP_IOMUXC_SAI3_TXFS__GPIO4_IO31		0x000001D6
+		>;
+	};
+};
