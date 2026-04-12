@@ -175,10 +175,31 @@ async def wifi_scan():
     if not await _ensure_wpa_supplicant():
         return {"success": False, "error": "wpa_supplicant not available"}
 
+    # Trigger scan then poll scan_results until stable. This is more robust
+    # than a fixed sleep when the radio is cold or when concurrent AP mode
+    # (single-channel concurrency) time-shares beacons with off-channel
+    # scanning. We return as soon as two consecutive polls yield the same
+    # count, or when the polling budget is exhausted.
     await _run_wpa_cli("scan")
-    await asyncio.sleep(3)
 
-    result, _ = await _run_wpa_cli("scan_results")
+    result = ""
+    prev_count = -1
+    stable_hits = 0
+    await asyncio.sleep(1.0)
+    for _attempt in range(9):  # up to ~10s total (1s initial + 9 * 1s)
+        polled, _ = await _run_wpa_cli("scan_results")
+        count = max(0, len(polled.strip().split("\n")) - 1)
+        if count >= 1 and count == prev_count:
+            stable_hits += 1
+            if stable_hits >= 1:
+                result = polled
+                break
+        else:
+            stable_hits = 0
+        prev_count = count
+        result = polled
+        await asyncio.sleep(1.0)
+
     lines = result.strip().split("\n")
 
     networks: list[dict] = []
