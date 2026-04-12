@@ -1,0 +1,24 @@
+# Ortho-Bender SDK — Python dependencies
+# Pinned for reproducibility on i.MX8MP aarch64 Linux (Python 3.11)
+# Install: pip install -r requirements.txt
+
+# Core web framework
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# Settings / environment
+pydantic==2.9.2
+pydantic-settings==2.6.1
+python-dotenv==1.0.1
+
+# Camera (optional — install only if camera is present)
+# opencv-python-headless==4.10.0.84   # headless for embedded target
+# numpy==2.1.3                         # required by OpenCV
+
+# WebSocket support (included in uvicorn[standard] via websockets)
+websockets==13.1
+
+# Development utilities
+httpx==0.27.2         # for integration tests (async HTTP client)
+pytest==8.3.3
+pytest-asyncio==0.24.0

@@ -44,7 +44,7 @@ except ImportError:
     log.warning("OpenCV not available — camera will return synthetic frames")
 
 # Vimba X transport layer path (set by env or /opt/vimba-x)
-_GENICAM_PATH = os.environ.get("GENICAM_GENTL64_PATH", "/opt/vimba-x/cti")
+_GENICAM_PATH = os.environ.get("GENICAM_GENTL64_PATH", "/opt/VimbaX_2026-1/cti")
 if _VMBPY_AVAILABLE and _GENICAM_PATH:
     os.environ.setdefault("GENICAM_GENTL64_PATH", _GENICAM_PATH)
 
@@ -162,7 +162,11 @@ class CameraService:
                 if not cams:
                     vmb.__exit__(None, None, None)
                     return None, None
-                cam = cams[0]
+                # Prefer real cameras over simulators
+                real_cams = [c for c in cams if 'Simulator' not in c.get_model()]
+                cam = real_cams[0] if real_cams else cams[0]
+                log.info("VmbPy: selected camera %s (%s), %d total (%d real)",
+                         cam.get_name(), cam.get_model(), len(cams), len(real_cams))
                 cam.__enter__()
                 # Configure pixel format for mono camera
                 try:
