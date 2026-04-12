@@ -1,8 +1,9 @@
 /**
  * @file machine_config.h
  * @brief Machine geometry constants and axis configuration
- * @note All axes use TMC5160 stepper drivers with internal ramp generator.
- *       M7 sets XTARGET/VMAX/AMAX registers; TMC5160 handles real-time control.
+ * @note All axes use TMC260C-PA stepper drivers with STEP/DIR interface.
+ *       M7 generates STEP pulses via GPT timers; TMC260C-PA handles current
+ *       chopping and StallGuard2 diagnostics via SPI configuration.
  *
  * IEC 62304 SW Class: B
  */
@@ -17,7 +18,7 @@ extern "C" {
 #endif
 
 /* ──────────────────────────────────────────────
- * Feed Axis (L) Configuration — TMC5160 #0
+ * Feed Axis (L) Configuration — TMC260C-PA #0
  * ────────────────────────────────────────────── */
 
 #define FEED_STEPS_PER_MM           200.0f      /* Motor full steps per mm */
@@ -30,7 +31,7 @@ extern "C" {
 #define FEED_SG_THRESHOLD           7U          /* StallGuard2 threshold (from B2 legacy) */
 
 /* ──────────────────────────────────────────────
- * Bend Axis (theta) Configuration — TMC5160 #1
+ * Bend Axis (theta) Configuration — TMC260C-PA #1
  * ────────────────────────────────────────────── */
 
 #define BEND_STEPS_PER_DEG          (200.0f / 360.0f)   /* Stepper: 200 steps/rev */
@@ -44,7 +45,7 @@ extern "C" {
 #define BEND_SG_THRESHOLD           10U         /* StallGuard2 threshold (from B2 legacy) */
 
 /* ──────────────────────────────────────────────
- * Rotate Axis (beta) Configuration — TMC5160 #2 (Phase 2)
+ * Rotate Axis (beta) Configuration — TMC260C-PA #2 (Phase 2)
  * ────────────────────────────────────────────── */
 
 #define ROTATE_STEPS_PER_DEG        (200.0f / 360.0f)
@@ -56,7 +57,7 @@ extern "C" {
 #define ROTATE_SG_THRESHOLD         8U
 
 /* ──────────────────────────────────────────────
- * Lift Axis Configuration — TMC5160 #3 (Phase 2)
+ * Lift Axis Configuration — TMC260C-PA #3 (Phase 2)
  * ────────────────────────────────────────────── */
 
 #define LIFT_STEPS_PER_DEG          (200.0f / 360.0f)
@@ -68,19 +69,28 @@ extern "C" {
 #define LIFT_SG_THRESHOLD           8U
 
 /* ──────────────────────────────────────────────
- * TMC5160 SPI Configuration
+ * TMC260C-PA SPI Configuration
  * ────────────────────────────────────────────── */
 
-#define TMC5160_SPI_CLOCK_HZ        4000000U    /* 4 MHz (ISO7741 safe) */
-#define TMC5160_SPI_MODE            3U          /* CPOL=1, CPHA=1 */
-#define TMC5160_CS_SETUP_NS         50U         /* CS assert to SCLK delay */
-#define TMC5160_CHIP_COUNT          2U          /* Phase 1: FEED + BEND */
-/* #define TMC5160_CHIP_COUNT       4U */       /* Phase 2: + ROTATE + LIFT */
+#define TMC260C_SPI_CLOCK_HZ       2000000U    /* 2 MHz (TMC260C-PA safe max) */
+#define TMC260C_SPI_MODE            3U          /* CPOL=1, CPHA=1 */
+#define TMC260C_CS_SETUP_NS         100U        /* CS assert to SCLK delay */
+#define TMC260C_AXIS_COUNT          2U          /* Phase 1: FEED + BEND */
+/* #define TMC260C_AXIS_COUNT       4U */       /* Phase 2: + ROTATE + LIFT */
 
-/* TMC5160 default current settings (0-31 scale) */
-#define TMC5160_IHOLD_DEFAULT       8U          /* Hold current */
-#define TMC5160_IRUN_DEFAULT        20U         /* Run current */
-#define TMC5160_IHOLDDELAY_DEFAULT  6U          /* Hold delay */
+/** Number of TMC5160 chips (for tmc_poll_task and diagnostic reads) */
+#define TMC5160_CHIP_COUNT          AXIS_MAX
+
+/* TMC260C-PA default current settings (0-31 scale, SGCSCONF CS field) */
+#define TMC260C_IHOLD_DEFAULT       8U          /* Hold current (not used directly by TMC260C) */
+#define TMC260C_IRUN_DEFAULT        20U         /* Run current scale */
+
+/* ──────────────────────────────────────────────
+ * STEP Pulse Generation (GPT Timer)
+ * ────────────────────────────────────────────── */
+
+#define STEP_PULSE_WIDTH_US         2U          /* STEP pulse min width (TMC260C min: 1 us) */
+#define GPT_CLOCK_HZ                25000000U   /* GPT clock (i.MX8MP M7 GPT default) */
 
 /* ──────────────────────────────────────────────
  * Safety Limits
@@ -92,11 +102,11 @@ extern "C" {
 #define SAFETY_TEMP_NITI_AF_C       70.0f       /* NiTi austenite finish temp (default) */
 
 /* ──────────────────────────────────────────────
- * Control Loop Timing (revised for TMC5160 internal ramp)
+ * Control Loop Timing (STEP/DIR architecture)
  * ────────────────────────────────────────────── */
 
-#define MOTION_LOOP_PERIOD_US       10000U      /* 100 Hz trajectory manager */
-#define TMC_POLL_PERIOD_US          5000U       /* 200 Hz TMC5160 status polling */
+#define MOTION_LOOP_PERIOD_US       10000U      /* 100 Hz trajectory sequence manager */
+#define TMC_POLL_PERIOD_US          5000U       /* 200 Hz TMC260C status polling (SPI) */
 #define SAFETY_CHECK_PERIOD_US      100U        /* 10 kHz safety check (GPIO only) */
 #define STATUS_REPORT_PERIOD_MS     100U        /* 10 Hz status to A53 */
 

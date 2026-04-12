@@ -14,6 +14,9 @@
 #include "hal_spi.h"
 #include "hal_gpio.h"
 #include "machine_config.h"
+#include "motor_config.h"
+
+#include <stddef.h>
 
 /* ──────────────────────────────────────────────
  * SPI Helpers
@@ -268,4 +271,113 @@ void tmc5160_clear_errors(tmc5160_t *tmc)
 void tmc5160_set_chopconf(tmc5160_t *tmc, uint32_t chopconf)
 {
     tmc5160_write_reg(tmc, TMC_REG_CHOPCONF, chopconf);
+}
+
+/* ──────────────────────────────────────────────
+ * Motor HAL Adapter
+ * ────────────────────────────────────────────── */
+
+#include "motor_hal.h"
+#include "motor_config.h"
+
+static motor_result_t tmc5160_hal_init(void *drv_ctx)
+{
+    tmc5160_t *tmc = (tmc5160_t *)drv_ctx;
+    if (tmc == NULL) {
+        return MOTOR_ERR_INVALID_PARAM;
+    }
+    bool ok = tmc5160_init(tmc, tmc->axis, tmc->cs_index);
+    return ok ? MOTOR_OK : MOTOR_ERR_DRIVER_FAULT;
+}
+
+static motor_result_t tmc5160_hal_move_abs(void *drv_ctx, int32_t target_steps,
+                                           uint32_t vmax, uint32_t amax)
+{
+    tmc5160_t *tmc = (tmc5160_t *)drv_ctx;
+    if (tmc == NULL) {
+        return MOTOR_ERR_INVALID_PARAM;
+    }
+    tmc5160_set_ramp(tmc, vmax, amax, amax);
+    tmc5160_move_to(tmc, target_steps);
+    return MOTOR_OK;
+}
+
+static bool tmc5160_hal_position_reached(void *drv_ctx)
+{
+    return tmc5160_position_reached((tmc5160_t *)drv_ctx);
+}
+
+static int32_t tmc5160_hal_get_position(void *drv_ctx)
+{
+    return tmc5160_get_position((tmc5160_t *)drv_ctx);
+}
+
+static void tmc5160_hal_emergency_stop(void *drv_ctx)
+{
+    tmc5160_t *tmc = (tmc5160_t *)drv_ctx;
+    if (tmc != NULL) {
+        tmc5160_stop(tmc);
+        hal_gpio_write(HAL_GPIO_DRV_ENN, true);
+    }
+}
+
+static motor_result_t tmc5160_hal_poll_status(void *drv_ctx,
+                                              motor_status_t *out)
+{
+    tmc5160_t *tmc = (tmc5160_t *)drv_ctx;
+    if ((tmc == NULL) || (out == NULL)) {
+        return MOTOR_ERR_INVALID_PARAM;
+    }
+
+    uint32_t ds = tmc5160_poll_status(tmc);
+
+    out->ot        = (uint8_t)((ds & DRVSTAT_OT) != 0U);
+    out->otpw      = (uint8_t)((ds & DRVSTAT_OTPW) != 0U);
+    out->s2ga      = (uint8_t)((ds & DRVSTAT_S2GA) != 0U);
+    out->s2gb      = (uint8_t)((ds & DRVSTAT_S2GB) != 0U);
+    out->ola       = (uint8_t)((ds & DRVSTAT_OLa) != 0U);
+    out->olb       = (uint8_t)((ds & DRVSTAT_OLb) != 0U);
+    out->stall     = 0U;
+    out->sg_result = (int16_t)tmc->sg_result;
+
+    /* Check RAMPSTAT for StallGuard event */
+    uint32_t rs = tmc5160_read_reg(tmc, TMC_REG_RAMPSTAT);
+    if ((rs & RAMPSTAT_STATUS_SG) != 0U) {
+        out->stall = 1U;
+    }
+
+    if (tmc5160_has_fault(tmc)) {
+        if ((ds & DRVSTAT_OT) != 0U) {
+            return MOTOR_ERR_OVERTEMP;
+        }
+        return MOTOR_ERR_SHORT;
+    }
+
+    return MOTOR_OK;
+}
+
+static void tmc5160_hal_enable(void *drv_ctx)
+{
+    tmc5160_enable((tmc5160_t *)drv_ctx);
+}
+
+static void tmc5160_hal_disable(void *drv_ctx)
+{
+    tmc5160_disable((tmc5160_t *)drv_ctx);
+}
+
+static const motor_hal_ops_t s_tmc5160_ops = {
+    .init             = tmc5160_hal_init,
+    .move_abs         = tmc5160_hal_move_abs,
+    .position_reached = tmc5160_hal_position_reached,
+    .get_position     = tmc5160_hal_get_position,
+    .emergency_stop   = tmc5160_hal_emergency_stop,
+    .poll_status      = tmc5160_hal_poll_status,
+    .enable           = tmc5160_hal_enable,
+    .disable          = tmc5160_hal_disable,
+};
+
+const motor_hal_ops_t *tmc5160_get_motor_hal_ops(void)
+{
+    return &s_tmc5160_ops;
 }

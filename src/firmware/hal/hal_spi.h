@@ -19,7 +19,7 @@ extern "C" {
 
 /** SPI instance identifier */
 typedef enum {
-    HAL_SPI_TMC = 0,    /* SPI bus for TMC5160 motor drivers */
+    HAL_SPI_TMC = 0,    /* SPI bus for TMC260C-PA motor drivers */
     HAL_SPI_COUNT
 } hal_spi_id_t;
 
@@ -54,7 +54,7 @@ bool hal_spi_transfer(hal_spi_id_t id,
 /**
  * @brief Assert chip-select for a specific device on the SPI bus
  * @param id SPI bus identifier
- * @param cs_index Chip-select index (0 = first TMC5160, etc.)
+ * @param cs_index Chip-select index (0 = first TMC260C-PA, etc.)
  */
 void hal_spi_cs_assert(hal_spi_id_t id, uint8_t cs_index);
 

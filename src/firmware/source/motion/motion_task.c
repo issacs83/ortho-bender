@@ -22,7 +22,12 @@
 #include "semphr.h"
 
 #include "motion_controller.h"
+#include "motor_hal.h"
+#include "motor_config.h"
 #include "tmc260c.h"
+#include "tmc5072.h"
+#include "tmc5130.h"
+#include "tmc5160.h"
 #include "step_gen.h"
 #include "hal_gpio.h"
 #include "machine_config.h"
@@ -131,8 +136,72 @@ static float                s_positions[AXIS_MAX] = {0};
 /** Active axis mask (Phase 1: FEED + BEND only) */
 static uint8_t              s_axis_mask = AXIS_MASK_PHASE1;
 
-/** TMC260C-PA driver instances (one per axis, static allocation) */
-static tmc260c_t            s_tmc[AXIS_MAX];
+/* ──────────────────────────────────────────────
+ * Per-axis driver contexts (static allocation, MISRA compliant)
+ *
+ * Each axis allocates exactly one driver context type selected at
+ * compile time via the AXIS_{NAME}_DRIVER_TYPE macros in motor_config.h.
+ * Axes are then bound to the unified motor_hal layer via motor_hal_init().
+ * ────────────────────────────────────────────── */
+
+#if (AXIS_FEED_DRIVER_TYPE == MOTOR_DRV_TMC260C)
+static tmc260c_t s_drv_feed;
+#elif (AXIS_FEED_DRIVER_TYPE == MOTOR_DRV_TMC5160)
+static tmc5160_t s_drv_feed;
+#elif (AXIS_FEED_DRIVER_TYPE == MOTOR_DRV_TMC5130)
+static tmc5130_t s_drv_feed;
+#elif (AXIS_FEED_DRIVER_TYPE == MOTOR_DRV_TMC5072)
+static tmc5072_t s_drv_feed;
+#else
+#error "Unsupported AXIS_FEED_DRIVER_TYPE"
+#endif
+
+#if (AXIS_BEND_DRIVER_TYPE == MOTOR_DRV_TMC260C)
+static tmc260c_t s_drv_bend;
+#elif (AXIS_BEND_DRIVER_TYPE == MOTOR_DRV_TMC5160)
+static tmc5160_t s_drv_bend;
+#elif (AXIS_BEND_DRIVER_TYPE == MOTOR_DRV_TMC5130)
+static tmc5130_t s_drv_bend;
+#elif (AXIS_BEND_DRIVER_TYPE == MOTOR_DRV_TMC5072)
+static tmc5072_t s_drv_bend;
+#else
+#error "Unsupported AXIS_BEND_DRIVER_TYPE"
+#endif
+
+#if (AXIS_ROTATE_DRIVER_TYPE == MOTOR_DRV_TMC260C)
+static tmc260c_t s_drv_rotate;
+#elif (AXIS_ROTATE_DRIVER_TYPE == MOTOR_DRV_TMC5160)
+static tmc5160_t s_drv_rotate;
+#elif (AXIS_ROTATE_DRIVER_TYPE == MOTOR_DRV_TMC5130)
+static tmc5130_t s_drv_rotate;
+#elif (AXIS_ROTATE_DRIVER_TYPE == MOTOR_DRV_TMC5072)
+static tmc5072_t s_drv_rotate;
+#else
+#error "Unsupported AXIS_ROTATE_DRIVER_TYPE"
+#endif
+
+#if (AXIS_LIFT_DRIVER_TYPE == MOTOR_DRV_TMC5160)
+static tmc5160_t s_drv_lift;
+#elif (AXIS_LIFT_DRIVER_TYPE == MOTOR_DRV_TMC260C)
+static tmc260c_t s_drv_lift;
+#elif (AXIS_LIFT_DRIVER_TYPE == MOTOR_DRV_TMC5130)
+static tmc5130_t s_drv_lift;
+#elif (AXIS_LIFT_DRIVER_TYPE == MOTOR_DRV_TMC5072)
+static tmc5072_t s_drv_lift;
+#else
+#error "Unsupported AXIS_LIFT_DRIVER_TYPE"
+#endif
+
+/** Unified motor HAL handles -- one per axis */
+static motor_hal_t s_motor[AXIS_MAX];
+
+/** Per-axis driver type (mirror of motor_config.h compile-time selection) */
+static const motor_driver_type_t s_axis_driver_type[AXIS_MAX] = {
+    (motor_driver_type_t)AXIS_FEED_DRIVER_TYPE,
+    (motor_driver_type_t)AXIS_BEND_DRIVER_TYPE,
+    (motor_driver_type_t)AXIS_ROTATE_DRIVER_TYPE,
+    (motor_driver_type_t)AXIS_LIFT_DRIVER_TYPE,
+};
 
 /* ──────────────────────────────────────────────
  * Forward Declarations (internal helpers)
@@ -161,6 +230,168 @@ static const uint8_t s_tmc_cs_pins[AXIS_MAX] = {
     HAL_GPIO_TMC_SPI_CS2,
     HAL_GPIO_TMC_SPI_CS3,
 };
+
+/* ──────────────────────────────────────────────
+ * Internal: per-axis driver context pointer + vtable binding
+ * ────────────────────────────────────────────── */
+
+/**
+ * @brief Return the static driver context pointer for a given axis
+ */
+static void *motion_drv_ctx(uint8_t axis)
+{
+    switch (axis) {
+    case AXIS_FEED:   return (void *)&s_drv_feed;
+    case AXIS_BEND:   return (void *)&s_drv_bend;
+    case AXIS_ROTATE: return (void *)&s_drv_rotate;
+    case AXIS_LIFT:   return (void *)&s_drv_lift;
+    default:          return NULL;
+    }
+}
+
+/**
+ * @brief Return the motor_hal_ops vtable for a given driver type
+ */
+static const motor_hal_ops_t *motion_drv_ops(motor_driver_type_t type)
+{
+    switch (type) {
+    case MOTOR_DRV_TMC260C: return tmc260c_get_motor_hal_ops();
+    case MOTOR_DRV_TMC5072: return tmc5072_get_motor_hal_ops();
+    case MOTOR_DRV_TMC5130: return tmc5130_get_motor_hal_ops();
+    case MOTOR_DRV_TMC5160: return tmc5160_get_motor_hal_ops();
+    default:                return NULL;
+    }
+}
+
+/**
+ * @brief Pre-fill the driver context axis/cs_index fields prior to init
+ *
+ * Each driver stores its axis_id and cs_index in the first two bytes of
+ * its context struct (verified by the tmc260c_t / tmc5160_t / tmc5130_t /
+ * tmc5072_t definitions).  We avoid a switch-on-type here by accessing
+ * the fields through the individual typed pointers.
+ */
+static void motion_drv_prepare(uint8_t axis)
+{
+    const motor_driver_type_t type = s_axis_driver_type[axis];
+    const uint8_t cs = s_tmc_cs_pins[axis];
+
+    switch (type) {
+    case MOTOR_DRV_TMC260C: {
+        tmc260c_t *p = (tmc260c_t *)motion_drv_ctx(axis);
+        p->axis = axis;
+        p->cs_index = cs;
+        break;
+    }
+    case MOTOR_DRV_TMC5160: {
+        tmc5160_t *p = (tmc5160_t *)motion_drv_ctx(axis);
+        p->axis = axis;
+        p->cs_index = cs;
+        break;
+    }
+    case MOTOR_DRV_TMC5130: {
+        tmc5130_t *p = (tmc5130_t *)motion_drv_ctx(axis);
+        p->axis = axis;
+        p->cs_index = cs;
+        break;
+    }
+    case MOTOR_DRV_TMC5072: {
+        tmc5072_t *p = (tmc5072_t *)motion_drv_ctx(axis);
+        p->axis = axis;
+        p->cs_index = cs;
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+/**
+ * @brief Apply run current to the driver (type-dispatched config call)
+ *
+ * motor_hal vtable does not include current configuration (IC-specific
+ * units differ between TMC260C scale [0-31] and TMC5xxx IHOLD_IRUN).
+ * We branch on the axis driver type and call the native API.
+ */
+static void motion_drv_set_current(uint8_t axis, uint8_t irun)
+{
+    const motor_driver_type_t type = s_axis_driver_type[axis];
+
+    switch (type) {
+    case MOTOR_DRV_TMC260C:
+        tmc260c_set_current((tmc260c_t *)motion_drv_ctx(axis), irun);
+        break;
+    case MOTOR_DRV_TMC5160:
+        tmc5160_set_current((tmc5160_t *)motion_drv_ctx(axis),
+                            TMC5160_IHOLD_DEFAULT, irun,
+                            TMC5160_IHOLDDELAY_DEFAULT);
+        break;
+    case MOTOR_DRV_TMC5130:
+        tmc5130_set_current((tmc5130_t *)motion_drv_ctx(axis),
+                            TMC5160_IHOLD_DEFAULT, irun,
+                            TMC5160_IHOLDDELAY_DEFAULT);
+        break;
+    case MOTOR_DRV_TMC5072:
+        tmc5072_set_current((tmc5072_t *)motion_drv_ctx(axis),
+                            TMC5160_IHOLD_DEFAULT, irun,
+                            TMC5160_IHOLDDELAY_DEFAULT);
+        break;
+    default:
+        break;
+    }
+}
+
+/**
+ * @brief Apply StallGuard2 threshold to the driver (type-dispatched)
+ */
+static void motion_drv_set_stallguard(uint8_t axis, int8_t threshold)
+{
+    const motor_driver_type_t type = s_axis_driver_type[axis];
+
+    switch (type) {
+    case MOTOR_DRV_TMC260C:
+        tmc260c_set_stallguard((tmc260c_t *)motion_drv_ctx(axis),
+                               threshold, true);
+        break;
+    case MOTOR_DRV_TMC5160:
+        tmc5160_set_stallguard((tmc5160_t *)motion_drv_ctx(axis), threshold);
+        break;
+    case MOTOR_DRV_TMC5130:
+        tmc5130_set_stallguard((tmc5130_t *)motion_drv_ctx(axis), threshold);
+        break;
+    case MOTOR_DRV_TMC5072:
+        tmc5072_set_stallguard((tmc5072_t *)motion_drv_ctx(axis), threshold);
+        break;
+    default:
+        break;
+    }
+}
+
+/**
+ * @brief Initialize a single axis: bind motor_hal, call init
+ * @return ERR_NONE on success
+ */
+static error_code_t motion_init_axis(uint8_t axis)
+{
+    motion_drv_prepare(axis);
+
+    s_motor[axis].type          = s_axis_driver_type[axis];
+    s_motor[axis].drv_ctx       = motion_drv_ctx(axis);
+    s_motor[axis].ops           = motion_drv_ops(s_axis_driver_type[axis]);
+    s_motor[axis].axis_id       = axis;
+    s_motor[axis].position_usteps = 0;
+    s_motor[axis].initialized   = false;
+
+    if ((s_motor[axis].drv_ctx == NULL) || (s_motor[axis].ops == NULL)) {
+        return ERR_NOT_INITIALIZED;
+    }
+
+    motor_result_t mr = motor_hal_init(&s_motor[axis]);
+    if (mr != MOTOR_OK) {
+        return ERR_NOT_INITIALIZED;
+    }
+    return ERR_NONE;
+}
 
 /* ──────────────────────────────────────────────
  * Public: Queue Handle Accessor (used by ipc_task)
@@ -193,15 +424,21 @@ error_code_t motion_init(void)
     s_total_steps = 0;
     (void)memset(s_positions, 0, sizeof(s_positions));
 
-    /* Initialize step pulse generator (GPT timers + STEP/DIR GPIOs) */
-    if (!step_gen_init(TMC260C_AXIS_COUNT)) {
+    /* Initialize step pulse generator (GPT timers + STEP/DIR GPIOs).
+     * step_gen is only used by TMC260C axes; it is safe to init for all
+     * potentially-STEP/DIR axes up to AXIS_MAX. */
+    if (!step_gen_init(AXIS_MAX)) {
         return ERR_NOT_INITIALIZED;
     }
 
-    /* Initialize TMC260C-PA drivers via SPI */
-    for (uint8_t i = 0U; i < TMC260C_AXIS_COUNT; i++) {
-        if (!tmc260c_init(&s_tmc[i], i, s_tmc_cs_pins[i])) {
-            return ERR_NOT_INITIALIZED;
+    /* Initialize each active axis via the unified motor HAL */
+    for (uint8_t i = 0U; i < AXIS_MAX; i++) {
+        if ((s_axis_mask & (1U << i)) == 0U) {
+            continue;
+        }
+        error_code_t rc = motion_init_axis(i);
+        if (rc != ERR_NONE) {
+            return rc;
         }
     }
 
@@ -257,9 +494,12 @@ error_code_t motion_reset(void)
         }
     }
 
-    /* Re-initialize TMC260C-PA drivers (clears faults via SPI re-config) */
-    for (uint8_t i = 0U; i < TMC260C_AXIS_COUNT; i++) {
-        (void)tmc260c_init(&s_tmc[i], i, s_tmc_cs_pins[i]);
+    /* Re-initialize drivers via the unified HAL (clears faults via re-config) */
+    for (uint8_t i = 0U; i < AXIS_MAX; i++) {
+        if ((s_axis_mask & (1U << i)) == 0U) {
+            continue;
+        }
+        (void)motion_init_axis(i);
     }
 
     s_state = MOTION_STATE_IDLE;
@@ -293,22 +533,26 @@ error_code_t motion_set_params(const msg_motion_param_t *params)
         s_axis_accel[axis] = params->amax;
     }
 
-    /* Update TMC260C-PA current setting */
+    /* Update driver run current (type-dispatched config call) */
     if (params->irun > 0U) {
-        tmc260c_set_current(&s_tmc[axis], (uint8_t)params->irun);
+        motion_drv_set_current(axis, (uint8_t)params->irun);
     }
 
     /* Update StallGuard2 threshold */
-    tmc260c_set_stallguard(&s_tmc[axis], (int8_t)params->sg_threshold, true);
+    motion_drv_set_stallguard(axis, (int8_t)params->sg_threshold);
 
     return ERR_NONE;
 }
 
 void motion_tick(void)
 {
-    /* Update cached positions from step_gen position counters */
-    for (uint8_t i = 0U; i < TMC260C_AXIS_COUNT; i++) {
-        int32_t xactual = step_gen_get_position(i);
+    /* Update cached positions via the unified motor HAL
+     * (TMC260C reads from step_gen; TMC5xxx reads XACTUAL via SPI cache). */
+    for (uint8_t i = 0U; i < AXIS_MAX; i++) {
+        if ((s_axis_mask & (1U << i)) == 0U) {
+            continue;
+        }
+        int32_t xactual = motor_hal_get_position(&s_motor[i]);
 
         switch (i) {
         case AXIS_FEED:
@@ -376,21 +620,26 @@ static bool motion_check_estop(void)
  */
 static error_code_t motion_move_axis_and_wait(uint8_t axis, int32_t target_usteps)
 {
-    if (axis >= TMC260C_AXIS_COUNT) {
+    if (axis >= AXIS_MAX) {
+        return ERR_MOTION_AXIS_DISABLED;
+    }
+    if ((s_axis_mask & (1U << axis)) == 0U) {
         return ERR_MOTION_AXIS_DISABLED;
     }
 
-    /* Compute relative step count from current position */
-    int32_t current_pos = step_gen_get_position(axis);
-    int32_t delta = target_usteps - current_pos;
-
     /* Zero move: already at target */
-    if (delta == 0) {
+    int32_t current_pos = motor_hal_get_position(&s_motor[axis]);
+    if (target_usteps == current_pos) {
         return ERR_NONE;
     }
 
-    /* Start trapezoidal move */
-    if (!step_gen_move(axis, delta, s_axis_freq[axis], s_axis_accel[axis])) {
+    /* Issue absolute move through the unified HAL.  The TMC260C adapter
+     * delegates to step_gen_move() internally; TMC5xxx adapters program
+     * the on-chip ramp generator via SPI. */
+    motor_result_t mr = motor_hal_move_abs(&s_motor[axis], target_usteps,
+                                           s_axis_freq[axis],
+                                           s_axis_accel[axis]);
+    if (mr != MOTOR_OK) {
         return ERR_MOTION_AXIS_DISABLED;
     }
 
@@ -402,27 +651,28 @@ static error_code_t motion_move_axis_and_wait(uint8_t axis, int32_t target_ustep
 
         /* E-STOP check every iteration */
         if (motion_check_estop()) {
-            step_gen_stop(axis);
+            motor_hal_emergency_stop(&s_motor[axis]);
             return ERR_MOTION_ESTOP_ACTIVE;
         }
 
-        /* TMC260C-PA fault check (poll status via SPI) */
-        (void)tmc260c_read_status(&s_tmc[axis]);
-        if (tmc260c_has_fault(&s_tmc[axis])) {
-            step_gen_stop(axis);
+        /* Driver fault check via unified status poll */
+        motor_status_t st;
+        (void)motor_hal_poll_status(&s_motor[axis], &st);
+        if ((st.ot != 0U) || (st.s2ga != 0U) || (st.s2gb != 0U)) {
+            motor_hal_emergency_stop(&s_motor[axis]);
             s_state = MOTION_STATE_FAULT;
             motion_send_alarm(ERR_TMC_DRIVER_ERROR, 2U, axis);
             return ERR_TMC_DRIVER_ERROR;
         }
 
-        /* Step generation complete? */
-        if (step_gen_is_complete(axis)) {
+        /* Motion complete? */
+        if (motor_hal_position_reached(&s_motor[axis])) {
             return ERR_NONE;
         }
     }
 
     /* Timeout -- stop axis and report */
-    step_gen_stop(axis);
+    motor_hal_emergency_stop(&s_motor[axis]);
     motion_send_alarm(ERR_TIMEOUT, 1U, axis);
     return ERR_TIMEOUT;
 }
@@ -449,7 +699,7 @@ static error_code_t motion_execute_single_step(const bcode_step_t *step,
         if (step->beta_deg != 0.0f) {
             int32_t delta = motion_deg_to_usteps_rotate(step->beta_deg);
             /* Rotate is relative -- add to current position */
-            int32_t target = step_gen_get_position(AXIS_ROTATE) + delta;
+            int32_t target = motor_hal_get_position(&s_motor[AXIS_ROTATE]) + delta;
             rc = motion_move_axis_and_wait(AXIS_ROTATE, target);
             if (rc != ERR_NONE) {
                 return rc;
@@ -461,7 +711,7 @@ static error_code_t motion_execute_single_step(const bcode_step_t *step,
     if (step->L_mm > 0.0f) {
         int32_t delta = motion_mm_to_usteps(step->L_mm);
         /* Feed is relative -- add to current position */
-        int32_t target = step_gen_get_position(AXIS_FEED) + delta;
+        int32_t target = motor_hal_get_position(&s_motor[AXIS_FEED]) + delta;
         rc = motion_move_axis_and_wait(AXIS_FEED, target);
         if (rc != ERR_NONE) {
             return rc;
@@ -576,7 +826,7 @@ static void motion_handle_jog(const msg_motion_jog_t *jog)
             delta = -delta;
         }
 
-        int32_t target = step_gen_get_position(axis) + delta;
+        int32_t target = motor_hal_get_position(&s_motor[axis]) + delta;
         (void)motion_move_axis_and_wait(axis, target);
     }
 }

@@ -70,7 +70,7 @@ motion_state_t motion_get_state(void);
 void motion_get_positions(float positions[AXIS_MAX]);
 
 /**
- * @brief Set TMC5160 motion parameters for an axis
+ * @brief Set motion parameters for an axis (velocity, accel, current, SG)
  */
 error_code_t motion_set_params(const msg_motion_param_t *params);
 

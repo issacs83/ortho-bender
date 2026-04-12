@@ -18,24 +18,34 @@ extern "C" {
 
 /** GPIO pin identifier (board-specific mapping in board.h) */
 typedef enum {
-    /* TMC5160 chip-select pins */
-    HAL_GPIO_TMC_CS0 = 0,      /* FEED axis CS */
-    HAL_GPIO_TMC_CS1,           /* BEND axis CS */
-    HAL_GPIO_TMC_CS2,           /* ROTATE axis CS (Phase 2) */
-    HAL_GPIO_TMC_CS3,           /* LIFT axis CS (Phase 2) */
+    /* STEP/DIR pins for TMC260C-PA motor drivers */
+    HAL_GPIO_STEP0 = 0,         /* FEED axis STEP */
+    HAL_GPIO_DIR0,              /* FEED axis DIR */
+    HAL_GPIO_STEP1,             /* BEND axis STEP */
+    HAL_GPIO_DIR1,              /* BEND axis DIR */
+    HAL_GPIO_STEP2,             /* ROTATE axis STEP (Phase 2) */
+    HAL_GPIO_DIR2,              /* ROTATE axis DIR  (Phase 2) */
+    HAL_GPIO_STEP3,             /* LIFT axis STEP   (Phase 2) */
+    HAL_GPIO_DIR3,              /* LIFT axis DIR    (Phase 2) */
 
-    /* TMC5160 diagnostic pins */
-    HAL_GPIO_TMC_DIAG0,         /* FEED DIAG output */
-    HAL_GPIO_TMC_DIAG1,         /* BEND DIAG output */
-    HAL_GPIO_TMC_DIAG2,         /* ROTATE DIAG (Phase 2) */
-    HAL_GPIO_TMC_DIAG3,         /* LIFT DIAG (Phase 2) */
+    /* TMC260C-PA SPI chip-select pins */
+    HAL_GPIO_TMC_SPI_CS0,      /* FEED axis SPI CS */
+    HAL_GPIO_TMC_SPI_CS1,      /* BEND axis SPI CS */
+    HAL_GPIO_TMC_SPI_CS2,      /* ROTATE axis SPI CS (Phase 2) */
+    HAL_GPIO_TMC_SPI_CS3,      /* LIFT axis SPI CS   (Phase 2) */
+
+    /* TMC260C-PA diagnostic pins (active-low, directly map to StallGuard2) */
+    HAL_GPIO_TMC_DIAG0,        /* FEED DIAG output */
+    HAL_GPIO_TMC_DIAG1,        /* BEND DIAG output */
+    HAL_GPIO_TMC_DIAG2,        /* ROTATE DIAG (Phase 2) */
+    HAL_GPIO_TMC_DIAG3,        /* LIFT DIAG (Phase 2) */
 
     /* Safety */
-    HAL_GPIO_DRV_ENN,           /* Driver enable (active-low, shared) */
-    HAL_GPIO_ESTOP_IN,          /* E-STOP button input */
+    HAL_GPIO_DRV_ENN,          /* Driver enable (active-high disables, shared) */
+    HAL_GPIO_ESTOP_IN,         /* E-STOP button input (active-low) */
 
     /* Homing */
-    HAL_GPIO_HOME_BEND,         /* BEND axis microswitch */
+    HAL_GPIO_HOME_BEND,        /* BEND axis microswitch */
 
     HAL_GPIO_COUNT
 } hal_gpio_pin_t;

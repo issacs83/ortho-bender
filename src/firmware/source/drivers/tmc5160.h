@@ -273,6 +273,16 @@ void tmc5160_clear_errors(tmc5160_t *tmc);
  */
 void tmc5160_set_chopconf(tmc5160_t *tmc, uint32_t chopconf);
 
+/**
+ * @brief Get motor HAL ops for TMC5160
+ * @return Pointer to static motor_hal_ops_t vtable
+ *
+ * Used by motor_hal.c to bind a TMC5160 axis to the unified motor HAL
+ * interface.  The returned pointer is valid for the lifetime of the program.
+ */
+struct motor_hal_ops;
+const struct motor_hal_ops *tmc5160_get_motor_hal_ops(void);
+
 #ifdef __cplusplus
 }
 #endif

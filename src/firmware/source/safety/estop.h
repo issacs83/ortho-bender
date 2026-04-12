@@ -4,8 +4,8 @@
  * @note E-STOP must respond within < 1ms (hardware interrupt)
  *
  * Dual-path E-STOP architecture:
- *   Path 1 (SW): GPIO ISR → estop_irq_handler() → disable motion tasks
- *   Path 2 (HW): DRV_ENN line tied to TMC5160 enable pins — kills driver
+ *   Path 1 (SW): GPIO ISR -> estop_irq_handler() -> stop step_gen + set flag
+ *   Path 2 (HW): DRV_ENN line tied to TMC260C-PA enable pins -- kills driver
  *                 output regardless of M7 firmware state
  *
  * Both paths activate simultaneously. HW path is fail-safe (active-low).
@@ -42,7 +42,7 @@ void estop_trigger_sw(void);
 /**
  * @brief Clear E-STOP state (only after fault is resolved)
  * @return true if cleared successfully, false if hardware E-STOP still pressed
- * @note De-asserts DRV_ENN to re-enable TMC5160 drivers
+ * @note De-asserts DRV_ENN to re-enable TMC260C-PA drivers
  */
 bool estop_clear(void);
 
