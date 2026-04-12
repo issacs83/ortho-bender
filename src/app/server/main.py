@@ -22,11 +22,13 @@ IEC 62304 SW Class: B
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .routers import bending, cam, camera, motor, system, wifi
@@ -175,6 +177,23 @@ def create_app() -> FastAPI:
     @application.get("/health", tags=["meta"])
     async def health():
         return {"status": "ok"}
+
+    # Static frontend (optional): served at "/" when a built dist is present.
+    # API, WebSocket, /health, /docs routers above take precedence because
+    # FastAPI matches routes in registration order. html=True enables SPA
+    # fallback (missing paths return index.html).
+    _frontend_dist = os.environ.get(
+        "OB_FRONTEND_DIST", "/opt/ortho-bender/frontend-dist"
+    )
+    if os.path.isdir(_frontend_dist):
+        application.mount(
+            "/",
+            StaticFiles(directory=_frontend_dist, html=True),
+            name="frontend",
+        )
+        log.info("Frontend dist mounted at / from %s", _frontend_dist)
+    else:
+        log.info("Frontend dist not found at %s — skipping static mount", _frontend_dist)
 
     return application
 
