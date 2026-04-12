@@ -123,6 +123,10 @@ class IpcClient:
         # Mock state (shared across calls in mock mode)
         self._mock_motion_state: int = 0   # MOTION_STATE_IDLE
         self._mock_position: list[float] = [0.0, 0.0, 0.0, 0.0]
+        self._mock_velocity: list[float] = [0.0, 0.0, 0.0, 0.0]
+        self._mock_current_step: int = 0
+        self._mock_total_steps: int = 0
+        self._mock_bcode_task: Optional[asyncio.Task] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -359,13 +363,31 @@ class IpcClient:
             return self._mock_status_motion()
 
         if msg_type == MSG_MOTION_EXECUTE_BCODE:
-            # Simulate feed on axis 0 for each step
+            # Parse header (mirrors build_bcode_payload):
+            #   step_count(H=2B) + material_id(H=2B) + diameter(f=4B) + N × (L,beta,theta) fff
+            step_count = 0
+            steps: list[tuple[float, float, float]] = []
+            if len(payload) >= 8:
+                step_count = struct.unpack_from("<H", payload, 0)[0]
+                for i in range(step_count):
+                    off = 8 + i * 12
+                    if off + 12 <= len(payload):
+                        L, beta, theta = struct.unpack_from("<fff", payload, off)
+                        steps.append((L, beta, theta))
+
+            # Cancel any previous bcode simulation task
+            if self._mock_bcode_task and not self._mock_bcode_task.done():
+                self._mock_bcode_task.cancel()
+
+            self._mock_total_steps = step_count
+            self._mock_current_step = 0
             self._mock_motion_state = 2  # RUNNING
-            self._mock_position[0] += 10.0
-            self._mock_motion_state = 0
-            # Return MSG_STATUS_BCODE_COMPLETE
-            resp_payload = struct.pack("<H", 0)  # step_count placeholder
-            return IpcMessage(msg_type=MSG_STATUS_BCODE_COMPLETE, payload=resp_payload)
+            self._mock_bcode_task = asyncio.create_task(self._simulate_bcode(steps))
+            # Dispatch-acknowledge only; completion arrives later via internal state
+            return IpcMessage(
+                msg_type=MSG_STATUS_BCODE_COMPLETE,
+                payload=struct.pack("<H", step_count),
+            )
 
         if msg_type == MSG_DIAG_GET_VERSION:
             # Return MSG_STATUS_VERSION: major=1, minor=0, patch=0, reserved=0, ts=0
@@ -389,17 +411,46 @@ class IpcClient:
 
     def _mock_status_motion(self) -> IpcMessage:
         """Build a MSG_STATUS_MOTION response from current mock state."""
-        # state(1B) + position[4](16B) + velocity[4](16B) + current_step(2B) + total_steps(2B) + axis_mask(1B)
         payload = struct.pack(
             "<B4f4fHHB",
             self._mock_motion_state,
             *self._mock_position,
-            0.0, 0.0, 0.0, 0.0,  # velocities
-            0,    # current_step
-            0,    # total_steps
+            *self._mock_velocity,
+            self._mock_current_step,
+            self._mock_total_steps,
             0x03  # PHASE1 axis mask
         )
         return IpcMessage(msg_type=MSG_STATUS_MOTION, payload=payload)
+
+    async def _simulate_bcode(
+        self, steps: list[tuple[float, float, float]]
+    ) -> None:
+        """
+        Background task that simulates step-by-step B-code execution.
+        Each step takes ~0.3 s and updates position/velocity/step counters so
+        /ws/motor subscribers can observe realistic progress.
+        """
+        try:
+            step_duration = 0.3
+            sub_ticks = 6
+            for idx, (L, beta, theta) in enumerate(steps):
+                self._mock_current_step = idx + 1
+                self._mock_motion_state = 2  # RUNNING
+                # FEED phase
+                self._mock_velocity[0] = L / step_duration if L else 0.0
+                self._mock_velocity[2] = beta / step_duration if beta else 0.0
+                self._mock_velocity[1] = theta / step_duration if theta else 0.0
+                for _ in range(sub_ticks):
+                    self._mock_position[0] += L / sub_ticks
+                    self._mock_position[2] += beta / sub_ticks
+                    self._mock_position[1] += theta / sub_ticks
+                    await asyncio.sleep(step_duration / sub_ticks)
+            self._mock_velocity = [0.0, 0.0, 0.0, 0.0]
+            self._mock_motion_state = 0  # IDLE
+        except asyncio.CancelledError:
+            self._mock_velocity = [0.0, 0.0, 0.0, 0.0]
+            self._mock_motion_state = 0
+            raise
 
 
 # ---------------------------------------------------------------------------
