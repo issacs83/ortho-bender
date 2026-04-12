@@ -187,11 +187,13 @@ journalctl -u ortho-bender-sdk -f
 2. **WebSocket 구독자**를 하나 만들어 재접속/백오프 처리
 3. **Mock 모드 환경변수**를 앱에도 전달해 개발/CI 환경에서 사용
 
-Python/JS 샘플 래퍼는 `../../examples/`에 있습니다:
-- `examples/python_sdk_client.py`
-- `examples/node_sdk_client.js`
-- `examples/curl_sdk_examples.sh`
-- `examples/opencv_frame_pipeline.py`
+Python / cURL 예제는 저장소 내 `src/app/sdk-examples/` 에 있습니다:
+- `src/app/sdk-examples/python/basic_bend.py` — 3-step 벤딩 튜토리얼
+- `src/app/sdk-examples/python/cam_from_curve.py` — 3D 커브 → B-code → 실행
+- `src/app/sdk-examples/python/camera_stream.py` — REST 스냅샷 + WS 스트림
+- `src/app/sdk-examples/python/cad_cam_opencv_workflow.py` — CAD/CAM + OpenCV 통합 파이프라인
+- `src/app/sdk-examples/curl/api_examples.sh` — cURL 요리책
+- `src/app/sdk-examples/python/tests/` — pytest 기반 워크플로우 검증 예제
 
 ---
 
