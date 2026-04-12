@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..models.schemas import (
     ApiResponse,
+    MotionState,
     MotorHomeRequest,
     MotorJogRequest,
     MotorMoveRequest,
@@ -141,6 +142,51 @@ async def motor_estop(
     except Exception as exc:
         log.critical("SW E-STOP failed: %s", exc)
         return err(str(exc), "MOTOR_ESTOP_ERROR")
+
+
+# ---------------------------------------------------------------------------
+# POST /api/motor/enable  /  /api/motor/disable  (TMC260C-PA DRV_ENN)
+# ---------------------------------------------------------------------------
+
+@router.post("/enable", response_model=ApiResponse)
+async def motor_enable(
+    svc: MotorService = Depends(_motor_service),
+) -> ApiResponse:
+    """
+    Assert TMC260C-PA DRV_ENN — re-energize stepper coils on all axes.
+    After this call the motors hold position again.
+    """
+    try:
+        status = await svc.enable_drivers()
+        return ok(status.model_dump())
+    except Exception as exc:
+        log.error("Motor enable failed: %s", exc)
+        return err(str(exc), "MOTOR_ENABLE_ERROR")
+
+
+@router.post("/disable", response_model=ApiResponse)
+async def motor_disable(
+    svc: MotorService = Depends(_motor_service),
+) -> ApiResponse:
+    """
+    De-energize TMC260C-PA coils (release DRV_ENN).
+
+    Rejects with 409 MOTOR_BUSY if any axis is still moving — callers must
+    issue /stop first. VMot 12V is NOT cut; this is a standard industrial
+    driver-disable, safe to toggle from client code.
+    """
+    try:
+        current = await svc.get_status()
+        if current.state not in (MotionState.IDLE, MotionState.FAULT, MotionState.ESTOP):
+            return err(
+                f"Cannot disable drivers in state {current.state.name} — stop motion first",
+                "MOTOR_BUSY",
+            )
+        status = await svc.disable_drivers()
+        return ok(status.model_dump())
+    except Exception as exc:
+        log.error("Motor disable failed: %s", exc)
+        return err(str(exc), "MOTOR_DISABLE_ERROR")
 
 
 # ---------------------------------------------------------------------------

@@ -38,6 +38,7 @@ typedef enum {
     MSG_MOTION_SET_PARAM        = 0x0105,   /* Set TMC5160/motion parameters */
     MSG_MOTION_RESET            = 0x0106,   /* Reset after fault */
     MSG_MOTION_WIRE_DETECT      = 0x0107,   /* Trigger wire insertion detection (Nudge Test) */
+    MSG_MOTION_SET_DRV_ENABLE   = 0x0108,   /* Toggle TMC260C-PA DRV_ENN line (enable/disable drivers) */
 
     /* A53 -> M7: Diagnostic commands */
     MSG_DIAG_TMC_READ           = 0x0200,   /* Read TMC5160 register */
@@ -147,6 +148,20 @@ typedef struct __attribute__((packed)) {
     uint8_t     axis_mask;      /* Bitmask of axes to home (0 = all enabled) */
 } msg_motion_home_t;
 
+/* MSG_MOTION_SET_DRV_ENABLE payload
+ *
+ * Controls the TMC260C-PA DRV_ENN line (GPIO4_IO04, active-low).
+ * When enable=0, coils are de-energized — motors free-wheel. This is the
+ * standard industrial practice for "disconnecting" a stepper drive without
+ * killing VMot.  Precondition: all axes in axis_mask MUST be IDLE; the M7
+ * returns NACK if any is running.
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t     enable;         /* 0 = disable (DRV_ENN HIGH), 1 = enable (DRV_ENN LOW) */
+    uint8_t     axis_mask;      /* Bitmask of axes to apply (0 = all) */
+    uint16_t    _pad;           /* Reserved for alignment */
+} msg_motion_drv_enable_t;
+
 /* ──────────────────────────────────────────────
  * Payload: Diagnostic Commands
  * ────────────────────────────────────────────── */
@@ -180,6 +195,7 @@ typedef struct __attribute__((packed)) {
     uint16_t    current_step;       /* B-code step index (during execution) */
     uint16_t    total_steps;        /* Total steps in current sequence */
     uint8_t     axis_mask;          /* Active axes bitmask */
+    uint8_t     driver_enabled;     /* 1 = TMC260C-PA DRV_ENN asserted (coils energized) */
 } msg_status_motion_t;
 
 /* MSG_STATUS_TMC payload (TMC5160 diagnostic data) */

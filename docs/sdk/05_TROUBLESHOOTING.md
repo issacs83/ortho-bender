@@ -166,7 +166,27 @@ curl -X POST http://localhost:8000/api/camera/settings \
   -d '{"exposure_us": 10000, "gain_db": 6.0}'
 ```
 
-### 3.4 WebSocket 프레임이 끊김
+### 3.4 `CAMERA_OFFLINE` — capture/stream/settings 거부
+**원인**: 이전에 `POST /api/camera/disconnect` 를 호출했거나, 카메라 링크가
+끊어져 `power_state` 가 `"off"` 로 떨어진 상태.
+
+**확인**:
+```bash
+curl -s http://localhost:8000/api/camera/status | jq '.data.power_state'
+```
+
+**해결**: 세션을 다시 엽니다.
+```bash
+curl -s -X POST http://localhost:8000/api/camera/connect
+# → success=true, data.power_state="on", data.backend="vimba_x" (실제) 또는 "mock"
+```
+
+- `CAMERA_CONNECT_FAILED` 가 돌아오면 실제 USB3 연결/Vimba X 설치를 먼저
+  점검하세요 (섹션 3.1).
+- 프론트엔드에서는 Camera 페이지 상단 `ConnectionControl` 패널의 **Connect**
+  버튼으로 동일한 복구가 가능합니다.
+
+### 3.5 WebSocket 프레임이 끊김
 **원인**: 클라이언트 `max_size` 가 작음 (기본 1 MB).
 
 **해결**:
@@ -197,7 +217,28 @@ curl -X POST http://localhost:8000/api/bending/stop
 # 3) 그래도 안 되면 백엔드 재기동
 ```
 
-### 4.2 모터가 움직이지 않음 (상태는 RUNNING)
+### 4.2 `MOTOR_BUSY` — `/api/motor/disable` 거부
+**원인**: `DRV_ENN` 토글은 `state ∈ {IDLE, FAULT, ESTOP}` 에서만 허용됩니다.
+모션 중(HOMING/RUNNING/JOGGING 등)에는 드라이버를 끄면 코일 전류가 갑자기
+사라져 급정지 쇼크가 발생하므로, 백엔드가 먼저 정지를 요구합니다.
+
+**해결**:
+```bash
+# 1) 모션을 먼저 멈춘다
+curl -s -X POST http://localhost:8000/api/motor/stop
+
+# 2) IDLE 확인
+curl -s http://localhost:8000/api/motor/status | jq '.data.state'
+
+# 3) 그 다음 disable
+curl -s -X POST http://localhost:8000/api/motor/disable
+```
+
+> ⚠ `/api/motor/disable` 은 **유지보수/티칭용**입니다. 안전 정지가 필요하면
+> `/api/motor/estop` 을 사용하세요. 이 엔드포인트는 하드웨어 E-STOP
+> (이중 경로: SW GPIO ISR + HW DRV_ENN) 을 트리거합니다.
+
+### 4.3 모터가 움직이지 않음 (상태는 RUNNING)
 **진단**:
 ```bash
 # TMC DRV_STATUS 확인

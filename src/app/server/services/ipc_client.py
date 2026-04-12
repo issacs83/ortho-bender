@@ -44,6 +44,7 @@ MSG_MOTION_ESTOP            = 0x0104
 MSG_MOTION_SET_PARAM        = 0x0105
 MSG_MOTION_RESET            = 0x0106
 MSG_MOTION_WIRE_DETECT      = 0x0107
+MSG_MOTION_SET_DRV_ENABLE   = 0x0108
 MSG_DIAG_TMC_READ           = 0x0200
 MSG_DIAG_TMC_WRITE          = 0x0201
 MSG_DIAG_TMC_DUMP           = 0x0202
@@ -127,6 +128,7 @@ class IpcClient:
         self._mock_current_step: int = 0
         self._mock_total_steps: int = 0
         self._mock_bcode_task: Optional[asyncio.Task] = None
+        self._mock_driver_enabled: bool = True
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -352,6 +354,19 @@ class IpcClient:
             self._mock_motion_state = 6  # ESTOP
             return self._mock_status_motion()
 
+        if msg_type == MSG_MOTION_SET_DRV_ENABLE:
+            # payload: enable(1B), axis_mask(1B), _pad(2B)
+            if len(payload) >= 4:
+                enable = struct.unpack_from("<B", payload, 0)[0]
+                # Refuse disable while motion is active (firmware-level guard mirror).
+                if enable == 0 and self._mock_motion_state not in (0, 6):
+                    return IpcMessage(
+                        msg_type=MSG_STATUS_MOTION,
+                        payload=self._mock_status_motion().payload,
+                    )
+                self._mock_driver_enabled = (enable != 0)
+            return self._mock_status_motion()
+
         if msg_type == MSG_MOTION_JOG:
             # Parse jog payload: axis(1B), direction(1B), speed(4B), distance(4B)
             if len(payload) >= 10:
@@ -412,13 +427,14 @@ class IpcClient:
     def _mock_status_motion(self) -> IpcMessage:
         """Build a MSG_STATUS_MOTION response from current mock state."""
         payload = struct.pack(
-            "<B4f4fHHB",
+            "<B4f4fHHBB",
             self._mock_motion_state,
             *self._mock_position,
             *self._mock_velocity,
             self._mock_current_step,
             self._mock_total_steps,
-            0x03  # PHASE1 axis mask
+            0x03,  # PHASE1 axis mask
+            1 if self._mock_driver_enabled else 0,
         )
         return IpcMessage(msg_type=MSG_STATUS_MOTION, payload=payload)
 
@@ -465,6 +481,11 @@ def build_jog_payload(axis: int, direction: int, speed: float, distance: float) 
 def build_home_payload(axis_mask: int) -> bytes:
     """Build MSG_MOTION_HOME payload."""
     return struct.pack("<B", axis_mask)
+
+
+def build_drv_enable_payload(enable: bool, axis_mask: int = 0) -> bytes:
+    """Build MSG_MOTION_SET_DRV_ENABLE payload (1B enable + 1B mask + 2B pad)."""
+    return struct.pack("<BBH", 1 if enable else 0, axis_mask & 0xFF, 0)
 
 
 def build_bcode_payload(

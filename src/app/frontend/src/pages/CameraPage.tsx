@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { cameraApi, type CameraStatus } from '../api/client';
+import { ConnectionControl } from '../components/ui/ConnectionControl';
 import { SliderInput } from '../components/ui/SliderInput';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { useCameraWs } from '../hooks/useCameraWs';
@@ -374,20 +375,39 @@ export function CameraPage() {
     return () => clearInterval(id);
   }, []);
 
+  const refreshStatus = () => cameraApi.status().then(setStatus).catch(() => null);
+
   return (
     <div style={{ padding: 'clamp(12px, 3vw, 20px)', maxWidth: 1100, margin: '0 auto' }}>
       <h2 style={{ margin: '0 0 4px', color: TEXT_PRIMARY, fontSize: 18 }}>Camera</h2>
-      <div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 20 }}>
-        Allied Vision Alvium 1800 U-158m &nbsp;|&nbsp;
-        <span style={{ color: status?.connected ? '#22c55e' : '#ef4444' }}>
-          {status?.connected ? 'Connected' : 'Disconnected'}
-        </span>
+      <div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 14 }}>
+        Allied Vision Alvium 1800 U-158m
+      </div>
+
+      <div style={{
+        background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 6,
+        padding: 14, marginBottom: 18,
+      }}>
+        <ConnectionControl
+          label="Camera"
+          connected={status?.power_state === 'on'}
+          connectedLabel={status?.backend ? `ON (${status.backend})` : 'ON'}
+          disconnectedLabel="OFF"
+          onConnect={async () => { await cameraApi.connect(); await refreshStatus(); }}
+          onDisconnect={async () => { await cameraApi.disconnect(); await refreshStatus(); }}
+          disconnectConfirm={{
+            title: 'Disconnect camera?',
+            description:
+              'The Vimba X SDK will shut down cleanly (frame release → cam.__exit__ → VmbSystem.__exit__). ' +
+              'Live streaming and capture will stop until you reconnect.',
+          }}
+        />
       </div>
 
       <SubTabBar active={subTab} onChange={setSubTab} />
 
       {subTab === 'live'        && <LiveCapture status={status} />}
-      {subTab === 'acquisition' && <Acquisition status={status} onApply={() => cameraApi.status().then(setStatus).catch(() => null)} />}
+      {subTab === 'acquisition' && <Acquisition status={status} onApply={refreshStatus} />}
       {subTab === 'processing'  && <ImageProcessing />}
       {subTab === 'gallery'     && <Gallery />}
     </div>

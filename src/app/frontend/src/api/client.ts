@@ -29,6 +29,7 @@ export interface MotorStatus {
   current_step: number;
   total_steps: number;
   axis_mask: number;
+  driver_enabled: boolean;
 }
 
 export interface CameraStatus {
@@ -41,6 +42,7 @@ export interface CameraStatus {
   format: string | null;
   backend: string | null;
   fps: number | null;
+  power_state: "on" | "standby" | "off";
 }
 
 export interface BendingStatus {
@@ -125,6 +127,12 @@ export const motorApi = {
 
   reset: (): Promise<MotorStatus> =>
     request("/api/motor/reset", { method: "POST", body: JSON.stringify({ axis_mask: 0 }) }),
+
+  enable: (): Promise<MotorStatus> =>
+    request("/api/motor/enable", { method: "POST" }),
+
+  disable: (): Promise<MotorStatus> =>
+    request("/api/motor/disable", { method: "POST" }),
 };
 
 // ---------------------------------------------------------------------------
@@ -146,6 +154,12 @@ export const cameraApi = {
       method: "POST",
       body: JSON.stringify(params),
     }),
+
+  connect: (): Promise<CameraStatus> =>
+    request("/api/camera/connect", { method: "POST" }),
+
+  disconnect: (): Promise<CameraStatus> =>
+    request("/api/camera/disconnect", { method: "POST" }),
 };
 
 // ---------------------------------------------------------------------------

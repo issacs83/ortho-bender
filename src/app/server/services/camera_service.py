@@ -77,7 +77,9 @@ class CameraService:
         self._pixel_format: str = "mono8"
         self._fps: float = 0.0
         self._frame_lock = asyncio.Lock()
+        self._state_lock = asyncio.Lock()
         self._last_frame_ts: float = 0.0
+        self._power_state: str = "off"   # "on" | "standby" | "off"
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -87,57 +89,69 @@ class CameraService:
         """
         Attempt to open the camera.  Returns True on success.
         Tries VmbPy first, then GStreamer/UVC fallbacks.
+        Idempotent — a no-op if already connected.
         """
-        if self._mock:
-            log.warning("CameraService: running in MOCK mode")
-            self._backend = CameraBackend.MOCK
-            self._connected = True
-            self._width = 1456
-            self._height = 1088
-            return True
+        async with self._state_lock:
+            if self._connected:
+                return True
 
-        # Attempt 1: VmbPy (native Vimba X USB3 Vision)
-        if _VMBPY_AVAILABLE and await self._try_vmbpy():
-            return True
+            if self._mock:
+                log.warning("CameraService: running in MOCK mode")
+                self._backend = CameraBackend.MOCK
+                self._connected = True
+                self._width = 1456
+                self._height = 1088
+                self._power_state = "on"
+                return True
 
-        if not _CV2_AVAILABLE:
-            log.error("No camera backend available (VmbPy and OpenCV both missing)")
-            return False
+            ok = False
+            if _VMBPY_AVAILABLE and await self._try_vmbpy():
+                ok = True
+            elif not _CV2_AVAILABLE:
+                log.error("No camera backend available (VmbPy and OpenCV both missing)")
+                ok = False
+            elif await self._try_vimba_x_gstreamer():
+                ok = True
+            elif await self._try_gstreamer_v4l2():
+                ok = True
+            elif await self._try_uvc():
+                ok = True
 
-        # Attempt 2: Vimba X GStreamer pipeline
-        if await self._try_vimba_x_gstreamer():
-            return True
-
-        # Attempt 3: Generic GStreamer v4l2
-        if await self._try_gstreamer_v4l2():
-            return True
-
-        # Attempt 4: Plain UVC (cv2.VideoCapture index)
-        if await self._try_uvc():
-            return True
-
-        log.error("CameraService: all backends failed — no camera available")
-        return False
+            if ok:
+                self._power_state = "on"
+            else:
+                log.error("CameraService: all backends failed — no camera available")
+            return ok
 
     async def disconnect(self) -> None:
-        if self._cap is not None:
-            loop = asyncio.get_running_loop()
-            cap = self._cap
-            await loop.run_in_executor(None, cap.release)
-            self._cap = None
-        if self._vmb_cam is not None:
-            try:
-                self._vmb_cam.__exit__(None, None, None)
-            except Exception:
-                pass
-            self._vmb_cam = None
-        if self._vmb is not None:
-            try:
-                self._vmb.__exit__(None, None, None)
-            except Exception:
-                pass
-            self._vmb = None
-        self._connected = False
+        """
+        Gracefully shut the camera down via the Vimba X SDK native sequence.
+        Releases the frame handle and exits both the camera and VmbSystem
+        contexts. Safe to call multiple times.
+        """
+        async with self._state_lock:
+            # Drain any in-flight capture before tearing down handles.
+            async with self._frame_lock:
+                if self._cap is not None:
+                    loop = asyncio.get_running_loop()
+                    cap = self._cap
+                    await loop.run_in_executor(None, cap.release)
+                    self._cap = None
+                if self._vmb_cam is not None:
+                    try:
+                        self._vmb_cam.__exit__(None, None, None)
+                    except Exception as exc:
+                        log.debug("VmbPy camera __exit__ failed: %s", exc)
+                    self._vmb_cam = None
+                if self._vmb is not None:
+                    try:
+                        self._vmb.__exit__(None, None, None)
+                    except Exception as exc:
+                        log.debug("VmbPy system __exit__ failed: %s", exc)
+                    self._vmb = None
+                self._connected = False
+                self._power_state = "off"
+                self._backend = CameraBackend.MOCK if self._mock else self._backend
 
     async def __aenter__(self) -> "CameraService":
         await self.connect()
@@ -274,6 +288,7 @@ class CameraService:
             "format":       self._pixel_format,
             "backend":      self._backend.value,
             "fps":          self._fps or None,
+            "power_state":  self._power_state,
         }
 
     # ------------------------------------------------------------------
@@ -286,6 +301,9 @@ class CameraService:
         Raises RuntimeError if camera is not connected.
         """
         async with self._frame_lock:
+            if self._power_state != "on":
+                raise RuntimeError("Camera is offline (power_state != 'on')")
+
             if self._mock:
                 return self._synthetic_frame(quality)
 

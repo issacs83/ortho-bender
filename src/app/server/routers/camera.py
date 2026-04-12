@@ -48,6 +48,51 @@ async def get_camera_status(
 
 
 # ---------------------------------------------------------------------------
+# POST /api/camera/connect
+# ---------------------------------------------------------------------------
+
+@router.post("/connect", response_model=ApiResponse)
+async def camera_connect(
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """
+    Open the camera via the Vimba X SDK (or fallback backend) and transition
+    power_state to 'on'. Idempotent — already-connected cameras return
+    the current status unchanged.
+    """
+    try:
+        ok_ = await svc.connect()
+    except Exception as exc:
+        log.error("Camera connect raised: %s", exc)
+        return err(str(exc), "CAMERA_CONNECT_ERROR")
+    if not ok_:
+        return err("Camera connect failed — no backend available", "CAMERA_CONNECT_FAILED")
+    return ok(svc.get_status())
+
+
+# ---------------------------------------------------------------------------
+# POST /api/camera/disconnect
+# ---------------------------------------------------------------------------
+
+@router.post("/disconnect", response_model=ApiResponse)
+async def camera_disconnect(
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """
+    Gracefully shut the camera down via the Vimba X SDK native shutdown
+    sequence (frame release → camera __exit__ → VmbSystem __exit__) and
+    transition power_state to 'off'. Safe to call on an already-disconnected
+    camera.
+    """
+    try:
+        await svc.disconnect()
+    except Exception as exc:
+        log.error("Camera disconnect raised: %s", exc)
+        return err(str(exc), "CAMERA_DISCONNECT_ERROR")
+    return ok(svc.get_status())
+
+
+# ---------------------------------------------------------------------------
 # POST /api/camera/capture
 # ---------------------------------------------------------------------------
 
@@ -62,13 +107,17 @@ async def camera_capture(
     Returns: image/jpeg binary response.
     quality: JPEG compression quality (1-100, default 85).
     """
+    if svc._power_state != "on":
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=412,
+            content={"success": False, "error": "Camera is offline", "code": "CAMERA_OFFLINE"},
+        )
     try:
         jpeg = await svc.capture_jpeg(quality=quality)
         return Response(content=jpeg, media_type="image/jpeg")
     except RuntimeError as exc:
         log.error("Camera capture failed: %s", exc)
-        # Return JSON error wrapped in a 503 instead of raising HTTPException
-        # so the client gets a consistent error envelope
         from fastapi.responses import JSONResponse
         return JSONResponse(
             status_code=503,
@@ -93,11 +142,11 @@ async def camera_stream(
 
         <img src="/api/camera/stream" />
     """
-    if not svc._connected:
+    if svc._power_state != "on":
         from fastapi.responses import JSONResponse
         return JSONResponse(
-            status_code=503,
-            content={"success": False, "error": "Camera not connected", "code": "CAMERA_OFFLINE"},
+            status_code=412,
+            content={"success": False, "error": "Camera is offline", "code": "CAMERA_OFFLINE"},
         )
 
     return StreamingResponse(
@@ -116,6 +165,8 @@ async def camera_settings(
     svc: CameraService = Depends(_camera_service),
 ) -> ApiResponse:
     """Apply camera settings (exposure, gain, pixel format)."""
+    if svc._power_state != "on":
+        return err("Camera is offline", "CAMERA_OFFLINE")
     try:
         await svc.apply_settings(
             exposure_us=body.exposure_us,

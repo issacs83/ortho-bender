@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { motorApi, type MotorStatus, type AxisStatus } from '../api/client';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
+import { ConnectionControl } from '../components/ui/ConnectionControl';
 import { SliderInput } from '../components/ui/SliderInput';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { useMotorWs } from '../hooks/useMotorWs';
@@ -432,16 +433,40 @@ export function MotorPage() {
     motorApi.status().then(setStaticMotor).catch(() => null);
   }, []);
 
+  const refreshMotor = () => motorApi.status().then(setStaticMotor).catch(() => null);
+  const isMoving = motorStatus !== null && ![0, 5, 6].includes(motorStatus.state);
+
   return (
     <div style={{ padding: 'clamp(12px, 3vw, 20px)', maxWidth: 1100, margin: '0 auto' }}>
       <h2 style={{ margin: '0 0 4px', color: TEXT_PRIMARY, fontSize: 18 }}>Motor Control</h2>
-      <div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 20 }}>
+      <div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 14 }}>
         State: <strong style={{ color: TEXT_PRIMARY }}>
           {motorStatus ? (['IDLE','HOMING','RUNNING','JOGGING','STOPPING','FAULT','ESTOP'][motorStatus.state] ?? '?') : '—'}
         </strong>
         &nbsp;|&nbsp; Step: <strong style={{ color: TEXT_PRIMARY }}>
           {motorStatus ? `${motorStatus.current_step} / ${motorStatus.total_steps}` : '—'}
         </strong>
+      </div>
+
+      <div style={{
+        background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 6,
+        padding: 14, marginBottom: 18,
+      }}>
+        <ConnectionControl
+          label="Drivers"
+          connected={motorStatus?.driver_enabled === true}
+          connectedLabel="ENERGIZED"
+          disconnectedLabel="FREE-WHEEL"
+          disabled={isMoving}
+          onConnect={async () => { await motorApi.enable(); await refreshMotor(); }}
+          onDisconnect={async () => { await motorApi.disable(); await refreshMotor(); }}
+          disconnectConfirm={{
+            title: 'Disable motor drivers?',
+            description:
+              'TMC260C-PA DRV_ENN will be released — stepper coils de-energize and the axes will free-wheel. ' +
+              'VMot 12V remains present. Re-enable to resume holding torque.',
+          }}
+        />
       </div>
 
       <SubTabBar active={subTab} onChange={setSubTab} />

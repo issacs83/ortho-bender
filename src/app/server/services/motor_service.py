@@ -27,17 +27,19 @@ from .ipc_client import (
     MSG_MOTION_STOP,
     MSG_MOTION_ESTOP,
     MSG_MOTION_RESET,
+    MSG_MOTION_SET_DRV_ENABLE,
     MSG_STATUS_MOTION,
     MSG_STATUS_TMC,
     build_jog_payload,
     build_home_payload,
     build_bcode_payload,
+    build_drv_enable_payload,
 )
 
 log = logging.getLogger(__name__)
 
 # Payload struct formats (must mirror ipc_protocol.h)
-_MOTION_STATUS_FMT  = "<B4f4fHHB"     # state + pos[4] + vel[4] + curr_step + total + axis_mask
+_MOTION_STATUS_FMT  = "<B4f4fHHBB"    # state + pos[4] + vel[4] + curr_step + total + axis_mask + drv_enabled
 _MOTION_STATUS_SIZE = struct.calcsize(_MOTION_STATUS_FMT)
 _TMC_STATUS_FMT     = "<4I4H4H4i"     # drv_status[4] + sg_result[4] + cs_actual[4] + xactual[4]
 _TMC_STATUS_SIZE    = struct.calcsize(_TMC_STATUS_FMT)
@@ -74,15 +76,17 @@ class MotorService:
                 current_step=0,
                 total_steps=0,
                 axis_mask=0,
+                driver_enabled=False,
             )
 
         raw = struct.unpack_from(_MOTION_STATUS_FMT, payload)
-        state       = raw[0]
-        positions   = list(raw[1:5])
-        velocities  = list(raw[5:9])
-        curr_step   = raw[9]
-        total_steps = raw[10]
-        axis_mask   = raw[11]
+        state          = raw[0]
+        positions      = list(raw[1:5])
+        velocities     = list(raw[5:9])
+        curr_step      = raw[9]
+        total_steps    = raw[10]
+        axis_mask      = raw[11]
+        driver_enabled = bool(raw[12])
 
         # Parse optional TMC status if appended (concatenated payload)
         tmc_raw = None
@@ -108,6 +112,7 @@ class MotorService:
             current_step=curr_step,
             total_steps=total_steps,
             axis_mask=axis_mask,
+            driver_enabled=driver_enabled,
         )
 
     # ------------------------------------------------------------------
@@ -161,6 +166,28 @@ class MotorService:
         This call is the SW path only.
         """
         await self._ipc.send_recv(MSG_MOTION_ESTOP)
+        return await self.get_status()
+
+    async def enable_drivers(self, axis_mask: int = 0) -> MotorStatusResponse:
+        """
+        Assert TMC260C-PA DRV_ENN (coils energized).
+
+        Standard practice after a disconnect: the drivers will hold position
+        again. The M7 handler is authoritative; this just dispatches the IPC.
+        """
+        payload = build_drv_enable_payload(True, axis_mask)
+        await self._ipc.send_recv(MSG_MOTION_SET_DRV_ENABLE, payload)
+        return await self.get_status()
+
+    async def disable_drivers(self, axis_mask: int = 0) -> MotorStatusResponse:
+        """
+        De-energize TMC260C-PA coils by releasing DRV_ENN.
+
+        The M7 refuses this if any axis in the mask is moving. Callers should
+        `stop()` first, then `disable_drivers()`.
+        """
+        payload = build_drv_enable_payload(False, axis_mask)
+        await self._ipc.send_recv(MSG_MOTION_SET_DRV_ENABLE, payload)
         return await self.get_status()
 
     async def reset(self) -> MotorStatusResponse:

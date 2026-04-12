@@ -133,6 +133,7 @@ class MotorStatusResponse(BaseModel):
     current_step: int   # B-code step index during execution
     total_steps: int
     axis_mask: int
+    driver_enabled: bool = True   # DRV_ENN line state (TMC260C-PA)
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +169,7 @@ class CameraStatusResponse(BaseModel):
     format: Optional[str] = None
     backend: Optional[str] = None   # "vimba_x", "gstreamer", "uvc_fallback"
     fps: Optional[float] = None
+    power_state: str = "off"        # "on" | "standby" | "off"
 
 
 # ---------------------------------------------------------------------------
