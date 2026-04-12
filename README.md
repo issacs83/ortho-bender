@@ -78,35 +78,35 @@ python3 basic_bend.py --host http://192.168.77.2:8000
 
 | Persona | 진입 문서 | 핵심 엔드포인트 |
 |--------|----------|----------------|
-| 🎨 **프론트엔드** | [docs/SDK_GUIDE.md §5](docs/SDK_GUIDE.md) | `/api/motor`, `/ws/motor`, `/ws/system` |
-| 📐 **CAD / CAM** | [docs/CAD_CAM_GUIDE.md](docs/CAD_CAM_GUIDE.md) (+ [BCODE_SPEC](docs/BCODE_SPEC.md), [WIRE_MATERIALS](docs/WIRE_MATERIALS.md)) | `/api/cam/*`, `/api/bending/*` |
-| 👁 **Vision / ML** | [docs/SDK_GUIDE.md §7](docs/SDK_GUIDE.md) | `/api/camera/*`, `/ws/camera` |
-| 🛠 **DevOps / 통합** | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | systemd, 로깅, 네트워킹 |
+| 🎨 **프론트엔드** | [docs/sdk/01_SDK_GUIDE.md §5](docs/sdk/01_SDK_GUIDE.md) | `/api/motor`, `/ws/motor`, `/ws/system` |
+| 📐 **CAD / CAM** | [docs/algorithm/01_CAD_CAM_GUIDE.md](docs/algorithm/01_CAD_CAM_GUIDE.md) (+ [BCODE_SPEC](docs/algorithm/02_BCODE_SPEC.md), [WIRE_MATERIALS](docs/algorithm/03_WIRE_MATERIALS.md)) | `/api/cam/*`, `/api/bending/*` |
+| 👁 **Vision / ML** | [docs/sdk/01_SDK_GUIDE.md §7](docs/sdk/01_SDK_GUIDE.md) | `/api/camera/*`, `/ws/camera` |
+| 🛠 **DevOps / 통합** | [docs/sdk/04_DEPLOYMENT.md](docs/sdk/04_DEPLOYMENT.md) | systemd, 로깅, 네트워킹 |
 
 ---
 
 ## 문서 인덱스
 
 ### SDK 사용자
-- [**SDK_GUIDE.md**](docs/SDK_GUIDE.md) — 메인 사용 가이드 (persona별)
-- [**ARCHITECTURE.md**](docs/ARCHITECTURE.md) — 전체 시스템 구조 및 계층 경계
-- [**HARDWARE_ABSTRACTION.md**](docs/HARDWARE_ABSTRACTION.md) — 카메라/모터 교체 투명성 설명
-- [**CAD_CAM_GUIDE.md**](docs/CAD_CAM_GUIDE.md) — CAD/CAM + OpenCV 통합 개발 가이드 (테스트 코드 포함)
-- [**API_REFERENCE.md**](docs/API_REFERENCE.md) — REST/WebSocket 전체 레퍼런스
-- [**BCODE_SPEC.md**](docs/BCODE_SPEC.md) — B-code 포맷 명세
-- [**WIRE_MATERIALS.md**](docs/WIRE_MATERIALS.md) — 재질 특성 + 스프링백 계수
-- [**MOCK_MODE.md**](docs/MOCK_MODE.md) — 하드웨어 없이 개발
-- [**TROUBLESHOOTING.md**](docs/TROUBLESHOOTING.md) — FAQ + 알려진 문제
-- [**DEPLOYMENT.md**](docs/DEPLOYMENT.md) — EVK 배포 / 운영
+- [**SDK_GUIDE.md**](docs/sdk/01_SDK_GUIDE.md) — 메인 사용 가이드 (persona별)
+- [**ARCHITECTURE.md**](docs/architecture/01_ARCHITECTURE.md) — 전체 시스템 구조 및 계층 경계
+- [**HARDWARE_ABSTRACTION.md**](docs/architecture/02_HARDWARE_ABSTRACTION.md) — 카메라/모터 교체 투명성 설명
+- [**CAD_CAM_GUIDE.md**](docs/algorithm/01_CAD_CAM_GUIDE.md) — CAD/CAM + OpenCV 통합 개발 가이드 (테스트 코드 포함)
+- [**API_REFERENCE.md**](docs/sdk/02_API_REFERENCE.md) — REST/WebSocket 전체 레퍼런스
+- [**BCODE_SPEC.md**](docs/algorithm/02_BCODE_SPEC.md) — B-code 포맷 명세
+- [**WIRE_MATERIALS.md**](docs/algorithm/03_WIRE_MATERIALS.md) — 재질 특성 + 스프링백 계수
+- [**MOCK_MODE.md**](docs/sdk/03_MOCK_MODE.md) — 하드웨어 없이 개발
+- [**TROUBLESHOOTING.md**](docs/sdk/05_TROUBLESHOOTING.md) — FAQ + 알려진 문제
+- [**DEPLOYMENT.md**](docs/sdk/04_DEPLOYMENT.md) — EVK 배포 / 운영
 - [**CHANGELOG.md**](CHANGELOG.md) — 버전별 변경 사항
 
 ### 하드웨어 / 시스템 (내부용)
-- [docs/bootflow.md](docs/bootflow.md) — 부팅 시퀀스
-- [docs/evk-camera-bringup.md](docs/evk-camera-bringup.md) — 카메라 bring-up
-- [docs/evk-remoteproc-analysis.md](docs/evk-remoteproc-analysis.md) — A53↔M7 remoteproc
-- [docs/m7-freertos-experiments.md](docs/m7-freertos-experiments.md) — FreeRTOS 실험 노트
-- [docs/PORTING.md](docs/PORTING.md) — 보드 포팅 가이드
-- [docs/ROADMAP.md](docs/ROADMAP.md) — 제품 로드맵
+- [docs/architecture/03_BOOTFLOW.md](docs/architecture/03_BOOTFLOW.md) — 부팅 시퀀스
+- [docs/hardware/01_EVK_CAMERA_BRINGUP.md](docs/hardware/01_EVK_CAMERA_BRINGUP.md) — 카메라 bring-up
+- [docs/hardware/02_EVK_REMOTEPROC.md](docs/hardware/02_EVK_REMOTEPROC.md) — A53↔M7 remoteproc
+- [docs/hardware/03_M7_FREERTOS_EXPERIMENTS.md](docs/hardware/03_M7_FREERTOS_EXPERIMENTS.md) — FreeRTOS 실험 노트
+- [docs/architecture/04_PORTING.md](docs/architecture/04_PORTING.md) — 보드 포팅 가이드
+- [docs/project/01_ROADMAP.md](docs/project/01_ROADMAP.md) — 제품 로드맵
 
 ---
 

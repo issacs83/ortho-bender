@@ -117,7 +117,7 @@ DRV_STATUS 폴트 클리어. 재홈잉 필요할 수 있음.
 > **교체 투명성 주의사항**: `device_id`, `backend` 필드는 **참고/진단용**입니다.
 > 값은 하드웨어 세대/센서 교체/백엔드 전환(vimba_x → v4l2 → mock)에 따라 바뀔 수
 > 있습니다. **클라이언트 코드는 이 값에 조건 분기하지 마세요** —
-> 자세한 이유는 [HARDWARE_ABSTRACTION.md](HARDWARE_ABSTRACTION.md) 를 참고하세요.
+> 자세한 이유는 [HARDWARE_ABSTRACTION.md](../architecture/02_HARDWARE_ABSTRACTION.md) 를 참고하세요.
 
 
 ### POST `/api/camera/capture`

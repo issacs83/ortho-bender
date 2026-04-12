@@ -67,7 +67,7 @@
 - `backend` 필드 값으로 조건 분기 (예: `if backend=="vimba_x"`)
 
 이런 접근은 **하드웨어가 교체되는 순간 당신의 코드가 깨집니다**. 자세한 이유는
-[HARDWARE_ABSTRACTION.md](HARDWARE_ABSTRACTION.md) 를 참고하세요.
+[HARDWARE_ABSTRACTION.md](../architecture/02_HARDWARE_ABSTRACTION.md) 를 참고하세요.
 
 ---
 
@@ -904,7 +904,7 @@ def safe_execute(client, job: BendJob, max_retries: int = 2) -> None:
 ## 8. FAQ
 
 **Q. 실기기를 어떻게 구해요?**
-A. 배포 / 랩 환경은 [DEPLOYMENT.md](DEPLOYMENT.md) 참고. 실기기 없어도 전체
+A. 배포 / 랩 환경은 [DEPLOYMENT.md](../sdk/04_DEPLOYMENT.md) 참고. 실기기 없어도 전체
 개발 가능 — Mock 모드가 실 API 와 동일합니다.
 
 **Q. OpenCV 없이 PIL 만 쓸 수 있나요?**
@@ -922,14 +922,14 @@ A. `/ws/motor` 는 10 Hz 푸시, 폴링은 요청 주기에 따름. **벤딩 진
 
 **Q. B-code 를 직접 작성하고 CAM 을 건너뛸 수 있나요?**
 A. 네. `/api/bending/execute` 에 `{steps: [...], material, wire_diameter_mm}`
-를 직접 보내세요. 포맷은 [BCODE_SPEC.md](BCODE_SPEC.md) 참고.
+를 직접 보내세요. 포맷은 [BCODE_SPEC.md](02_BCODE_SPEC.md) 참고.
 
 **Q. 재질 스프링백 계수를 튜닝할 수 있나요?**
 A. 현재는 서버 내장 상수. 향후 NPU 기반 동적 보정 모델이 통합될 예정입니다
 (로드맵 Phase 2). 그때도 API 형태는 유지됩니다.
 
 **Q. 카메라 교체되면 이 문서의 OpenCV 예제가 깨지나요?**
-A. **아니요**. [HARDWARE_ABSTRACTION.md](HARDWARE_ABSTRACTION.md) 에서
+A. **아니요**. [HARDWARE_ABSTRACTION.md](../architecture/02_HARDWARE_ABSTRACTION.md) 에서
 설명한 대로, `/api/camera/capture` 는 JPEG 만 반환하는 벤더 중립 인터페이스
 입니다. 센서가 바뀌면 해상도나 bit depth 가 바뀔 수 있지만, **디코딩
 파이프라인은 동일**합니다.
@@ -938,9 +938,9 @@ A. **아니요**. [HARDWARE_ABSTRACTION.md](HARDWARE_ABSTRACTION.md) 에서
 
 ## 9. 관련 문서
 
-- [HARDWARE_ABSTRACTION.md](HARDWARE_ABSTRACTION.md) — 왜 당신의 코드가 하드웨어 교체에 안전한가
-- [API_REFERENCE.md](API_REFERENCE.md) — 모든 엔드포인트 스키마
-- [BCODE_SPEC.md](BCODE_SPEC.md) — 저수준 B-code 포맷
-- [WIRE_MATERIALS.md](WIRE_MATERIALS.md) — 재질별 특성 + 계수
-- [MOCK_MODE.md](MOCK_MODE.md) — Mock 백엔드 상세
-- [SDK_GUIDE.md](SDK_GUIDE.md) — 전체 SDK 가이드
+- [HARDWARE_ABSTRACTION.md](../architecture/02_HARDWARE_ABSTRACTION.md) — 왜 당신의 코드가 하드웨어 교체에 안전한가
+- [API_REFERENCE.md](../sdk/02_API_REFERENCE.md) — 모든 엔드포인트 스키마
+- [BCODE_SPEC.md](02_BCODE_SPEC.md) — 저수준 B-code 포맷
+- [WIRE_MATERIALS.md](03_WIRE_MATERIALS.md) — 재질별 특성 + 계수
+- [MOCK_MODE.md](../sdk/03_MOCK_MODE.md) — Mock 백엔드 상세
+- [SDK_GUIDE.md](../sdk/01_SDK_GUIDE.md) — 전체 SDK 가이드

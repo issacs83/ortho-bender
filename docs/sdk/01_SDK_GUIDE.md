@@ -152,7 +152,7 @@ await fetch("/api/motor/home", {
 
 ## 6. CAD/CAM 개발자용
 
-> **본격 가이드**: [CAD_CAM_GUIDE.md](CAD_CAM_GUIDE.md) — OpenCV 통합 워크플로우,
+> **본격 가이드**: [CAD_CAM_GUIDE.md](../algorithm/01_CAD_CAM_GUIDE.md) — OpenCV 통합 워크플로우,
 > pytest 회귀 테스트, 방어적 에러 처리 전체 예제가 포함됩니다.
 > 아래는 최소 코드 참고용입니다.
 
@@ -275,4 +275,4 @@ Mock 은 실 API 와 동일한 envelope / 필드를 반환하므로 프로덕션
 | `src/app/sdk-examples/python/` | 예제 스크립트 |
 
 상세 IPC 프로토콜은 `src/shared/ipc_protocol.h`, 아키텍처 전반은
-[`docs/ARCHITECTURE.md`](ARCHITECTURE.md) 를 참고하세요.
+[`docs/ARCHITECTURE.md`](../architecture/01_ARCHITECTURE.md) 를 참고하세요.

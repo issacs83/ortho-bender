@@ -365,8 +365,8 @@ if "mono12" in status.get("supported_formats", []):
 
 ## 10. 관련 문서
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — 전체 시스템 구조 및 계층
-- [SDK_GUIDE.md](SDK_GUIDE.md) — 메인 사용 가이드
-- [API_REFERENCE.md](API_REFERENCE.md) — 엔드포인트 스키마
-- [CAD_CAM_GUIDE.md](CAD_CAM_GUIDE.md) — CAD/CAM 개발자 전용 가이드
-- [MOCK_MODE.md](MOCK_MODE.md) — 하드웨어 없이 개발
+- [ARCHITECTURE.md](01_ARCHITECTURE.md) — 전체 시스템 구조 및 계층
+- [SDK_GUIDE.md](../sdk/01_SDK_GUIDE.md) — 메인 사용 가이드
+- [API_REFERENCE.md](../sdk/02_API_REFERENCE.md) — 엔드포인트 스키마
+- [CAD_CAM_GUIDE.md](../algorithm/01_CAD_CAM_GUIDE.md) — CAD/CAM 개발자 전용 가이드
+- [MOCK_MODE.md](../sdk/03_MOCK_MODE.md) — 하드웨어 없이 개발

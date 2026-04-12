@@ -255,4 +255,4 @@ cat /sys/class/thermal/thermal_zone0/temp
   - **J7 USB 포트 미사용**: 카메라는 J6만 사용 (J7 enumeration 이슈 남음)
   - **첫 WiFi Scan 지연**: SCC 모드로 7~8초 소요 (정상 동작)
 
-업데이트/버그픽스는 Git 저장소 메인 브랜치를 통해 배포됩니다. 최신 소스 동기화 절차는 `../DEPLOYMENT.md` 를 참조하세요.
+업데이트/버그픽스는 Git 저장소 메인 브랜치를 통해 배포됩니다. 최신 소스 동기화 절차는 `../sdk/04_DEPLOYMENT.md` 를 참조하세요.

@@ -15,15 +15,15 @@
 
 | 주제 | 파일 |
 |------|------|
-| 전체 API 레퍼런스 | [`../API_REFERENCE.md`](../API_REFERENCE.md) |
-| 아키텍처 | [`../ARCHITECTURE.md`](../ARCHITECTURE.md) |
-| HW 추상화 | [`../HARDWARE_ABSTRACTION.md`](../HARDWARE_ABSTRACTION.md) |
-| Mock 모드 | [`../MOCK_MODE.md`](../MOCK_MODE.md) |
-| 배포/빌드 | [`../DEPLOYMENT.md`](../DEPLOYMENT.md) |
-| 트러블슈팅 | [`../TROUBLESHOOTING.md`](../TROUBLESHOOTING.md) |
-| B-code 스펙 | [`../BCODE_SPEC.md`](../BCODE_SPEC.md) |
-| CAD/CAM 가이드 | [`../CAD_CAM_GUIDE.md`](../CAD_CAM_GUIDE.md) |
-| 와이어 재료 | [`../WIRE_MATERIALS.md`](../WIRE_MATERIALS.md) |
+| 전체 API 레퍼런스 | [`../sdk/02_API_REFERENCE.md`](../sdk/02_API_REFERENCE.md) |
+| 아키텍처 | [`../architecture/01_ARCHITECTURE.md`](../architecture/01_ARCHITECTURE.md) |
+| HW 추상화 | [`../architecture/02_HARDWARE_ABSTRACTION.md`](../architecture/02_HARDWARE_ABSTRACTION.md) |
+| Mock 모드 | [`../sdk/03_MOCK_MODE.md`](../sdk/03_MOCK_MODE.md) |
+| 배포/빌드 | [`../sdk/04_DEPLOYMENT.md`](../sdk/04_DEPLOYMENT.md) |
+| 트러블슈팅 | [`../sdk/05_TROUBLESHOOTING.md`](../sdk/05_TROUBLESHOOTING.md) |
+| B-code 스펙 | [`../algorithm/02_BCODE_SPEC.md`](../algorithm/02_BCODE_SPEC.md) |
+| CAD/CAM 가이드 | [`../algorithm/01_CAD_CAM_GUIDE.md`](../algorithm/01_CAD_CAM_GUIDE.md) |
+| 와이어 재료 | [`../algorithm/03_WIRE_MATERIALS.md`](../algorithm/03_WIRE_MATERIALS.md) |
 
 ## 이관 담당자 체크리스트
 

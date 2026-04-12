@@ -282,7 +282,7 @@ FastAPI 백엔드를 통해서만 이루어진다.
 - **B-code 는 벤더 중립**이다: `(L_mm, β°, θ°)` 는 어느 물리 기구에서든 같은 의미.
 
 상세 설명과 교체 시퀀스, 개발자 체크리스트는
-[HARDWARE_ABSTRACTION.md](HARDWARE_ABSTRACTION.md) 참고.
+[HARDWARE_ABSTRACTION.md](02_HARDWARE_ABSTRACTION.md) 참고.
 
 ---
 
@@ -542,14 +542,14 @@ AC 입력 (100~240V)
 
 ## 13. 관련 문서
 
-- [SDK_GUIDE.md](SDK_GUIDE.md) — SDK 사용 가이드
-- [API_REFERENCE.md](API_REFERENCE.md) — REST/WS 엔드포인트 레퍼런스
-- [BCODE_SPEC.md](BCODE_SPEC.md) — B-code 포맷 명세
-- [WIRE_MATERIALS.md](WIRE_MATERIALS.md) — 재질별 특성
-- [DEPLOYMENT.md](DEPLOYMENT.md) — 배포 및 운영
-- [MOCK_MODE.md](MOCK_MODE.md) — 하드웨어 없이 개발
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — 문제 해결
-- [ROADMAP.md](ROADMAP.md) — 개발 로드맵
+- [SDK_GUIDE.md](../sdk/01_SDK_GUIDE.md) — SDK 사용 가이드
+- [API_REFERENCE.md](../sdk/02_API_REFERENCE.md) — REST/WS 엔드포인트 레퍼런스
+- [BCODE_SPEC.md](../algorithm/02_BCODE_SPEC.md) — B-code 포맷 명세
+- [WIRE_MATERIALS.md](../algorithm/03_WIRE_MATERIALS.md) — 재질별 특성
+- [DEPLOYMENT.md](../sdk/04_DEPLOYMENT.md) — 배포 및 운영
+- [MOCK_MODE.md](../sdk/03_MOCK_MODE.md) — 하드웨어 없이 개발
+- [TROUBLESHOOTING.md](../sdk/05_TROUBLESHOOTING.md) — 문제 해결
+- [ROADMAP.md](../project/01_ROADMAP.md) — 개발 로드맵
 
 ---
 

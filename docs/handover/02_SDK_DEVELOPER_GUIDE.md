@@ -3,7 +3,7 @@
 **대상**: 이관 받은 개발자 (응용/백엔드/펌웨어 연동 개발자)
 **전제**: `01_INITIAL_SETUP.md` 완료, 대시보드 접속 성공
 
-이 문서는 SDK의 **핵심 사용 패턴**과 **API 요약**을 제공합니다. 전체 엔드포인트 명세는 `../API_REFERENCE.md`에 있습니다.
+이 문서는 SDK의 **핵심 사용 패턴**과 **API 요약**을 제공합니다. 전체 엔드포인트 명세는 `../sdk/02_API_REFERENCE.md`에 있습니다.
 
 ---
 
@@ -115,7 +115,7 @@ status().then(console.log);
 | `/api/simulation` | 3D 곡선 → B-code 변환, 스프링백 미리보기 | `POST /convert`, `POST /preview` |
 | `/api/wifi` | AP 스캔/연결 (STA) | `GET /scan`, `GET /status`, `POST /connect`, `POST /disconnect` |
 
-전체 엔드포인트 상세(request/response 스키마, 에러 코드, 예시 호출)는 **`../API_REFERENCE.md`**를 참조하세요.
+전체 엔드포인트 상세(request/response 스키마, 에러 코드, 예시 호출)는 **`../sdk/02_API_REFERENCE.md`**를 참조하세요.
 
 ---
 
@@ -169,7 +169,7 @@ uvicorn server.main:app --host 0.0.0.0 --port 8000
 - 모든 하드웨어 호출이 가상 구현으로 대체됩니다.
 - 카메라는 합성 프레임, 모터는 시뮬레이션 포지션, M7 IPC는 가상 응답.
 - 대시보드도 동일하게 동작.
-- 상세: `../MOCK_MODE.md`
+- 상세: `../sdk/03_MOCK_MODE.md`
 
 ### 5.2 원격 디버그 (보드 실장비)
 보드에서 바로 Python 코드를 수정해 보고 싶다면:
@@ -233,7 +233,7 @@ Python/JS 샘플 래퍼는 `../../examples/`에 있습니다:
 - **Safety limit**: 모든 이동 명령은 백엔드에서 ROM(Range of Motion) 체크 후 M7에 전달됩니다. 범위 초과 시 `4xxx` 에러 반환.
 - **Watchdog**: M7 펌웨어는 200 ms watchdog 보호. A53와의 IPC 타임아웃 발생 시 자동 안전 정지.
 
-개발 중 임의로 안전 로직을 우회하지 마세요. 자세한 내용은 `../ARCHITECTURE.md` 및 `../../docs/bootflow.md` 를 참조하세요.
+개발 중 임의로 안전 로직을 우회하지 마세요. 자세한 내용은 `../architecture/01_ARCHITECTURE.md` 및 `../architecture/03_BOOTFLOW.md` 를 참조하세요.
 
 ---
 
@@ -241,7 +241,7 @@ Python/JS 샘플 래퍼는 `../../examples/`에 있습니다:
 
 - 소스 위치: `src/app/server/` (백엔드), `src/app/frontend/` (React 대시보드)
 - 코딩 규칙: `.claude/rules/coding-rules.md`
-- 빌드 / 배포: `../DEPLOYMENT.md`
+- 빌드 / 배포: `../sdk/04_DEPLOYMENT.md`
 - 이슈/버그: 프로젝트 이슈 트래커 (이관 시 전달)
 
 ---
@@ -250,12 +250,12 @@ Python/JS 샘플 래퍼는 `../../examples/`에 있습니다:
 
 | 필요한 정보 | 문서 |
 |------------|------|
-| 엔드포인트 상세/스키마 | `../API_REFERENCE.md` |
-| 아키텍처 / 기술 스택 | `../ARCHITECTURE.md` |
-| HW 추상화 계층 | `../HARDWARE_ABSTRACTION.md` |
-| Mock 모드 사용법 | `../MOCK_MODE.md` |
-| 배포/빌드 스크립트 | `../DEPLOYMENT.md` |
-| 문제 해결 | `../TROUBLESHOOTING.md` |
-| B-code 스펙 | `../BCODE_SPEC.md` |
-| CAD/CAM 워크플로우 | `../CAD_CAM_GUIDE.md` |
-| 와이어 재료 (NiTi/SS/Beta-Ti) | `../WIRE_MATERIALS.md` |
+| 엔드포인트 상세/스키마 | `../sdk/02_API_REFERENCE.md` |
+| 아키텍처 / 기술 스택 | `../architecture/01_ARCHITECTURE.md` |
+| HW 추상화 계층 | `../architecture/02_HARDWARE_ABSTRACTION.md` |
+| Mock 모드 사용법 | `../sdk/03_MOCK_MODE.md` |
+| 배포/빌드 스크립트 | `../sdk/04_DEPLOYMENT.md` |
+| 문제 해결 | `../sdk/05_TROUBLESHOOTING.md` |
+| B-code 스펙 | `../algorithm/02_BCODE_SPEC.md` |
+| CAD/CAM 워크플로우 | `../algorithm/01_CAD_CAM_GUIDE.md` |
+| 와이어 재료 (NiTi/SS/Beta-Ti) | `../algorithm/03_WIRE_MATERIALS.md` |

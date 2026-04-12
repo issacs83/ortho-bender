@@ -44,4 +44,4 @@ setenv boot_auto 'run boot_emmc_local'
 - Dev profile uses TFTP+NFS for rapid kernel/rootfs iteration without reflashing
 - Prod profile will evolve to signed FIT image with A/B partitioning
 - DTB selection: use `imx8mp-evk-rpmsg.dtb` for M7 remoteproc, `imx8mp-evk.dtb` for safe baseline
-- See `evk-remoteproc-analysis.md` for RPMSG safe rules
+- See `../hardware/02_EVK_REMOTEPROC.md` for RPMSG safe rules

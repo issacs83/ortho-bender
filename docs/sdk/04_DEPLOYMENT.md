@@ -247,7 +247,7 @@ rsync -avz src/app/server/ root@192.168.77.2:/opt/ortho-bender/server/
 
 ## 10. 관련 문서
 
-- [MOCK_MODE.md](MOCK_MODE.md) — 하드웨어 없이 개발
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — 배포 중 자주 발생하는 문제
-- [bootflow.md](bootflow.md) — 부팅 시퀀스 상세
-- [evk-remoteproc-analysis.md](evk-remoteproc-analysis.md) — M7 remoteproc 내부
+- [MOCK_MODE.md](03_MOCK_MODE.md) — 하드웨어 없이 개발
+- [TROUBLESHOOTING.md](05_TROUBLESHOOTING.md) — 배포 중 자주 발생하는 문제
+- [bootflow.md](../architecture/03_BOOTFLOW.md) — 부팅 시퀀스 상세
+- [evk-remoteproc-analysis.md](../hardware/02_EVK_REMOTEPROC.md) — M7 remoteproc 내부

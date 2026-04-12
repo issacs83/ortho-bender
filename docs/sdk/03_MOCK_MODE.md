@@ -236,6 +236,6 @@ curl http://localhost:8000/api/camera/status
 
 ## 10. 관련 문서
 
-- [SDK_GUIDE.md](SDK_GUIDE.md) — 메인 사용 가이드
-- [DEPLOYMENT.md](DEPLOYMENT.md) — 실기기 배포
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — 문제 해결
+- [SDK_GUIDE.md](01_SDK_GUIDE.md) — 메인 사용 가이드
+- [DEPLOYMENT.md](04_DEPLOYMENT.md) — 실기기 배포
+- [TROUBLESHOOTING.md](05_TROUBLESHOOTING.md) — 문제 해결

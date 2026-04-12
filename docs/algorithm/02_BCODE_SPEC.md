@@ -93,7 +93,7 @@ offset  type   field
 | `2 = BETA_TI` | `×1.15` | TMA (Beta-Titanium) — 15% |
 | `3 = CU_NITI` | `×1.30` | Cu-NiTi 열활성 — 30% |
 
-자세한 재질 특성은 [`WIRE_MATERIALS.md`](WIRE_MATERIALS.md) 참고.
+자세한 재질 특성은 [`03_WIRE_MATERIALS.md`](03_WIRE_MATERIALS.md) 참고.
 
 API 호출:
 ```bash
@@ -197,7 +197,7 @@ curl -X POST http://localhost:8000/api/cam/generate -d '...' | jq .data
 OB_MOCK_MODE=true python3 -m uvicorn server.main:app
 ```
 실제 모터 없이 position/velocity 가 갱신되어 `/ws/motor` 로 진행률을 관찰할 수 있습니다.
-자세한 내용은 [`MOCK_MODE.md`](MOCK_MODE.md) 참고.
+자세한 내용은 [`../sdk/03_MOCK_MODE.md`](../sdk/03_MOCK_MODE.md) 참고.
 
 ### 8.3 프론트엔드 3D 뷰어
 `src/app/frontend/` React 앱에서 B-code 를 시각화합니다.

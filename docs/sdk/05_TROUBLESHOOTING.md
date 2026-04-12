@@ -382,7 +382,7 @@ reboot
 
 ## 관련 문서
 
-- [DEPLOYMENT.md](DEPLOYMENT.md) — 배포 절차
-- [MOCK_MODE.md](MOCK_MODE.md) — 하드웨어 없이 개발
-- [SDK_GUIDE.md](SDK_GUIDE.md) — 메인 사용 가이드
-- [API_REFERENCE.md](API_REFERENCE.md) — 에러 코드 카탈로그
+- [DEPLOYMENT.md](04_DEPLOYMENT.md) — 배포 절차
+- [MOCK_MODE.md](03_MOCK_MODE.md) — 하드웨어 없이 개발
+- [SDK_GUIDE.md](01_SDK_GUIDE.md) — 메인 사용 가이드
+- [API_REFERENCE.md](02_API_REFERENCE.md) — 에러 코드 카탈로그
