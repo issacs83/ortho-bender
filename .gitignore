@@ -47,3 +47,25 @@ Thumbs.db
 # External repos (cloned separately)
 claude-dev-forge/
 kc_test/
+
+# Internal dev tooling / project management (do not publish)
+.claude/
+CLAUDE.md
+MEMORY.md
+output/
+ref/
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+*.local
+
+# Test / coverage
+.coverage
+.pytest_cache/
+htmlcov/
+coverage.xml
+
+# Logs
+*.log
