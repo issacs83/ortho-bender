@@ -77,7 +77,7 @@ curl -s -X POST "$HOST/api/camera/settings" \
   -d '{"exposure_us": 5000, "gain_db": 6.0, "format": "mono8"}' | jq_or_cat
 
 echo -e "\n[POST] /api/camera/capture   (saves frame.jpg)"
-curl -s -o frame.jpg "$HOST/api/camera/capture?quality=90"
+curl -s -X POST -o frame.jpg "$HOST/api/camera/capture?quality=90"
 echo "  Saved to frame.jpg ($(wc -c < frame.jpg) bytes)"
 
 echo -e "\n  MJPEG stream URL (open in browser or VLC):"

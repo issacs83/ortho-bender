@@ -15,7 +15,8 @@ import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXAMPLE_DIR = os.path.abspath(os.path.join(HERE, ".."))
-SERVER_DIR = os.path.abspath(os.path.join(HERE, "../../../server"))
+# server.main:app 는 src/app 를 cwd 로 해야 import 가 풀립니다.
+APP_DIR = os.path.abspath(os.path.join(HERE, "../../.."))
 
 # cad_cam_opencv_workflow 를 import 할 수 있도록 경로 추가
 sys.path.insert(0, EXAMPLE_DIR)
@@ -46,7 +47,7 @@ def backend_url() -> str:
     proc = subprocess.Popen(
         ["python3", "-m", "uvicorn", "server.main:app",
          "--host", host, "--port", str(port)],
-        cwd=SERVER_DIR,
+        cwd=APP_DIR,
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

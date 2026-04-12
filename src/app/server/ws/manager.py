@@ -213,11 +213,14 @@ class WsManager:
         while True:
             try:
                 if self.camera.count > 0:
-                    jpeg: Optional[bytes] = await provider()
-                    if jpeg:
+                    frame = await provider()
+                    if frame:
+                        jpeg = frame["jpeg"]
                         payload = json.dumps({
                             "type":       "camera_frame",
                             "frame_b64":  base64.b64encode(jpeg).decode(),
+                            "width":      frame.get("width", 0),
+                            "height":     frame.get("height", 0),
                             "timestamp_us": int(time.monotonic() * 1_000_000),
                         })
                         await self.camera.broadcast(payload)

@@ -17,8 +17,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
-import io
 import time
 
 import httpx
@@ -31,7 +29,10 @@ def check(resp: dict) -> dict:
 
 
 def snapshot(host: str, out: str) -> None:
-    """REST one-shot capture — useful for triggered inspection flows."""
+    """REST one-shot capture — useful for triggered inspection flows.
+
+    /api/camera/capture returns raw image/jpeg bytes (not an envelope).
+    """
     client = httpx.Client(base_url=host, timeout=10.0)
 
     status = check(client.get("/api/camera/status").json())
@@ -39,10 +40,12 @@ def snapshot(host: str, out: str) -> None:
           f"{status.get('width')}x{status.get('height')}  "
           f"backend={status.get('backend')}")
 
-    data = check(client.post("/api/camera/capture",
-                             json={"quality": 85}).json())
-    jpeg_b64 = data["frame_b64"]
-    jpeg = base64.b64decode(jpeg_b64)
+    resp = client.post("/api/camera/capture", params={"quality": 85})
+    ct = resp.headers.get("content-type", "")
+    if ct.startswith("application/json"):
+        env = resp.json()
+        raise RuntimeError(f"[{env.get('code')}] {env.get('error')}")
+    jpeg = resp.content
     with open(out, "wb") as f:
         f.write(jpeg)
     print(f"saved {len(jpeg)} bytes → {out}")

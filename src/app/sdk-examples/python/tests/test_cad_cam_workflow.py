@@ -4,7 +4,6 @@ Mock 백엔드를 대상으로 /api/cam, /api/bending, /api/camera 전체 플로
 실기기를 쓰려면 ORTHO_BENDER_URL 환경변수로 오버라이드하세요.
 """
 import time
-import base64
 
 import pytest
 
@@ -60,13 +59,15 @@ def test_cam_preview_l_bend_has_right_angle(client):
 
 
 def test_cam_preview_rejects_single_point(client):
-    r = client.post("/api/cam/generate", json={
+    # CamGenerateRequest.points has min_length=2 → FastAPI/Pydantic raises 422
+    resp = client.post("/api/cam/generate", json={
         "points": [{"x": 0.0, "y": 0.0, "z": 0.0}],
         "material": 0,
         "wire_diameter_mm": 0.457,
-    }).json()
-    assert r["success"] is False
-    assert r["code"] == "CAM_INVALID_INPUT"
+    })
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert any("points" in str(d.get("loc", "")) for d in detail)
 
 
 def test_cam_preview_is_idempotent(client):
@@ -132,12 +133,12 @@ def test_bending_stop_returns_to_idle(client):
 # ────────────── Camera ──────────────
 
 def test_camera_capture_returns_valid_jpeg(client):
-    r = client.post("/api/camera/capture", json={"quality": 85}).json()
-    assert r["success"] is True
-    assert "frame_b64" in r["data"]
-    assert r["data"]["width"] > 0 and r["data"]["height"] > 0
-
-    jpeg = base64.b64decode(r["data"]["frame_b64"])
+    # /api/camera/capture returns raw image/jpeg bytes, not an envelope.
+    resp = client.post("/api/camera/capture", params={"quality": 85})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/jpeg")
+    jpeg = resp.content
+    assert len(jpeg) > 100
     assert jpeg[:3] == b"\xff\xd8\xff"  # JPEG SOI marker
 
 

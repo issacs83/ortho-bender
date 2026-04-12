@@ -93,7 +93,14 @@ async def lifespan(app: FastAPI):
 
     async def _camera_provider():
         try:
-            return await camera_svc.capture_jpeg(quality=cfg.camera_jpeg_quality)
+            jpeg = await camera_svc.capture_jpeg(quality=cfg.camera_jpeg_quality)
+            if not jpeg:
+                return None
+            return {
+                "jpeg":   jpeg,
+                "width":  camera_svc._width or 0,
+                "height": camera_svc._height or 0,
+            }
         except Exception:
             return None
 
