@@ -269,6 +269,21 @@ FastAPI 백엔드를 통해서만 이루어진다.
 
 이 경계 덕분에 **하드웨어가 바뀌어도 SDK API 는 유지**된다.
 
+### 5.3 교체 투명성 (Swap Transparency)
+
+이 프로젝트의 핵심 설계 원칙은 **교체 투명성**이다:
+
+- **카메라 교체 투명성**: 센서가 USB3 Vision(Allied Vision) → MIPI CSI(OV5640 등)
+  → v4l2 → mock 으로 바뀌어도 `/api/camera/*` 응답 스키마는 동일하다.
+  adapter 계층(`camera_service.py`)만 교체된다.
+- **모터/드라이버 교체 투명성**: TMC260C-PA → TMC5160 → EtherCAT 서보 → mock
+  으로 바뀌어도 `/api/motor/*`, `/api/bending/*` 의 의미는 동일하다.
+  M7 펌웨어와 RPMsg 핸들러만 교체된다.
+- **B-code 는 벤더 중립**이다: `(L_mm, β°, θ°)` 는 어느 물리 기구에서든 같은 의미.
+
+상세 설명과 교체 시퀀스, 개발자 체크리스트는
+[HARDWARE_ABSTRACTION.md](HARDWARE_ABSTRACTION.md) 참고.
+
 ---
 
 ## 6. 데이터 흐름 시나리오

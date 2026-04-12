@@ -18,14 +18,15 @@ NXP i.MX8MP 기반 치과 교정 와이어 벤딩머신. 3D 치료 계획을 입
 │  │  Cortex-A53 x4 (Linux)   │  │   Cortex-M7 (FreeRTOS)    │ │
 │  │                          │  │                           │ │
 │  │  FastAPI SDK ┐           │  │  Trajectory Manager       │ │
-│  │   ├─ /api/motor          │  │  TMC260C-PA STEP/DIR x4   │ │
-│  │   ├─ /api/camera         │◄─┤  StallGuard2 diagnostics  │ │
-│  │   ├─ /api/bending        │  │  E-STOP + Watchdog        │ │
-│  │   ├─ /api/cam            │  │                           │ │
+│  │   ├─ /api/motor          │  │  (current impl)           │ │
+│  │   ├─ /api/camera         │◄─┤  TMC260C-PA STEP/DIR x4   │ │
+│  │   ├─ /api/bending        │  │  StallGuard2 diagnostics  │ │
+│  │   ├─ /api/cam            │  │  E-STOP + Watchdog        │ │
 │  │   └─ /ws/{motor,camera}  │  └───────────────────────────┘ │
 │  │                          │             │ RPMsg IPC        │
 │  │  React frontend ─────────┘             │                  │
 │  │  VmbPy camera ◄──────── Allied Vision 1800 U-158m (USB3) │
+│  │                           (current impl — 교체 투명)     │
 │  │  NPU 2.3 TOPS ───────── Springback ML + Defect Detection │
 │  └──────────────────────────┘                                │
 └──────────────────────────────────────────────────────────────┘
@@ -78,7 +79,7 @@ python3 basic_bend.py --host http://192.168.77.2:8000
 | Persona | 진입 문서 | 핵심 엔드포인트 |
 |--------|----------|----------------|
 | 🎨 **프론트엔드** | [docs/SDK_GUIDE.md §5](docs/SDK_GUIDE.md) | `/api/motor`, `/ws/motor`, `/ws/system` |
-| 📐 **CAD / CAM** | [docs/BCODE_SPEC.md](docs/BCODE_SPEC.md) + [docs/WIRE_MATERIALS.md](docs/WIRE_MATERIALS.md) | `/api/cam/*`, `/api/bending/*` |
+| 📐 **CAD / CAM** | [docs/CAD_CAM_GUIDE.md](docs/CAD_CAM_GUIDE.md) (+ [BCODE_SPEC](docs/BCODE_SPEC.md), [WIRE_MATERIALS](docs/WIRE_MATERIALS.md)) | `/api/cam/*`, `/api/bending/*` |
 | 👁 **Vision / ML** | [docs/SDK_GUIDE.md §7](docs/SDK_GUIDE.md) | `/api/camera/*`, `/ws/camera` |
 | 🛠 **DevOps / 통합** | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | systemd, 로깅, 네트워킹 |
 
@@ -88,6 +89,9 @@ python3 basic_bend.py --host http://192.168.77.2:8000
 
 ### SDK 사용자
 - [**SDK_GUIDE.md**](docs/SDK_GUIDE.md) — 메인 사용 가이드 (persona별)
+- [**ARCHITECTURE.md**](docs/ARCHITECTURE.md) — 전체 시스템 구조 및 계층 경계
+- [**HARDWARE_ABSTRACTION.md**](docs/HARDWARE_ABSTRACTION.md) — 카메라/모터 교체 투명성 설명
+- [**CAD_CAM_GUIDE.md**](docs/CAD_CAM_GUIDE.md) — CAD/CAM + OpenCV 통합 개발 가이드 (테스트 코드 포함)
 - [**API_REFERENCE.md**](docs/API_REFERENCE.md) — REST/WebSocket 전체 레퍼런스
 - [**BCODE_SPEC.md**](docs/BCODE_SPEC.md) — B-code 포맷 명세
 - [**WIRE_MATERIALS.md**](docs/WIRE_MATERIALS.md) — 재질 특성 + 스프링백 계수

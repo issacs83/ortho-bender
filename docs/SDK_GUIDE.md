@@ -152,6 +152,10 @@ await fetch("/api/motor/home", {
 
 ## 6. CAD/CAM 개발자용
 
+> **본격 가이드**: [CAD_CAM_GUIDE.md](CAD_CAM_GUIDE.md) — OpenCV 통합 워크플로우,
+> pytest 회귀 테스트, 방어적 에러 처리 전체 예제가 포함됩니다.
+> 아래는 최소 코드 참고용입니다.
+
 치료 계획(3D 와이어 센터라인) 을 받아 머신을 구동하는 최소 코드:
 
 ```python
