@@ -46,6 +46,11 @@ export function RegisterInspector() {
     setError(null);
     try {
       const val = parseInt(writeValue, writeValue.startsWith('0x') ? 16 : 10);
+      if (isNaN(val)) {
+        setError('Invalid value — enter a decimal or hex (0x…) number');
+        setLoading(false);
+        return;
+      }
       const r = await diagApi.writeRegister(driver, addr, val);
       setResult(r);
     } catch (e) {

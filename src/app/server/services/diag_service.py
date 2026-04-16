@@ -108,6 +108,26 @@ class DiagService:
         hex_dump = {k: f"0x{v:08X}" for k, v in raw_dump.items()}
         return DiagDumpResponse(driver=DriverId(driver_id), registers=hex_dump)
 
+    async def get_live_status(self) -> dict:
+        """Return live diagnostic status for all TMC260C drivers (for WS broadcast)."""
+        results = {}
+        for did, drv in (("tmc260c_0", self._tmc260c_0), ("tmc260c_1", self._tmc260c_1)):
+            try:
+                status = await drv.read_status()
+                results[did] = {
+                    "sg_result": status.sg_result,
+                    "stst": status.stst,
+                    "ot": status.ot,
+                    "otpw": status.otpw,
+                    "s2ga": status.s2ga,
+                    "s2gb": status.s2gb,
+                    "ola": status.ola,
+                    "olb": status.olb,
+                }
+            except Exception:
+                results[did] = None
+        return {"drivers": results}
+
     async def get_backend_info(self) -> DiagBackendResponse:
         """Return current backend mode and configuration."""
         backend_name = type(self._backend).__name__

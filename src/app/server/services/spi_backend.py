@@ -148,7 +148,10 @@ class SpidevMotorBackend(MotorBackend):
 
     async def pulse_step(self, axis: int, count: int,
                          freq_hz: int, direction: int) -> None:
-        """Generate STEP pulses via GPIO toggle loop."""
+        """Generate STEP pulses via GPIO toggle loop.
+
+        Runs in a thread to avoid blocking the asyncio event loop.
+        """
         step_key = 'feed_step' if axis == 0 else 'bend_step'
         step_line = self._gpio_lines.get(step_key)
         dir_line = self._gpio_lines.get('dir')
@@ -156,15 +159,15 @@ class SpidevMotorBackend(MotorBackend):
             log.error("GPIO lines not available for axis %d", axis)
             return
 
-        # Set direction
-        dir_line.set_value(1 if direction > 0 else 0)
-        await asyncio.sleep(0.000005)  # 5 us direction setup time
+        def _pulse_blocking():
+            dir_line.set_value(1 if direction > 0 else 0)
+            time.sleep(0.000005)  # 5 us direction setup time
+            half_period = 1.0 / (2 * freq_hz)
+            for _ in range(count):
+                step_line.set_value(1)
+                time.sleep(half_period)
+                step_line.set_value(0)
+                time.sleep(half_period)
 
-        half_period = 1.0 / (2 * freq_hz)
-        for _ in range(count):
-            step_line.set_value(1)
-            time.sleep(half_period)
-            step_line.set_value(0)
-            time.sleep(half_period)
-
+        await asyncio.to_thread(_pulse_blocking)
         self.positions[axis] = self.positions.get(axis, 0) + (count * direction)

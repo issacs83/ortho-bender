@@ -83,8 +83,21 @@ async def lifespan(app: FastAPI):
     app.state.motor_service  = motor_svc
     app.state.camera_service = camera_svc
 
-    # Diagnostic backend — always MockMotorBackend until spidev is implemented
-    diag_backend = MockMotorBackend()
+    # Diagnostic backend — select via OB_MOTOR_BACKEND env var
+    if cfg.motor_backend == "spidev":
+        from .services.spi_backend import SpidevMotorBackend
+        diag_backend = SpidevMotorBackend(
+            spi_device=cfg.spi_device,
+            spi_speed_hz=cfg.spi_speed_hz,
+            gpio_cs1=cfg.gpio_cs1,
+            gpio_cs2=cfg.gpio_cs2,
+            gpio_feed_step=cfg.gpio_feed_step,
+            gpio_bend_step=cfg.gpio_bend_step,
+            gpio_dir=cfg.gpio_dir,
+        )
+        await diag_backend.open()
+    else:
+        diag_backend = MockMotorBackend()
     diag_svc = DiagService(diag_backend)
     app.state.diag_service = diag_svc
 
@@ -122,21 +135,7 @@ async def lifespan(app: FastAPI):
 
     async def _diag_provider():
         try:
-            results = {}
-            for did in ("tmc260c_0", "tmc260c_1"):
-                status = await diag_svc._tmc260c_0.read_status() if did == "tmc260c_0" \
-                    else await diag_svc._tmc260c_1.read_status()
-                results[did] = {
-                    "sg_result": status.sg_result,
-                    "stst": status.stst,
-                    "ot": status.ot,
-                    "otpw": status.otpw,
-                    "s2ga": status.s2ga,
-                    "s2gb": status.s2gb,
-                    "ola": status.ola,
-                    "olb": status.olb,
-                }
-            return {"drivers": results}
+            return await diag_svc.get_live_status()
         except Exception:
             return None
 
