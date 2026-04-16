@@ -144,6 +144,7 @@ async def lifespan(app: FastAPI):
         camera_provider=_camera_provider,
         system_provider=_system_provider,
         diag_provider=_diag_provider,
+        camera_fps=cfg.camera_fps,
     )
     app.state.ws_manager = ws_manager
 

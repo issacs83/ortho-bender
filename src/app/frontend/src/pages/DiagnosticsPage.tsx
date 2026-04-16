@@ -153,6 +153,8 @@ export function DiagnosticsPage() {
           >
             <option value={0}>FEED</option>
             <option value={1}>BEND</option>
+            <option value={2}>ROTATE</option>
+            <option value={3}>LIFT</option>
           </select>
           <input
             type="number"

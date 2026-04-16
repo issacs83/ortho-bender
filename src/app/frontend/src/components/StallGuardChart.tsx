@@ -14,7 +14,8 @@ interface SgDataPoint {
   time: number;
   tmc260c_0?: number;
   tmc260c_1?: number;
-  tmc5072?: number;
+  tmc5072_m0?: number;
+  tmc5072_m1?: number;
 }
 
 interface StallGuardChartProps {
@@ -24,10 +25,11 @@ interface StallGuardChartProps {
 }
 
 const MAX_POINTS = 200;
-const COLORS = {
+const COLORS: Record<string, string> = {
   tmc260c_0: '#3b82f6',
   tmc260c_1: '#10b981',
-  tmc5072: '#f59e0b',
+  tmc5072_m0: '#f59e0b',
+  tmc5072_m1: '#a78bfa',
 };
 
 export function StallGuardChart({ threshold, width = 600, height = 250 }: StallGuardChartProps) {
@@ -82,9 +84,10 @@ export function StallGuardChart({ threshold, width = 600, height = 250 }: StallG
         {threshold !== undefined && (
           <ReferenceLine y={threshold} stroke="#ef4444" strokeDasharray="5 5" label="Threshold" />
         )}
-        <Line type="monotone" dataKey="tmc260c_0" stroke={COLORS.tmc260c_0} dot={false} strokeWidth={2} />
-        <Line type="monotone" dataKey="tmc260c_1" stroke={COLORS.tmc260c_1} dot={false} strokeWidth={2} />
-        <Line type="monotone" dataKey="tmc5072" stroke={COLORS.tmc5072} dot={false} strokeWidth={2} />
+        <Line type="monotone" dataKey="tmc260c_0" stroke={COLORS.tmc260c_0} dot={false} strokeWidth={2} name="TMC260C #0 (FEED)" />
+        <Line type="monotone" dataKey="tmc260c_1" stroke={COLORS.tmc260c_1} dot={false} strokeWidth={2} name="TMC260C #1 (BEND)" />
+        <Line type="monotone" dataKey="tmc5072_m0" stroke={COLORS.tmc5072_m0} dot={false} strokeWidth={2} name="TMC5072 M0 (ROTATE)" />
+        <Line type="monotone" dataKey="tmc5072_m1" stroke={COLORS.tmc5072_m1} dot={false} strokeWidth={2} name="TMC5072 M1 (LIFT)" />
       </LineChart>
       <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#94a3b8', marginTop: 4 }}>
         {Object.entries(live).map(([id, val]) => (

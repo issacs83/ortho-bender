@@ -109,8 +109,14 @@ class DiagService:
         return DiagDumpResponse(driver=DriverId(driver_id), registers=hex_dump)
 
     async def get_live_status(self) -> dict:
-        """Return live diagnostic status for all TMC260C drivers (for WS broadcast)."""
+        """Return live diagnostic status for all drivers (for WS broadcast).
+
+        Includes TMC260C x2 (StallGuard2 + fault flags) and
+        TMC5072 motor 0/1 (DRV_STATUS register).
+        """
         results = {}
+
+        # TMC260C drivers — full status with SG2, fault bits
         for did, drv in (("tmc260c_0", self._tmc260c_0), ("tmc260c_1", self._tmc260c_1)):
             try:
                 status = await drv.read_status()
@@ -126,6 +132,26 @@ class DiagService:
                 }
             except Exception:
                 results[did] = None
+
+        # TMC5072 — 2 motor channels, DRV_STATUS per channel
+        for motor in (0, 1):
+            did = f"tmc5072_m{motor}"
+            try:
+                drv_status = await self._tmc5072.get_drv_status(motor)
+                # TMC5072 DRV_STATUS bits: SG_RESULT[9:0], OT, OTPW, S2GA, S2GB, OLA, OLB, STST
+                results[did] = {
+                    "sg_result": drv_status & 0x3FF,
+                    "stst": bool(drv_status & (1 << 31)),
+                    "ot": bool(drv_status & (1 << 25)),
+                    "otpw": bool(drv_status & (1 << 26)),
+                    "s2ga": bool(drv_status & (1 << 27)),
+                    "s2gb": bool(drv_status & (1 << 28)),
+                    "ola": bool(drv_status & (1 << 29)),
+                    "olb": bool(drv_status & (1 << 30)),
+                }
+            except Exception:
+                results[did] = None
+
         return {"drivers": results}
 
     async def get_backend_info(self) -> DiagBackendResponse:

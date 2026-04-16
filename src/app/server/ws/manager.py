@@ -95,6 +95,7 @@ class WsManager:
         camera_provider: Callable,
         system_provider: Callable,
         diag_provider:   Optional[Callable] = None,
+        camera_fps:      float = 30.0,
     ) -> None:
         """
         Launch background loops that push data to connected clients.
@@ -103,9 +104,11 @@ class WsManager:
         dict (or None to skip a cycle).
 
         :param motor_provider:  async () -> dict | None  (100 ms cadence)
-        :param camera_provider: async () -> bytes | None (JPEG, ~15 fps)
+        :param camera_provider: async () -> bytes | None (JPEG)
         :param system_provider: async () -> dict | None  (event-driven)
+        :param camera_fps:      camera broadcast frame rate cap (default 30)
         """
+        self._camera_fps = camera_fps
         self._motor_task  = asyncio.create_task(
             self._motor_loop(motor_provider),  name="ws_motor_loop"
         )
@@ -228,7 +231,9 @@ class WsManager:
             await asyncio.sleep(0.1)
 
     async def _camera_loop(self, provider: Callable) -> None:
-        """Broadcast camera frames at ~15 fps when clients are connected."""
+        """Broadcast camera frames when clients are connected."""
+        fps = getattr(self, '_camera_fps', 30.0)
+        interval = 1.0 / max(fps, 1.0)
         while True:
             try:
                 if self.camera.count > 0:
@@ -245,7 +250,7 @@ class WsManager:
                         await self.camera.broadcast(payload)
             except Exception as exc:
                 log.debug("WS camera loop error: %s", exc)
-            await asyncio.sleep(1.0 / 15)  # ~15 fps cap
+            await asyncio.sleep(interval)
 
     async def _system_loop(self, provider: Callable) -> None:
         """Broadcast system heartbeat every 1 second."""

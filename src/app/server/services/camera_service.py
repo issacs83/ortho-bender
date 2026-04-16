@@ -202,7 +202,7 @@ class CameraService:
         self._connected = True
         self._width = 1456   # Alvium 1800 U-158m native resolution
         self._height = 1088
-        self._fps = 15.0
+        self._fps = 30.0     # Alvium 1800 U-158m supports up to 133 fps
         log.info("CameraService: opened via VmbPy (Vimba X USB3 Vision)")
         return True
 
