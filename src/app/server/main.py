@@ -31,9 +31,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .routers import bending, cam, camera, motor, system, wifi
+from .routers import bending, cam, camera, motor, system, wifi, diag_router
 from .services.camera_service import CameraService
+from .services.diag_service import DiagService
 from .services.ipc_client import IpcClient
+from .services.motor_backend import MockMotorBackend
 from .services.motor_service import MotorService
 from .ws.manager import WsManager
 
@@ -81,6 +83,24 @@ async def lifespan(app: FastAPI):
     app.state.motor_service  = motor_svc
     app.state.camera_service = camera_svc
 
+    # Diagnostic backend — select via OB_MOTOR_BACKEND env var
+    if cfg.motor_backend == "spidev":
+        from .services.spi_backend import SpidevMotorBackend
+        diag_backend = SpidevMotorBackend(
+            spi_device=cfg.spi_device,
+            spi_speed_hz=cfg.spi_speed_hz,
+            gpio_cs1=cfg.gpio_cs1,
+            gpio_cs2=cfg.gpio_cs2,
+            gpio_feed_step=cfg.gpio_feed_step,
+            gpio_bend_step=cfg.gpio_bend_step,
+            gpio_dir=cfg.gpio_dir,
+        )
+        await diag_backend.open()
+    else:
+        diag_backend = MockMotorBackend()
+    diag_svc = DiagService(diag_backend)
+    app.state.diag_service = diag_svc
+
     # WebSocket manager + background tasks
     ws_manager = WsManager()
 
@@ -113,10 +133,17 @@ async def lifespan(app: FastAPI):
         except Exception:
             return None
 
+    async def _diag_provider():
+        try:
+            return await diag_svc.get_live_status()
+        except Exception:
+            return None
+
     ws_manager.start_background_tasks(
         motor_provider=_motor_provider,
         camera_provider=_camera_provider,
         system_provider=_system_provider,
+        diag_provider=_diag_provider,
     )
     app.state.ws_manager = ws_manager
 
@@ -166,6 +193,7 @@ def create_app() -> FastAPI:
     application.include_router(cam.router)
     application.include_router(system.router)
     application.include_router(wifi.router)
+    application.include_router(diag_router.router)
 
     # WebSocket endpoints
     @application.websocket("/ws/motor")
@@ -179,6 +207,10 @@ def create_app() -> FastAPI:
     @application.websocket("/ws/system")
     async def ws_system(ws: WebSocket):
         await application.state.ws_manager.handle_system(ws)
+
+    @application.websocket("/ws/motor/diag")
+    async def ws_motor_diag(ws: WebSocket):
+        await application.state.ws_manager.handle_motor_diag(ws)
 
     # Health probe (used by systemd + load balancers)
     @application.get("/health", tags=["meta"])

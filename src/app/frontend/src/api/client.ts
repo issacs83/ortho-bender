@@ -71,6 +71,38 @@ export interface BcodeStep {
   theta_deg: number;
 }
 
+export interface SpiTestResultItem {
+  driver: string;
+  ok: boolean;
+  latency_us: number | null;
+  error: string | null;
+}
+
+export interface DiagRegisterResult {
+  driver: string;
+  addr: string;
+  value: number;
+  value_hex: string;
+}
+
+export interface DiagDumpResult {
+  driver: string;
+  registers: Record<string, string>;
+}
+
+export interface DiagBackendInfo {
+  backend: string;
+  spi_device: string | null;
+  spi_speed_hz: number | null;
+  drivers: string[];
+}
+
+export interface DiagEvent {
+  type: string;
+  drivers: Record<string, { sg_result: number; stst: boolean; ot: boolean; otpw: boolean; s2ga: boolean; s2gb: boolean; ola: boolean; olb: boolean }>;
+  timestamp_us: number;
+}
+
 // ---------------------------------------------------------------------------
 // HTTP helper
 // ---------------------------------------------------------------------------
@@ -203,6 +235,30 @@ export const systemApi = {
 };
 
 // ---------------------------------------------------------------------------
+// Diagnostics API
+// ---------------------------------------------------------------------------
+
+export const diagApi = {
+  backend: (): Promise<DiagBackendInfo> =>
+    request("/api/motor/diag/backend"),
+
+  spiTest: (): Promise<{ results: SpiTestResultItem[] }> =>
+    request("/api/motor/diag/spi-test"),
+
+  readRegister: (driver: string, addr: string): Promise<DiagRegisterResult> =>
+    request(`/api/motor/diag/register/${driver}/${addr}`),
+
+  writeRegister: (driver: string, addr: string, value: number): Promise<DiagRegisterResult> =>
+    request(`/api/motor/diag/register/${driver}/${addr}`, {
+      method: "POST",
+      body: JSON.stringify({ value }),
+    }),
+
+  dump: (driver: string): Promise<DiagDumpResult> =>
+    request(`/api/motor/diag/dump/${driver}`),
+};
+
+// ---------------------------------------------------------------------------
 // WebSocket helpers
 // ---------------------------------------------------------------------------
 
@@ -231,4 +287,7 @@ export const wsApi = {
 
   system: (cb: WsHandler<{ type: string; message: string; timestamp_us: number }>): WebSocket =>
     openWs("/ws/system", cb),
+
+  motorDiag: (cb: WsHandler<DiagEvent>): WebSocket =>
+    openWs("/ws/motor/diag", cb),
 };

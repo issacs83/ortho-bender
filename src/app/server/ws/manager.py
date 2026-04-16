@@ -78,10 +78,12 @@ class WsManager:
         self.motor  = ConnectionSet("motor")
         self.camera = ConnectionSet("camera")
         self.system = ConnectionSet("system")
+        self.motor_diag = ConnectionSet("motor_diag")
 
         self._motor_task:  Optional[asyncio.Task] = None
         self._camera_task: Optional[asyncio.Task] = None
         self._system_task: Optional[asyncio.Task] = None
+        self._diag_task:   Optional[asyncio.Task] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -92,6 +94,7 @@ class WsManager:
         motor_provider:  Callable,
         camera_provider: Callable,
         system_provider: Callable,
+        diag_provider:   Optional[Callable] = None,
     ) -> None:
         """
         Launch background loops that push data to connected clients.
@@ -112,10 +115,14 @@ class WsManager:
         self._system_task = asyncio.create_task(
             self._system_loop(system_provider), name="ws_system_loop"
         )
+        if diag_provider:
+            self._diag_task = asyncio.create_task(
+                self._diag_loop(diag_provider), name="ws_diag_loop"
+            )
         log.info("WsManager: background broadcast tasks started")
 
     async def stop(self) -> None:
-        for task in (self._motor_task, self._camera_task, self._system_task):
+        for task in (self._motor_task, self._camera_task, self._system_task, self._diag_task):
             if task and not task.done():
                 task.cancel()
                 try:
@@ -164,6 +171,18 @@ class WsManager:
             pass
         finally:
             await self.system.remove(ws)
+
+    async def handle_motor_diag(self, ws: WebSocket) -> None:
+        """Handle a single /ws/motor/diag connection until disconnect."""
+        await ws.accept()
+        await self.motor_diag.add(ws)
+        try:
+            while True:
+                await ws.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            await self.motor_diag.remove(ws)
 
     # ------------------------------------------------------------------
     # Broadcast helpers (called externally on events)
@@ -243,3 +262,20 @@ class WsManager:
             except Exception as exc:
                 log.debug("WS system loop error: %s", exc)
             await asyncio.sleep(1.0)
+
+    async def _diag_loop(self, provider: Callable) -> None:
+        """Broadcast diagnostic status at 200 Hz (5 ms intervals)."""
+        while True:
+            try:
+                if self.motor_diag.count > 0:
+                    data = await provider()
+                    if data is not None:
+                        payload = json.dumps({
+                            "type": "diag_status",
+                            "timestamp_us": int(time.monotonic() * 1_000_000),
+                            **data,
+                        })
+                        await self.motor_diag.broadcast(payload)
+            except Exception as exc:
+                log.debug("WS diag loop error: %s", exc)
+            await asyncio.sleep(0.005)  # 200 Hz
