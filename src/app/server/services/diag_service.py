@@ -163,7 +163,13 @@ class DiagService:
             mode = "spidev"
         else:
             mode = "m7"
+
+        spi_device = getattr(self._backend, "_spi_device", None)
+        spi_speed = getattr(self._backend, "_spi_speed", None)
+
         return DiagBackendResponse(
             backend=mode,
+            spi_device=spi_device,
+            spi_speed_hz=spi_speed,
             drivers=[DriverId.TMC260C_0, DriverId.TMC260C_1, DriverId.TMC5072],
         )

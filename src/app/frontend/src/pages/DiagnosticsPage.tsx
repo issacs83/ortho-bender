@@ -88,7 +88,7 @@ export function DiagnosticsPage() {
   }
 
   return (
-    <div style={{ padding: 20, maxWidth: 900 }}>
+    <div style={{ padding: 12, maxWidth: 900, width: '100%', boxSizing: 'border-box' }}>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2 style={{ margin: 0, fontSize: 20, color: '#f1f5f9' }}>Diagnostics</h2>
@@ -139,13 +139,13 @@ export function DiagnosticsPage() {
             />
           </div>
         </div>
-        <StallGuardChart threshold={sgThreshold} width={840} height={220} />
+        <StallGuardChart threshold={sgThreshold} height={220} />
       </div>
 
       {/* Row 3: Motor Jog */}
       <div style={{ ...CARD, marginBottom: 12 }}>
         <h3 style={{ margin: '0 0 8px', fontSize: 14, color: '#94a3b8' }}>Motor Jog</h3>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
           <select
             value={jogAxis}
             onChange={e => setJogAxis(Number(e.target.value))}
@@ -163,10 +163,12 @@ export function DiagnosticsPage() {
             style={{ width: 60, background: '#0f172a', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 4, padding: '4px 8px', fontFamily: 'monospace' }}
           />
           <span style={{ fontSize: 12, color: '#64748b' }}>mm/s</span>
-          <button onClick={() => handleJog(-1)} style={{ ...BTN, background: '#475569', color: '#fff' }}>&laquo; REV</button>
-          <button onClick={handleJogStop} style={{ ...BTN, background: '#ef4444', color: '#fff' }}>STOP</button>
-          <button onClick={() => handleJog(1)} style={{ ...BTN, background: '#475569', color: '#fff' }}>FWD &raquo;</button>
-          <span style={{ fontSize: 12, color: '#94a3b8' }}>Status: {jogStatus}</span>
+          <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 'auto' }}>Status: {jogStatus}</span>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => handleJog(-1)} style={{ ...BTN, background: '#475569', color: '#fff', flex: 1 }}>&laquo; REV</button>
+          <button onClick={handleJogStop} style={{ ...BTN, background: '#ef4444', color: '#fff', flex: 1 }}>STOP</button>
+          <button onClick={() => handleJog(1)} style={{ ...BTN, background: '#475569', color: '#fff', flex: 1 }}>FWD &raquo;</button>
         </div>
       </div>
 
