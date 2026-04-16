@@ -173,6 +173,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     cfg = get_settings()
 
+    # Disable built-in docs — we serve custom routes with local assets (offline)
     application = FastAPI(
         title="Ortho-Bender SDK API",
         description=(
@@ -180,10 +181,43 @@ def create_app() -> FastAPI:
             "Provides hardware-agnostic control of motor axes, camera, and B-code bending sequences."
         ),
         version="0.1.0",
-        docs_url="/docs",
-        redoc_url="/redoc",
+        docs_url=None,
+        redoc_url=None,
         lifespan=lifespan,
     )
+
+    # Serve Swagger/ReDoc assets locally (no CDN dependency — works offline)
+    from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+
+    _static_dir = os.path.join(os.path.dirname(__file__), "static")
+    _has_local = os.path.isdir(_static_dir)
+    if _has_local:
+        application.mount(
+            "/static-api",
+            StaticFiles(directory=_static_dir),
+            name="api-static",
+        )
+
+    _sw_js = "/static-api/swagger-ui/swagger-ui-bundle.js" if _has_local else "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"
+    _sw_css = "/static-api/swagger-ui/swagger-ui.css" if _has_local else "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css"
+    _rd_js = "/static-api/redoc/redoc.standalone.js" if _has_local else "https://cdn.jsdelivr.net/npm/redoc@2/bundles/redoc.standalone.js"
+
+    @application.get("/docs", include_in_schema=False)
+    async def swagger_ui():
+        return get_swagger_ui_html(
+            openapi_url=application.openapi_url,
+            title=application.title + " — Swagger UI",
+            swagger_js_url=_sw_js,
+            swagger_css_url=_sw_css,
+        )
+
+    @application.get("/redoc", include_in_schema=False)
+    async def redoc_ui():
+        return get_redoc_html(
+            openapi_url=application.openapi_url,
+            title=application.title + " — ReDoc",
+            redoc_js_url=_rd_js,
+        )
 
     # CORS — allow all origins in development; restrict in production via env
     application.add_middleware(
