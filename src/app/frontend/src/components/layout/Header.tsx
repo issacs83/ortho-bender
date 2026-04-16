@@ -13,8 +13,10 @@ interface HeaderProps {
   motionStateNum: number;
   bdStatus: ConnStatus;
   ipcStatus: ConnStatus;
-  m7Status: ConnStatus;
+  motorStatus: ConnStatus;
+  motorModel: string | null;
   camStatus: ConnStatus;
+  camModel: string | null;
   onEstopAction?: () => void;
 }
 
@@ -23,8 +25,10 @@ export function Header({
   motionStateNum,
   bdStatus,
   ipcStatus,
-  m7Status,
+  motorStatus,
+  motorModel,
   camStatus,
+  camModel,
   onEstopAction,
 }: HeaderProps) {
   return (
@@ -44,26 +48,26 @@ export function Header({
       flexShrink: 0,
     }}>
       {/* Left: hamburger + title */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, width: 200 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
         <button
           onClick={onToggleSidebar}
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: TEXT_MUTED, padding: 4, display: 'flex' }}
         >
           <Menu size={20} />
         </button>
-        <span style={{ fontSize: 15, fontWeight: 700, color: TEXT_PRIMARY, letterSpacing: 0.5 }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color: TEXT_PRIMARY, letterSpacing: 0.5, whiteSpace: 'nowrap' }}>
           Ortho-Bender
         </span>
       </div>
 
       {/* Center: motion state + connection icons */}
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20 }}>
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, minWidth: 0, overflow: 'hidden' }}>
         <MotionStatePill stateNum={motionStateNum} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 1, overflow: 'hidden' }}>
           <ConnectionIcon label="BD"  status={bdStatus} />
           <ConnectionIcon label="IPC" status={ipcStatus} />
-          <ConnectionIcon label="M7"  status={m7Status} />
-          <ConnectionIcon label="CAM" status={camStatus} />
+          <ConnectionIcon label={motorModel ?? 'MTR'} status={motorStatus} detail={motorModel ? 'OK' : 'NO'} />
+          <ConnectionIcon label={camModel ? 'CAM' : 'CAM'} status={camStatus} detail={camModel ?? 'NO'} />
         </div>
       </div>
 

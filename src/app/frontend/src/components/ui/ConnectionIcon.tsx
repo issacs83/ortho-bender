@@ -11,10 +11,11 @@ export type ConnStatus = 'connected' | 'connecting' | 'disconnected';
 interface ConnectionIconProps {
   label: string;
   status: ConnStatus;
+  detail?: string;
   style?: CSSProperties;
 }
 
-export function ConnectionIcon({ label, status, style }: ConnectionIconProps) {
+export function ConnectionIcon({ label, status, detail, style }: ConnectionIconProps) {
   const [hovered, setHovered] = useState(false);
 
   const color =
@@ -57,7 +58,7 @@ export function ConnectionIcon({ label, status, style }: ConnectionIconProps) {
           zIndex: 100,
           pointerEvents: 'none',
         }}>
-          {label}: {status}
+          {label}: {detail ?? status}
         </div>
       )}
     </div>

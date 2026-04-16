@@ -1,0 +1,15 @@
+[Unit]
+Description=Ortho-Bender STA WiFi (wpa_supplicant on mlan0)
+After=sys-subsystem-net-devices-mlan0.device
+Wants=sys-subsystem-net-devices-mlan0.device
+Before=ortho-bender-sdk.service
+
+[Service]
+Type=simple
+ExecStartPre=-/sbin/ip link set mlan0 up
+ExecStart=/usr/sbin/wpa_supplicant -i mlan0 -c /etc/wpa_supplicant/wpa_supplicant-mlan0.conf -s
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

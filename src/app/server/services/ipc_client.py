@@ -417,7 +417,7 @@ class IpcClient:
                 self._mock_motion_state,
                 0,   # active_alarms
                 1,   # watchdog_ok
-                0x03 # PHASE1 axis mask
+                0x0F  # all 4 axes: FEED, BEND, ROTATE, LIFT
             )
             return IpcMessage(msg_type=MSG_STATUS_HEARTBEAT, payload=resp_payload)
 

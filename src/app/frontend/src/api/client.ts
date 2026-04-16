@@ -63,8 +63,11 @@ export interface DriverProbeResult {
 export interface SystemStatus {
   motion_state: number;
   camera_connected: boolean;
+  camera_model: string | null;
   ipc_connected: boolean;
   m7_heartbeat_ok: boolean;
+  motor_connected: boolean;
+  motor_model: string | null;
   active_alarms: number;
   uptime_s: number;
   cpu_temp_c: number | null;

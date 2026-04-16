@@ -8,6 +8,27 @@ import { StatusBadge } from '../components/ui/StatusBadge';
 
 type Role = 'Operator' | 'Engineer' | 'Admin';
 
+const ROLE_PINS: Record<Role, string> = {
+  Operator: '1234',
+  Engineer: '5678',
+  Admin:    '0000',
+};
+
+const ROLE_INFO: Record<Role, { desc: string; access: string[] }> = {
+  Operator: {
+    desc: 'Production operator — run bending sequences, monitor status',
+    access: ['Dashboard', 'Bending', 'Camera view'],
+  },
+  Engineer: {
+    desc: 'Service engineer — full motor control, driver config, diagnostics',
+    access: ['All Operator features', 'Motor Control', 'Diagnostics', 'WiFi', 'Settings'],
+  },
+  Admin: {
+    desc: 'System administrator — firmware update, reboot, factory reset',
+    access: ['All Engineer features', 'System Reboot', 'Firmware Update', 'Factory Reset'],
+  },
+};
+
 export function SettingsPage() {
   const [currentRole, setCurrentRole] = useState<Role>('Engineer');
   const [pin, setPin] = useState('');
@@ -22,6 +43,10 @@ export function SettingsPage() {
   function handleSwitchRole() {
     if (pin.length < 4) {
       setPinError('PIN must be at least 4 digits');
+      return;
+    }
+    if (pin !== ROLE_PINS[targetRole]) {
+      setPinError('Incorrect PIN');
       return;
     }
     setCurrentRole(targetRole);
@@ -72,6 +97,13 @@ export function SettingsPage() {
         >
           Switch Role
         </button>
+
+        <div style={{ marginTop: 16, padding: 12, background: BG_PRIMARY, borderRadius: 6, border: `1px solid ${BORDER}` }}>
+          <div style={{ fontSize: 12, color: TEXT_MUTED, marginBottom: 6 }}>{ROLE_INFO[currentRole].desc}</div>
+          <div style={{ fontSize: 11, color: TEXT_MUTED }}>
+            Access: {ROLE_INFO[currentRole].access.join(' · ')}
+          </div>
+        </div>
       </div>
 
       {/* Appearance */}

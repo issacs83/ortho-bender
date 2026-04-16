@@ -47,10 +47,10 @@ export default function App() {
   const [systemEvents, setSystemEvents] = useState<SystemEvent[]>([]);
   const [motionStateNum, setMotionStateNum] = useState(0);
 
-  // Derived connection statuses
+  // Derived connection statuses — based on real hardware detection
   const boardStatus: ConnStatus = sysStatus ? 'connected' : 'disconnected';
   const ipcStatus: ConnStatus = sysStatus?.ipc_connected ? 'connected' : 'disconnected';
-  const m7Status: ConnStatus = sysStatus?.m7_heartbeat_ok ? 'connected' : 'disconnected';
+  const motorConnStatus: ConnStatus = sysStatus?.motor_connected ? 'connected' : 'disconnected';
   const camStatus: ConnStatus = sysStatus?.camera_connected ? 'connected' : 'disconnected';
 
   const sidebarWidth = sidebarCollapsed ? 56 : 240;
@@ -142,8 +142,10 @@ export default function App() {
           motionStateNum={motionStateNum}
           bdStatus={boardStatus}
           ipcStatus={ipcStatus}
-          m7Status={m7Status}
+          motorStatus={motorConnStatus}
+          motorModel={sysStatus?.motor_model ?? null}
           camStatus={camStatus}
+          camModel={sysStatus?.camera_model ?? null}
           onEstopAction={handleEstopAction}
         />
 

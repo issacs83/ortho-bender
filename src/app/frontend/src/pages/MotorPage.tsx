@@ -3,9 +3,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { motorApi, type MotorStatus, type AxisStatus } from '../api/client';
+import { motorApi, diagApi, type MotorStatus, type AxisStatus, type DriverProbeResult } from '../api/client';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
-import { ConnectionControl } from '../components/ui/ConnectionControl';
 import { SliderInput } from '../components/ui/SliderInput';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { useMotorWs } from '../hooks/useMotorWs';
@@ -426,15 +425,26 @@ function DiagnosticsTab({ motorStatus }: { motorStatus: MotorStatus | null }) {
 export function MotorPage() {
   const [subTab, setSubTab] = useState<MotorSubTab>('position');
   const [staticMotor, setStaticMotor] = useState<MotorStatus | null>(null);
+  const [probeResults, setProbeResults] = useState<DriverProbeResult[]>([]);
+  const [probing, setProbing] = useState(false);
+  const [showDisableModal, setShowDisableModal] = useState(false);
   const liveMotor = useMotorWs();
   const motorStatus = liveMotor ?? staticMotor;
 
   useEffect(() => {
     motorApi.status().then(setStaticMotor).catch(() => null);
+    diagApi.probe().then(r => setProbeResults(r.drivers)).catch(() => {});
   }, []);
 
   const refreshMotor = () => motorApi.status().then(setStaticMotor).catch(() => null);
   const isMoving = motorStatus !== null && ![0, 5, 6].includes(motorStatus.state);
+
+  async function handleProbe() {
+    setProbing(true);
+    try { const r = await diagApi.probe(); setProbeResults(r.drivers); }
+    catch { /* ignore */ }
+    finally { setProbing(false); }
+  }
 
   return (
     <div style={{ padding: 'clamp(12px, 3vw, 20px)', maxWidth: 1100, margin: '0 auto' }}>
@@ -448,26 +458,76 @@ export function MotorPage() {
         </strong>
       </div>
 
+      {/* Driver Connection + Power Control */}
       <div style={{
         background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 6,
         padding: 14, marginBottom: 18,
       }}>
-        <ConnectionControl
-          label="Drivers"
-          connected={motorStatus?.driver_enabled === true}
-          connectedLabel="ENERGIZED"
-          disconnectedLabel="FREE-WHEEL"
-          disabled={isMoving}
-          onConnect={async () => { await motorApi.enable(); await refreshMotor(); }}
-          onDisconnect={async () => { await motorApi.disable(); await refreshMotor(); }}
-          disconnectConfirm={{
-            title: 'Disable motor drivers?',
-            description:
-              'TMC260C-PA DRV_ENN will be released — stepper coils de-energize and the axes will free-wheel. ' +
-              'VMot 12V remains present. Re-enable to resume holding torque.',
-          }}
-        />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <span style={{ fontSize: 13, color: TEXT_SECONDARY, fontWeight: 600 }}>Driver Connection</span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              onClick={handleProbe}
+              disabled={probing}
+              style={{ background: '#334155', color: TEXT_SECONDARY, border: `1px solid ${BORDER}`, borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 11 }}
+            >
+              {probing ? 'Probing...' : 'Re-Probe'}
+            </button>
+            <button
+              onClick={async () => {
+                if (motorStatus?.driver_enabled) {
+                  setShowDisableModal(true);
+                } else {
+                  await motorApi.enable(); await refreshMotor();
+                }
+              }}
+              disabled={isMoving}
+              style={{
+                background: motorStatus?.driver_enabled ? '#065f46' : '#334155',
+                color: motorStatus?.driver_enabled ? '#6ee7b7' : TEXT_MUTED,
+                border: `1px solid ${motorStatus?.driver_enabled ? '#10b981' : BORDER}`,
+                borderRadius: 4, padding: '4px 12px', cursor: isMoving ? 'not-allowed' : 'pointer',
+                fontSize: 11, fontWeight: 600,
+                opacity: isMoving ? 0.6 : 1,
+              }}
+            >
+              {motorStatus?.driver_enabled ? 'ENERGIZED' : 'Enable Drivers'}
+            </button>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {probeResults.length === 0 ? (
+            <span style={{ fontSize: 12, color: TEXT_MUTED }}>Probing drivers...</span>
+          ) : probeResults.map(p => (
+            <div key={p.driver} style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '5px 10px', borderRadius: 5,
+              background: p.connected ? '#064e3b' : '#450a0a',
+              border: `1px solid ${p.connected ? '#10b981' : '#ef4444'}`,
+            }}>
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%',
+                background: p.connected ? '#10b981' : '#ef4444',
+              }} />
+              <span style={{ fontSize: 12, color: TEXT_PRIMARY, fontWeight: 600 }}>{p.driver}</span>
+              <span style={{ fontSize: 11, color: p.connected ? '#6ee7b7' : '#fca5a5' }}>
+                {p.connected ? p.chip : 'NOT FOUND'}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
+
+      {showDisableModal && (
+        <ConfirmModal
+          title="Disable motor drivers?"
+          description="TMC260C-PA DRV_ENN will be released — stepper coils de-energize and the axes will free-wheel. VMot 12V remains present. Re-enable to resume holding torque."
+          confirmLabel="Disable"
+          confirmVariant="danger"
+          onConfirm={async () => { setShowDisableModal(false); await motorApi.disable(); await refreshMotor(); }}
+          onCancel={() => setShowDisableModal(false)}
+        />
+      )}
 
       <SubTabBar active={subTab} onChange={setSubTab} />
 

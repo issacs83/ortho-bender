@@ -89,11 +89,28 @@ async def get_system_status(
         except Exception as exc:
             log.debug("Heartbeat poll failed: %s", exc)
 
+    # Camera model — only set when truly connected (not mock)
+    camera_model: str | None = None
+    if camera._connected and camera._backend.value != "mock":
+        camera_model = "Alvium 1800 U-158m"
+
+    # Motor driver summary — count connected drivers from probe
+    motor_connected = any(
+        d.get("connected", False) for d in driver_probe.values()
+    ) if driver_probe else False
+    motor_model: str | None = None
+    if motor_connected:
+        chips = [d["chip"] for d in driver_probe.values() if d.get("connected")]
+        motor_model = ", ".join(sorted(set(chips))) if chips else None
+
     return ok({
         "motion_state":     motion_state.value,
-        "camera_connected": camera._connected,
+        "camera_connected": camera._connected and camera._backend.value != "mock",
+        "camera_model":     camera_model,
         "ipc_connected":    ipc_ok,
         "m7_heartbeat_ok":  m7_hb_ok,
+        "motor_connected":  motor_connected,
+        "motor_model":      motor_model,
         "active_alarms":    active_alarms,
         "uptime_s":         round(uptime_s, 1),
         "cpu_temp_c":       cpu_temp,
