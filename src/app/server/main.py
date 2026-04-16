@@ -101,6 +101,12 @@ async def lifespan(app: FastAPI):
     diag_svc = DiagService(diag_backend)
     app.state.diag_service = diag_svc
 
+    # Probe motor drivers at startup — identify which chips are connected
+    driver_probe = await diag_svc.probe_drivers()
+    app.state.driver_probe = {r.driver: r.model_dump() for r in driver_probe}
+    connected_count = sum(1 for r in driver_probe if r.connected)
+    log.info("Driver probe complete: %d/%d connected", connected_count, len(driver_probe))
+
     # WebSocket manager + background tasks
     ws_manager = WsManager()
 
@@ -129,6 +135,7 @@ async def lifespan(app: FastAPI):
             return {
                 "ipc_connected":    ipc.connected,
                 "camera_connected": camera_svc._connected,
+                "driver_probe":     app.state.driver_probe,
             }
         except Exception:
             return None

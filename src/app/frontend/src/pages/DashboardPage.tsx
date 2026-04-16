@@ -119,8 +119,22 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                 <StatusBadge variant={sysStatus.ipc_connected ? 'success' : 'error'} label="IPC" />
                 <StatusBadge variant={sysStatus.m7_heartbeat_ok ? 'success' : 'error'} label="M7" />
                 <StatusBadge variant={sysStatus.camera_connected ? 'success' : 'error'} label="CAM" />
-                <StatusBadge variant="success" label="Board" />
               </div>
+
+              {sysStatus.driver_probe && Object.keys(sysStatus.driver_probe).length > 0 && (
+                <div>
+                  <span style={{ fontSize: 11, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>Motor Drivers</span>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {Object.values(sysStatus.driver_probe).map((dp) => (
+                      <StatusBadge
+                        key={dp.driver}
+                        variant={dp.connected ? 'success' : 'error'}
+                        label={dp.connected ? dp.chip : dp.driver}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {[
                 ['CPU Temp', sysStatus.cpu_temp_c != null ? `${sysStatus.cpu_temp_c.toFixed(1)} °C` : 'N/A'],

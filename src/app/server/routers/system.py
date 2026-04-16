@@ -54,11 +54,16 @@ def _camera_service(request: Request) -> CameraService:
 # GET /api/system/status
 # ---------------------------------------------------------------------------
 
+def _driver_probe(request: Request) -> dict:
+    return getattr(request.app.state, "driver_probe", {})
+
+
 @router.get("/status", response_model=ApiResponse)
 async def get_system_status(
     ipc: IpcClient = Depends(_ipc),
     motor: MotorService = Depends(_motor_service),
     camera: CameraService = Depends(_camera_service),
+    driver_probe: dict = Depends(_driver_probe),
 ) -> ApiResponse:
     """Aggregate health: IPC link, M7 heartbeat, camera, motion state."""
     uptime_s = time.monotonic() - _boot_time
@@ -93,6 +98,7 @@ async def get_system_status(
         "uptime_s":         round(uptime_s, 1),
         "cpu_temp_c":       cpu_temp,
         "sdk_version":      SDK_VERSION,
+        "driver_probe":     driver_probe,
     })
 
 

@@ -18,6 +18,7 @@ from ..models.diag_schemas import (
     DiagDumpResponse,
     DiagRegisterResponse,
     DriverId,
+    DriverProbeResult,
     SpiTestResult,
 )
 from .tmc260c_driver import Tmc260cDriver
@@ -49,6 +50,25 @@ class DiagService:
                 f"Unknown driver: {driver_id}. Valid: {list(drivers.keys())}"
             )
         return drivers[driver_id]
+
+    async def probe_drivers(self) -> list[DriverProbeResult]:
+        """Probe all motor driver CS lines and identify connected chips.
+
+        Reads identification registers via SPI to determine which drivers
+        are physically connected and what chip type they are.
+        """
+        results: list[DriverProbeResult] = []
+        for did, drv in (
+            (DriverId.TMC260C_0, self._tmc260c_0),
+            (DriverId.TMC260C_1, self._tmc260c_1),
+            (DriverId.TMC5072, self._tmc5072),
+        ):
+            connected, chip = await drv.probe()
+            results.append(DriverProbeResult(
+                driver=did, connected=connected, chip=chip,
+            ))
+            log.info("Driver probe %s: %s (%s)", did, "OK" if connected else "NOT FOUND", chip or "—")
+        return results
 
     async def spi_test(self) -> list[SpiTestResult]:
         """Test SPI connectivity with all drivers."""

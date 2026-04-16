@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { diagApi, motorApi, type SpiTestResultItem, type DiagDumpResult } from '../api/client';
+import { diagApi, motorApi, type SpiTestResultItem, type DiagDumpResult, type DriverProbeResult } from '../api/client';
 import { RegisterInspector } from '../components/RegisterInspector';
 import { StallGuardChart } from '../components/StallGuardChart';
 
@@ -48,12 +48,26 @@ export function DiagnosticsPage() {
   // SG threshold
   const [sgThreshold, setSgThreshold] = useState<number | undefined>(undefined);
 
-  // Fetch backend info on mount
+  // Driver probe
+  const [probeResults, setProbeResults] = useState<DriverProbeResult[]>([]);
+  const [probing, setProbing] = useState(false);
+
+  // Fetch backend info + driver probe on mount
   useEffect(() => {
     diagApi.backend().then(info => {
       setBackendInfo(`${info.backend} | ${info.spi_speed_hz ? (info.spi_speed_hz / 1e6).toFixed(0) + ' MHz' : 'N/A'}`);
     }).catch(() => setBackendInfo('error'));
+    diagApi.probe().then(r => setProbeResults(r.drivers)).catch(() => {});
   }, []);
+
+  async function handleProbe() {
+    setProbing(true);
+    try {
+      const r = await diagApi.probe();
+      setProbeResults(r.drivers);
+    } catch { /* ignore */ }
+    finally { setProbing(false); }
+  }
 
   async function handleSpiTest() {
     setSpiLoading(true);
@@ -93,6 +107,39 @@ export function DiagnosticsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2 style={{ margin: 0, fontSize: 20, color: '#f1f5f9' }}>Diagnostics</h2>
         <span style={{ fontSize: 12, color: '#64748b' }}>Backend: {backendInfo}</span>
+      </div>
+
+      {/* Row 0: Driver Connection Status */}
+      <div style={{ ...CARD, marginBottom: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 14, color: '#94a3b8' }}>Driver Connection</h3>
+          <button onClick={handleProbe} disabled={probing} style={{ ...BTN, background: '#334155', color: '#f1f5f9', fontSize: 11, padding: '4px 12px' }}>
+            {probing ? 'Probing...' : 'Re-Probe'}
+          </button>
+        </div>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          {probeResults.length === 0 ? (
+            <span style={{ fontSize: 12, color: '#64748b' }}>Probing drivers...</span>
+          ) : probeResults.map(p => (
+            <div key={p.driver} style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '6px 12px', borderRadius: 6,
+              background: p.connected ? '#064e3b' : '#450a0a',
+              border: `1px solid ${p.connected ? '#10b981' : '#ef4444'}`,
+            }}>
+              <span style={{
+                width: 8, height: 8, borderRadius: '50%',
+                background: p.connected ? '#10b981' : '#ef4444',
+              }} />
+              <span style={{ fontSize: 12, color: '#f1f5f9', fontWeight: 600 }}>
+                {p.driver}
+              </span>
+              <span style={{ fontSize: 11, color: p.connected ? '#6ee7b7' : '#fca5a5' }}>
+                {p.connected ? p.chip : 'NOT FOUND'}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Row 1: SPI Test + Register Inspector */}

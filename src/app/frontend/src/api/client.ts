@@ -54,6 +54,12 @@ export interface BendingStatus {
   wire_diameter_mm: number | null;
 }
 
+export interface DriverProbeResult {
+  driver: string;
+  connected: boolean;
+  chip: string;
+}
+
 export interface SystemStatus {
   motion_state: number;
   camera_connected: boolean;
@@ -63,6 +69,7 @@ export interface SystemStatus {
   uptime_s: number;
   cpu_temp_c: number | null;
   sdk_version: string;
+  driver_probe: Record<string, DriverProbeResult>;
 }
 
 export interface BcodeStep {
@@ -241,6 +248,9 @@ export const systemApi = {
 export const diagApi = {
   backend: (): Promise<DiagBackendInfo> =>
     request("/api/motor/diag/backend"),
+
+  probe: (): Promise<{ drivers: DriverProbeResult[] }> =>
+    request("/api/motor/diag/probe"),
 
   spiTest: (): Promise<{ results: SpiTestResultItem[] }> =>
     request("/api/motor/diag/spi-test"),
