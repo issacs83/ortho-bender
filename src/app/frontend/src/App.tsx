@@ -18,13 +18,14 @@ import { MotorPage }       from './pages/MotorPage';
 import { CameraPage }      from './pages/CameraPage';
 import { SimulationPage }  from './pages/SimulationPage';
 import { SettingsPage }    from './pages/SettingsPage';
+import { DiagnosticsPage } from './pages/DiagnosticsPage';
 import { systemApi, type SystemStatus } from './api/client';
 import { wsApi } from './api/client';
 import type { ConnStatus } from './components/ui/ConnectionIcon';
 import type { SystemEvent } from './hooks/useSystemWs';
 import { BG_PRIMARY } from './constants';
 
-export type Page = 'connection' | 'dashboard' | 'bending' | 'motor' | 'camera' | 'simulation' | 'settings';
+export type Page = 'connection' | 'dashboard' | 'bending' | 'motor' | 'camera' | 'simulation' | 'settings' | 'diagnostics';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
@@ -103,6 +104,7 @@ export default function App() {
       case 'camera':      return <CameraPage />;
       case 'simulation':  return <SimulationPage />;
       case 'settings':    return <SettingsPage />;
+      case 'diagnostics': return <DiagnosticsPage />;
     }
   }
 
