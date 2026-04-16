@@ -31,9 +31,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .routers import bending, cam, camera, motor, system, wifi
+from .routers import bending, cam, camera, motor, system, wifi, diag_router
 from .services.camera_service import CameraService
+from .services.diag_service import DiagService
 from .services.ipc_client import IpcClient
+from .services.motor_backend import MockMotorBackend
 from .services.motor_service import MotorService
 from .ws.manager import WsManager
 
@@ -81,6 +83,11 @@ async def lifespan(app: FastAPI):
     app.state.motor_service  = motor_svc
     app.state.camera_service = camera_svc
 
+    # Diagnostic backend — always MockMotorBackend until spidev is implemented
+    diag_backend = MockMotorBackend()
+    diag_svc = DiagService(diag_backend)
+    app.state.diag_service = diag_svc
+
     # WebSocket manager + background tasks
     ws_manager = WsManager()
 
@@ -113,10 +120,31 @@ async def lifespan(app: FastAPI):
         except Exception:
             return None
 
+    async def _diag_provider():
+        try:
+            results = {}
+            for did in ("tmc260c_0", "tmc260c_1"):
+                status = await diag_svc._tmc260c_0.read_status() if did == "tmc260c_0" \
+                    else await diag_svc._tmc260c_1.read_status()
+                results[did] = {
+                    "sg_result": status.sg_result,
+                    "stst": status.stst,
+                    "ot": status.ot,
+                    "otpw": status.otpw,
+                    "s2ga": status.s2ga,
+                    "s2gb": status.s2gb,
+                    "ola": status.ola,
+                    "olb": status.olb,
+                }
+            return {"drivers": results}
+        except Exception:
+            return None
+
     ws_manager.start_background_tasks(
         motor_provider=_motor_provider,
         camera_provider=_camera_provider,
         system_provider=_system_provider,
+        diag_provider=_diag_provider,
     )
     app.state.ws_manager = ws_manager
 
@@ -166,6 +194,7 @@ def create_app() -> FastAPI:
     application.include_router(cam.router)
     application.include_router(system.router)
     application.include_router(wifi.router)
+    application.include_router(diag_router.router)
 
     # WebSocket endpoints
     @application.websocket("/ws/motor")
@@ -179,6 +208,10 @@ def create_app() -> FastAPI:
     @application.websocket("/ws/system")
     async def ws_system(ws: WebSocket):
         await application.state.ws_manager.handle_system(ws)
+
+    @application.websocket("/ws/motor/diag")
+    async def ws_motor_diag(ws: WebSocket):
+        await application.state.ws_manager.handle_motor_diag(ws)
 
     # Health probe (used by systemd + load balancers)
     @application.get("/health", tags=["meta"])
