@@ -4,7 +4,7 @@
 
 import { useState } from 'react';
 import {
-  Network, LayoutDashboard, GitBranch, Settings2, Camera, Box, Settings, Wrench, ChevronLeft, ChevronRight,
+  Network, LayoutDashboard, GitBranch, Settings2, Camera, Box, Settings, Wrench, BookOpen, ChevronLeft, ChevronRight,
   type LucideIcon,
 } from 'lucide-react';
 import { BG_SIDEBAR, BORDER, TEXT_PRIMARY, TEXT_MUTED } from '../../constants';
@@ -32,6 +32,7 @@ const NAV_ITEMS: NavItem[] = [
   { page: 'diagnostics', label: 'Diagnostics', icon: Wrench },
   { page: 'camera',      label: 'Camera',      icon: Camera },
   { page: 'simulation',  label: 'Simulation',  icon: Box, disabled: true },
+  { page: 'docs',        label: 'Docs',        icon: BookOpen },
   { page: 'settings',    label: 'Settings',    icon: Settings },
 ];
 

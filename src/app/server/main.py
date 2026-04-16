@@ -31,7 +31,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .routers import bending, cam, camera, motor, system, wifi, diag_router
+from .routers import bending, cam, camera, docs, motor, system, wifi, diag_router
 from .services.camera_service import CameraService
 from .services.diag_service import DiagService
 from .services.ipc_client import IpcClient
@@ -202,6 +202,7 @@ def create_app() -> FastAPI:
     application.include_router(system.router)
     application.include_router(wifi.router)
     application.include_router(diag_router.router)
+    application.include_router(docs.router)
 
     # WebSocket endpoints
     @application.websocket("/ws/motor")
