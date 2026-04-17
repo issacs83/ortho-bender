@@ -7,9 +7,13 @@ import { motorApi, diagApi, type MotorStatus, type AxisStatus, type DriverProbeR
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { SliderInput } from '../components/ui/SliderInput';
 import { StatusBadge } from '../components/ui/StatusBadge';
+import { Button } from '../components/ui/Button';
+import { Card, CardTitle } from '../components/ui/Card';
+import { EmptyState } from '../components/ui/EmptyState';
 import { useMotorWs } from '../hooks/useMotorWs';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { AXIS_COLORS, AXIS_NAMES, AXIS_UNITS, BG_PANEL, BG_PRIMARY, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, HISTORY_LEN } from '../constants';
+import { AXIS_COLORS, AXIS_NAMES, AXIS_UNITS, BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_MUTED, HISTORY_LEN } from '../constants';
+import { cn } from '../lib/cn';
 
 type MotorSubTab = 'position' | 'driver' | 'stallguard' | 'diagnostics';
 
@@ -18,6 +22,21 @@ const SUB_TABS: { id: MotorSubTab; label: string }[] = [
   { id: 'driver',      label: 'Driver Config' },
   { id: 'stallguard',  label: 'StallGuard' },
   { id: 'diagnostics', label: 'Diagnostics' },
+];
+
+// Axis channel color classes
+const AXIS_TEXT_CLASSES = [
+  'text-ch-feed',
+  'text-ch-bend',
+  'text-ch-rotate',
+  'text-ch-lift',
+];
+
+const AXIS_BG_CLASSES = [
+  'bg-ch-feed',
+  'bg-ch-bend',
+  'bg-ch-rotate',
+  'bg-ch-lift',
 ];
 
 interface ChartPoint { t: number; [k: string]: number; }
@@ -42,21 +61,17 @@ const DRV_BITS = [
 
 function SubTabBar({ active, onChange }: { active: MotorSubTab; onChange: (t: MotorSubTab) => void }) {
   return (
-    <div style={{ display: 'flex', borderBottom: `1px solid ${BORDER}`, marginBottom: 20, gap: 0 }}>
+    <div className="flex border-b border-border mb-5">
       {SUB_TABS.map((t) => (
         <button
           key={t.id}
           onClick={() => onChange(t.id)}
-          style={{
-            padding: '10px 18px',
-            background: 'none',
-            border: 'none',
-            borderBottom: active === t.id ? '2px solid #3b82f6' : '2px solid transparent',
-            color: active === t.id ? TEXT_PRIMARY : TEXT_MUTED,
-            cursor: 'pointer',
-            fontSize: 13,
-            fontWeight: active === t.id ? 600 : 400,
-          }}
+          className={cn(
+            'px-[18px] py-2.5 bg-transparent border-none border-b-2 -mb-px text-[13px] cursor-pointer transition-colors',
+            active === t.id
+              ? 'border-accent text-text-primary font-semibold'
+              : 'border-transparent text-text-tertiary font-normal hover:text-text-secondary',
+          )}
         >
           {t.label}
         </button>
@@ -76,7 +91,6 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   const [targetPos, setTargetPos] = useState(0);
   const [showHomeModal, setShowHomeModal] = useState(false);
   const [showMoveAllModal, setShowMoveAllModal] = useState(false);
-  const [multiTarget, setMultiTarget] = useState([0, 0, 0, 0]);
   const [error, setError] = useState<string | null>(null);
   const jogIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -108,79 +122,95 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   async function moveAll() {
     setShowMoveAllModal(false);
     for (let i = 0; i < 4; i++) {
-      try { await motorApi.move(i, multiTarget[i], jogSpeed); } catch { /* continue */ }
+      try { await motorApi.move(i, 0, jogSpeed); } catch { /* continue */ }
     }
   }
 
-  const cardStyle = { background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 16, marginBottom: 16 };
-  const btnBase = { padding: '6px 12px', border: `1px solid ${BORDER}`, borderRadius: 4, cursor: 'pointer', fontSize: 13, background: '#1e293b', color: TEXT_SECONDARY };
+  const selectCls = 'bg-surface-2 border border-border text-text-primary px-2 py-1.5 rounded text-[13px] outline-none focus:border-accent';
 
   return (
     <div>
-      {error && <div style={{ color: '#ef4444', marginBottom: 12, fontSize: 13 }}>{error}</div>}
+      {error && <div className="text-danger mb-3 text-[13px]">{error}</div>}
 
       {/* Jog controls */}
-      <div style={cardStyle}>
-        <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Axis Jog</h3>
+      <Card className="mb-4">
+        <CardTitle className="mb-3">Axis Jog</CardTitle>
         {(motorStatus?.axes ?? []).map((ax: AxisStatus) => (
-          <div key={ax.axis} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, padding: '8px 0', borderBottom: `1px solid ${BORDER}` }}>
-            <div style={{ width: 70, fontSize: 13, color: AXIS_COLORS[ax.axis], fontWeight: 600 }}>
+          <div key={ax.axis} className="flex items-center gap-3 mb-3 pb-3 border-b border-border last:border-0 last:mb-0 last:pb-0">
+            <div className={cn('w-[70px] text-[13px] font-semibold', AXIS_TEXT_CLASSES[ax.axis])}>
               {AXIS_NAMES[ax.axis]}
             </div>
-            <span style={{ width: 80, fontSize: 12, color: TEXT_PRIMARY, textAlign: 'center' as const }}>
+            <span className="w-20 text-[12px] text-text-primary text-center numeric">
               {ax.position.toFixed(3)} {AXIS_UNITS[ax.axis]}
             </span>
-            <div style={{ flex: 1, height: 6, background: BG_PRIMARY, borderRadius: 3 }}>
-              <div style={{ height: '100%', width: `${Math.min(100, Math.abs(ax.position) / 200 * 100)}%`, background: AXIS_COLORS[ax.axis], borderRadius: 3 }} />
+            <div className="flex-1 h-1.5 bg-surface-2 rounded-full overflow-hidden">
+              <div
+                className={cn('h-full rounded-full', AXIS_BG_CLASSES[ax.axis])}
+                style={{ width: `${Math.min(100, Math.abs(ax.position) / 200 * 100)}%` }}
+              />
             </div>
-            <button
-              onMouseDown={() => startContinuousJog(ax.axis, -1)} onMouseUp={stopContinuousJog} onMouseLeave={stopContinuousJog}
-              style={{ ...btnBase, color: '#93c5fd' }}
-            >◀◀</button>
-            <button onClick={() => jog(ax.axis, -1)} style={btnBase}>◀</button>
-            <button onClick={() => jog(ax.axis, +1)} style={btnBase}>▶</button>
-            <button
-              onMouseDown={() => startContinuousJog(ax.axis, +1)} onMouseUp={stopContinuousJog} onMouseLeave={stopContinuousJog}
-              style={{ ...btnBase, color: '#93c5fd' }}
-            >▶▶</button>
+            <Button
+              variant="secondary" size="sm"
+              className="text-accent"
+              onMouseDown={() => startContinuousJog(ax.axis, -1)}
+              onMouseUp={stopContinuousJog}
+              onMouseLeave={stopContinuousJog}
+            >◀◀</Button>
+            <Button variant="secondary" size="sm" onClick={() => jog(ax.axis, -1)}>◀</Button>
+            <Button variant="secondary" size="sm" onClick={() => jog(ax.axis, +1)}>▶</Button>
+            <Button
+              variant="secondary" size="sm"
+              className="text-accent"
+              onMouseDown={() => startContinuousJog(ax.axis, +1)}
+              onMouseUp={stopContinuousJog}
+              onMouseLeave={stopContinuousJog}
+            >▶▶</Button>
           </div>
         ))}
         {(!motorStatus || motorStatus.axes.length === 0) && (
-          <div style={{ fontSize: 13, color: TEXT_MUTED, textAlign: 'center', padding: 16 }}>Waiting for motor status...</div>
+          <EmptyState
+            icon={<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>}
+            message="Waiting for motor status..."
+          />
         )}
-      </div>
+      </Card>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, marginBottom: 16 }}>
-        <div style={cardStyle}>
+      <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
+        <Card>
           <SliderInput label="Jog Speed" value={jogSpeed} min={1} max={100} unit="mm/s" onChange={setJogSpeed} style={{ marginBottom: 12 }} />
           <SliderInput label="Step Size" value={stepSize} min={0.1} max={50} step={0.1} unit="mm" onChange={setStepSize} />
-        </div>
-        <div style={cardStyle}>
-          <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Move To Position</h3>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-            <select value={targetAxis} onChange={(e) => setTargetAxis(Number(e.target.value))} style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '6px 8px', borderRadius: 4, fontSize: 13 }}>
+        </Card>
+        <Card>
+          <CardTitle className="mb-3">Move To Position</CardTitle>
+          <div className="flex gap-2 items-end">
+            <select value={targetAxis} onChange={(e) => setTargetAxis(Number(e.target.value))} className={selectCls}>
               {AXIS_NAMES.map((n, i) => <option key={i} value={i}>{n}</option>)}
             </select>
-            <input type="number" value={targetPos} onChange={(e) => setTargetPos(Number(e.target.value))} style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '6px 8px', borderRadius: 4, fontSize: 13, width: 80 }} />
-            <button onClick={moveTo} style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Move To</button>
+            <input
+              type="number"
+              value={targetPos}
+              onChange={(e) => setTargetPos(Number(e.target.value))}
+              className="bg-surface-2 border border-border text-text-primary px-2 py-1.5 rounded text-[13px] w-20 outline-none focus:border-accent numeric"
+            />
+            <Button variant="primary" onClick={moveTo}>Move To</Button>
           </div>
-        </div>
+        </Card>
       </div>
 
       {/* Actions */}
-      <div style={{ ...cardStyle, display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
-        <button onClick={() => setShowHomeModal(true)} style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '8px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Home All</button>
+      <Card className="flex gap-2 flex-wrap mb-4">
+        <Button variant="primary" onClick={() => setShowHomeModal(true)}>Home All</Button>
         {AXIS_NAMES.map((n, i) => (
-          <button key={i} onClick={() => motorApi.home(1 << i)} style={{ ...btnBase, fontSize: 12 }}>Home {n}</button>
+          <Button key={i} variant="secondary" size="sm" onClick={() => motorApi.home(1 << i)}>Home {n}</Button>
         ))}
-        <button onClick={() => motorApi.stop()} style={{ ...btnBase, background: '#78350f', color: '#fcd34d' }}>Stop</button>
-        <button onClick={() => motorApi.reset()} style={btnBase}>Reset Fault</button>
-      </div>
+        <Button variant="danger" onClick={() => motorApi.stop()}>Stop</Button>
+        <Button variant="secondary" onClick={() => motorApi.reset()}>Reset Fault</Button>
+      </Card>
 
       {/* Position history chart */}
       {history.length > 1 && (
-        <div style={cardStyle}>
-          <h3 style={{ margin: '0 0 8px', fontSize: 14, color: TEXT_PRIMARY }}>Position History</h3>
+        <Card>
+          <CardTitle className="mb-2">Position History</CardTitle>
           <div style={{ height: 180 }}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={history}>
@@ -193,7 +223,7 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
               </LineChart>
             </ResponsiveContainer>
           </div>
-        </div>
+        </Card>
       )}
 
       {showHomeModal && (
@@ -220,53 +250,56 @@ function DriverConfig() {
   const [hend, setHend] = useState(0);
   const [spreadCycle, setSpreadCycle] = useState(true);
 
-  const cardStyle = { background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 16, marginBottom: 16 };
-  const applyBtn = { background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 600 };
-  const readBtn = { background: '#1e293b', border: `1px solid ${BORDER}`, color: TEXT_SECONDARY, borderRadius: 4, padding: '6px 14px', cursor: 'pointer', fontSize: 12 };
-
   function irunToMa(v: number) { return Math.round((v / 31) * 1400); }
+
+  const selectCls = 'bg-surface-2 border border-border text-text-primary px-3 py-1.5 rounded text-[13px] outline-none focus:border-accent';
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <select value={selectedAxis} onChange={(e) => setSelectedAxis(Number(e.target.value))} style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '6px 12px', borderRadius: 4, fontSize: 13 }}>
+      <div className="mb-4">
+        <select value={selectedAxis} onChange={(e) => setSelectedAxis(Number(e.target.value))} className={selectCls}>
           {[...AXIS_NAMES.map((n, i) => ({ label: n, value: i })), { label: 'All Axes', value: 99 }].map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
-        <div style={cardStyle}>
-          <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Current Settings</h3>
+      <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
+        <Card>
+          <CardTitle className="mb-3">Current Settings</CardTitle>
           <SliderInput label={`IRUN (${irunToMa(irun)} mA)`} value={irun} min={0} max={31} onChange={setIrun} style={{ marginBottom: 12 }} />
           <SliderInput label={`IHOLD (${irunToMa(ihold)} mA)`} value={ihold} min={0} max={31} onChange={setIhold} style={{ marginBottom: 12 }} />
           <SliderInput label="IHOLDDELAY" value={iholdDelay} min={0} max={15} onChange={setIholdDelay} />
-          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-            <button style={applyBtn}>Apply</button>
-            <button style={readBtn}>Read Back</button>
+          <div className="flex gap-2 mt-3.5">
+            <Button variant="primary" size="sm">Apply</Button>
+            <Button variant="secondary" size="sm">Read Back</Button>
           </div>
-        </div>
+        </Card>
 
-        <div style={cardStyle}>
-          <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Chopper Settings</h3>
+        <Card>
+          <CardTitle className="mb-3">Chopper Settings</CardTitle>
           <SliderInput label="TOFF" value={toff} min={1} max={15} onChange={setToff} style={{ marginBottom: 12 }} />
           <SliderInput label="HSTRT" value={hstrt} min={0} max={7} onChange={setHstrt} style={{ marginBottom: 12 }} />
           <SliderInput label="HEND" value={hend} min={-3} max={12} onChange={setHend} style={{ marginBottom: 12 }} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-            <span style={{ fontSize: 12, color: TEXT_MUTED }}>Mode:</span>
+          <div className="flex items-center gap-2.5 mb-3">
+            <span className="text-[12px] text-text-tertiary">Mode:</span>
             <button
               onClick={() => setSpreadCycle(!spreadCycle)}
-              style={{ background: spreadCycle ? '#1e3a5f' : '#1e293b', border: `1px solid ${spreadCycle ? '#3b82f6' : BORDER}`, color: spreadCycle ? '#93c5fd' : TEXT_MUTED, borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 12 }}
+              className={cn(
+                'text-[12px] px-2.5 py-1 rounded border cursor-pointer transition-colors',
+                spreadCycle
+                  ? 'bg-accent-soft border-accent text-accent'
+                  : 'bg-surface-2 border-border text-text-tertiary',
+              )}
             >
               {spreadCycle ? 'SpreadCycle' : 'StealthChop'}
             </button>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button style={applyBtn}>Apply</button>
-            <button style={readBtn}>Read Back</button>
+          <div className="flex gap-2">
+            <Button variant="primary" size="sm">Apply</Button>
+            <Button variant="secondary" size="sm">Read Back</Button>
           </div>
-        </div>
+        </Card>
       </div>
     </div>
   );
@@ -288,13 +321,13 @@ function StallGuardTab({ motorStatus }: { motorStatus: MotorStatus | null }) {
     setSgHistory((prev) => [...prev.slice(-99), pt]);
   }, [motorStatus]);
 
-  const cardStyle = { background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 16, marginBottom: 16 };
+  const selectCls = 'bg-surface-2 border border-border text-text-primary px-2 py-1.5 rounded text-[13px] outline-none focus:border-accent';
 
   return (
     <div>
-      <div style={cardStyle}>
-        <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>StallGuard Thresholds (SGT)</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <Card className="mb-4">
+        <CardTitle className="mb-3">StallGuard Thresholds (SGT)</CardTitle>
+        <div className="grid grid-cols-2 gap-3">
           {AXIS_NAMES.map((name, i) => (
             <SliderInput
               key={i}
@@ -306,14 +339,14 @@ function StallGuardTab({ motorStatus }: { motorStatus: MotorStatus | null }) {
             />
           ))}
         </div>
-      </div>
+      </Card>
 
-      <div style={cardStyle}>
-        <h3 style={{ margin: '0 0 4px', fontSize: 14, color: TEXT_PRIMARY }}>SG_RESULT (live)</h3>
-        <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
+      <Card className="mb-4">
+        <CardTitle className="mb-1">SG_RESULT (live)</CardTitle>
+        <div className="flex gap-4 mb-2">
           {AXIS_NAMES.map((name, i) => (
-            <div key={i} style={{ fontSize: 13, color: AXIS_COLORS[i] }}>
-              {name}: <strong>{motorStatus?.axes[i]?.sg_result ?? 0}</strong>
+            <div key={i} className={cn('text-[13px]', AXIS_TEXT_CLASSES[i])}>
+              {name}: <strong className="numeric">{motorStatus?.axes[i]?.sg_result ?? 0}</strong>
             </div>
           ))}
         </div>
@@ -330,19 +363,17 @@ function StallGuardTab({ motorStatus }: { motorStatus: MotorStatus | null }) {
             </LineChart>
           </ResponsiveContainer>
         </div>
-      </div>
+      </Card>
 
-      <div style={cardStyle}>
-        <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Auto Calibrate</h3>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <select style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '6px 8px', borderRadius: 4, fontSize: 13 }}>
+      <Card>
+        <CardTitle className="mb-3">Auto Calibrate</CardTitle>
+        <div className="flex gap-2.5 items-center">
+          <select className={selectCls}>
             {AXIS_NAMES.map((n, i) => <option key={i}>{n}</option>)}
           </select>
-          <button style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
-            Start Calibration
-          </button>
+          <Button variant="primary">Start Calibration</Button>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
@@ -358,61 +389,54 @@ function DiagnosticsTab({ motorStatus }: { motorStatus: MotorStatus | null }) {
     setRegJson(JSON.stringify(motorStatus?.axes ?? [], null, 2));
   }
 
-  const cardStyle = { background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 16, marginBottom: 16 };
-
   return (
     <div>
       {(motorStatus?.axes ?? []).map((ax: AxisStatus) => (
-        <div key={ax.axis} style={cardStyle}>
-          <h3 style={{ margin: '0 0 12px', fontSize: 14, color: AXIS_COLORS[ax.axis] }}>
+        <Card key={ax.axis} className="mb-4">
+          <CardTitle className={cn('mb-3', AXIS_TEXT_CLASSES[ax.axis])}>
             {AXIS_NAMES[ax.axis]} — DRV_STATUS
-          </h3>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
+          </CardTitle>
+          <div className="flex gap-2 flex-wrap">
             {DRV_BITS.map(({ bit, name, desc }) => {
               const isSet = !!(ax.drv_status & (1 << bit));
-              const isOk = name === 'STST' ? !isSet : name === 'SG' ? isSet : !isSet;
               return (
                 <div
                   key={name}
                   title={desc}
-                  style={{
-                    padding: '3px 10px',
-                    borderRadius: 4,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    background: isSet ? '#7f1d1d' : '#065f46',
-                    color: isSet ? '#fca5a5' : '#6ee7b7',
-                    cursor: 'default',
-                  }}
+                  className={cn(
+                    'px-2.5 py-0.5 rounded text-[12px] font-semibold cursor-default',
+                    isSet
+                      ? 'bg-danger-soft text-danger'
+                      : 'bg-success-soft text-success',
+                  )}
                 >
                   {name}
                 </div>
               );
             })}
           </div>
-          <div style={{ marginTop: 8, fontSize: 12, color: TEXT_MUTED }}>
+          <div className="mt-2 text-[12px] text-text-tertiary numeric">
             CS_ACTUAL: {ax.cs_actual} &nbsp;|&nbsp; SG_RESULT: {ax.sg_result}
           </div>
-        </div>
+        </Card>
       ))}
 
       {(!motorStatus || motorStatus.axes.length === 0) && (
-        <div style={{ fontSize: 13, color: TEXT_MUTED, textAlign: 'center', padding: 24 }}>No motor data</div>
+        <EmptyState
+          icon={<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>}
+          message="No motor data"
+          className="py-6"
+        />
       )}
 
-      <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
-        <button
-          onClick={readAllRegisters}
-          style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '8px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
-        >
-          Read All Registers
-        </button>
+      <div className="flex gap-2.5 mb-4">
+        <Button variant="primary" onClick={readAllRegisters}>Read All Registers</Button>
       </div>
 
       {regJson && (
-        <div style={cardStyle}>
-          <pre style={{ fontSize: 11, color: '#6ee7b7', margin: 0, overflowX: 'auto', maxHeight: 200, overflowY: 'auto' }}>{regJson}</pre>
-        </div>
+        <Card>
+          <pre className="text-[11px] text-success font-mono m-0 overflow-x-auto max-h-[200px] overflow-y-auto">{regJson}</pre>
+        </Card>
       )}
     </div>
   );
@@ -439,6 +463,8 @@ export function MotorPage() {
   const refreshMotor = () => motorApi.status().then(setStaticMotor).catch(() => null);
   const isMoving = motorStatus !== null && ![0, 5, 6].includes(motorStatus.state);
 
+  const STATE_LABELS = ['IDLE', 'HOMING', 'RUNNING', 'JOGGING', 'STOPPING', 'FAULT', 'ESTOP'];
+
   async function handleProbe() {
     setProbing(true);
     try { const r = await diagApi.probe(); setProbeResults(r.drivers); }
@@ -447,32 +473,25 @@ export function MotorPage() {
   }
 
   return (
-    <div style={{ padding: 'clamp(12px, 3vw, 20px)', maxWidth: 1100, margin: '0 auto' }}>
-      <h2 style={{ margin: '0 0 4px', color: TEXT_PRIMARY, fontSize: 18 }}>Motor Control</h2>
-      <div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 14 }}>
-        State: <strong style={{ color: TEXT_PRIMARY }}>
-          {motorStatus ? (['IDLE','HOMING','RUNNING','JOGGING','STOPPING','FAULT','ESTOP'][motorStatus.state] ?? '?') : '—'}
+    <div className="px-[clamp(12px,3vw,20px)] py-[clamp(12px,3vw,20px)] max-w-[1100px] mx-auto">
+      <h2 className="text-[18px] font-semibold text-text-primary mb-1">Motor Control</h2>
+      <div className="text-[13px] text-text-tertiary mb-3.5">
+        State: <strong className="text-text-primary">
+          {motorStatus ? (STATE_LABELS[motorStatus.state] ?? '?') : '—'}
         </strong>
-        &nbsp;|&nbsp; Step: <strong style={{ color: TEXT_PRIMARY }}>
+        &nbsp;|&nbsp; Step: <strong className="text-text-primary numeric">
           {motorStatus ? `${motorStatus.current_step} / ${motorStatus.total_steps}` : '—'}
         </strong>
       </div>
 
       {/* Driver Connection + Power Control */}
-      <div style={{
-        background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 6,
-        padding: 14, marginBottom: 18,
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-          <span style={{ fontSize: 13, color: TEXT_SECONDARY, fontWeight: 600 }}>Driver Connection</span>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button
-              onClick={handleProbe}
-              disabled={probing}
-              style={{ background: '#334155', color: TEXT_SECONDARY, border: `1px solid ${BORDER}`, borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 11 }}
-            >
+      <Card className="mb-[18px]">
+        <div className="flex justify-between items-center mb-2.5">
+          <span className="text-[13px] text-text-secondary font-semibold">Driver Connection</span>
+          <div className="flex gap-2 items-center">
+            <Button variant="secondary" size="sm" onClick={handleProbe} loading={probing}>
               {probing ? 'Probing...' : 'Re-Probe'}
-            </button>
+            </Button>
             <button
               onClick={async () => {
                 if (motorStatus?.driver_enabled) {
@@ -482,41 +501,40 @@ export function MotorPage() {
                 }
               }}
               disabled={isMoving}
-              style={{
-                background: motorStatus?.driver_enabled ? '#065f46' : '#334155',
-                color: motorStatus?.driver_enabled ? '#6ee7b7' : TEXT_MUTED,
-                border: `1px solid ${motorStatus?.driver_enabled ? '#10b981' : BORDER}`,
-                borderRadius: 4, padding: '4px 12px', cursor: isMoving ? 'not-allowed' : 'pointer',
-                fontSize: 11, fontWeight: 600,
-                opacity: isMoving ? 0.6 : 1,
-              }}
+              className={cn(
+                'text-[11px] font-semibold px-3 py-1 rounded border cursor-pointer transition-colors',
+                'disabled:opacity-60 disabled:cursor-not-allowed',
+                motorStatus?.driver_enabled
+                  ? 'bg-success-soft text-success border-success/40'
+                  : 'bg-surface-2 text-text-tertiary border-border',
+              )}
             >
               {motorStatus?.driver_enabled ? 'ENERGIZED' : 'Enable Drivers'}
             </button>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <div className="flex gap-2.5 flex-wrap">
           {probeResults.length === 0 ? (
-            <span style={{ fontSize: 12, color: TEXT_MUTED }}>Probing drivers...</span>
+            <span className="text-[12px] text-text-tertiary">Probing drivers...</span>
           ) : probeResults.map(p => (
-            <div key={p.driver} style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '5px 10px', borderRadius: 5,
-              background: p.connected ? '#064e3b' : '#450a0a',
-              border: `1px solid ${p.connected ? '#10b981' : '#ef4444'}`,
-            }}>
-              <span style={{
-                width: 7, height: 7, borderRadius: '50%',
-                background: p.connected ? '#10b981' : '#ef4444',
-              }} />
-              <span style={{ fontSize: 12, color: TEXT_PRIMARY, fontWeight: 600 }}>{p.driver}</span>
-              <span style={{ fontSize: 11, color: p.connected ? '#6ee7b7' : '#fca5a5' }}>
+            <div
+              key={p.driver}
+              className={cn(
+                'flex items-center gap-1.5 px-2.5 py-[5px] rounded-md border',
+                p.connected
+                  ? 'bg-success-soft border-success/40'
+                  : 'bg-danger-soft border-danger/40',
+              )}
+            >
+              <span className={cn('w-[7px] h-[7px] rounded-full', p.connected ? 'bg-success' : 'bg-danger')} />
+              <span className="text-[12px] text-text-primary font-semibold">{p.driver}</span>
+              <span className={cn('text-[11px]', p.connected ? 'text-success' : 'text-danger')}>
                 {p.connected ? p.chip : 'NOT FOUND'}
               </span>
             </div>
           ))}
         </div>
-      </div>
+      </Card>
 
       {showDisableModal && (
         <ConfirmModal
