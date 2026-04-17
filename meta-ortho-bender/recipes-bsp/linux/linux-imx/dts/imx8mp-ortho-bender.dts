@@ -45,3 +45,28 @@
 
 /* WiFi/BT subsystem — AW-CM358MA SDIO + UART */
 #include "imx8mp-ortho-bender-wifi.dtsi"
+
+/*
+ * Disable unused EVK peripherals to suppress probe errors.
+ * Ortho-Bender is headless (no display) and uses Allied Vision USB3
+ * camera instead of EVK OV5640 MIPI-CSI.
+ */
+
+/* EVK OV5640 MIPI-CSI cameras — not used (Allied Vision Alvium via USB3) */
+&ov5640_0 {
+	status = "disabled";
+};
+
+&ov5640_1 {
+	status = "disabled";
+};
+
+/* HDMI bridge — headless device, no display output */
+&adv_bridge {
+	status = "disabled";
+};
+
+/* LVDS-to-HDMI bridge (IT6263) — headless device, no display output */
+&lvds_bridge {
+	status = "disabled";
+};
