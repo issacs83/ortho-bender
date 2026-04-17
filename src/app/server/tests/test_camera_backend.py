@@ -198,3 +198,40 @@ async def test_mock_disconnected_raises():
     cam = MockCameraBackend()
     with pytest.raises(CameraDisconnectedError):
         await cam.capture()
+
+
+# ---------------------------------------------------------------------------
+# CameraService orchestration tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+async def camera_svc():
+    from server.services.camera_backends.mock_backend import MockCameraBackend
+    from server.services.camera_service import CameraService
+    backend = MockCameraBackend()
+    svc = CameraService(backend)
+    await svc.connect()
+    yield svc
+    await svc.disconnect()
+
+
+async def test_svc_connect_returns_device_and_caps(camera_svc):
+    result = await camera_svc.connect()
+    assert "device" in result
+    assert "capabilities" in result
+    assert result["device"]["vendor"] == "Mock"
+
+
+async def test_svc_set_exposure(camera_svc):
+    info = await camera_svc.set_exposure(auto=False, time_us=8000)
+    assert info.time_us == 8000
+
+
+async def test_svc_capture_jpeg(camera_svc):
+    jpeg = await camera_svc.capture_jpeg(quality=85)
+    assert jpeg[:3] == b"\xff\xd8\xff"
+
+
+async def test_svc_get_status(camera_svc):
+    status = await camera_svc.get_status()
+    assert status.connected is True
