@@ -98,7 +98,9 @@ class CapturedFrame:
             img = self.array
         else:
             img = cv2.cvtColor(self.array, cv2.COLOR_RGB2BGR)
-        _, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        ok, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        if not ok:
+            raise CameraError("JPEG encode failed")
         return buf.tobytes()
 
 
