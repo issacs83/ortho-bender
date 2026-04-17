@@ -26,7 +26,7 @@ import os
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Query, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -252,8 +252,19 @@ def create_app() -> FastAPI:
         await application.state.ws_manager.handle_system(ws)
 
     @application.websocket("/ws/motor/diag")
-    async def ws_motor_diag(ws: WebSocket):
-        await application.state.ws_manager.handle_motor_diag(ws)
+    async def ws_motor_diag(
+        ws: WebSocket,
+        format: str = Query(default="json", alias="format"),
+    ):
+        """
+        Diagnostic WebSocket — 200 Hz StallGuard2 / DRV_STATUS stream.
+
+        Query parameters:
+          ``?format=msgpack``  — binary MessagePack frames (~80 % smaller).
+          ``?format=json``     — JSON text frames (default, backward compatible).
+        """
+        use_msgpack = format.lower() == "msgpack"
+        await application.state.ws_manager.handle_motor_diag(ws, use_msgpack=use_msgpack)
 
     # Health probe (used by systemd + load balancers)
     @application.get("/health", tags=["meta"])

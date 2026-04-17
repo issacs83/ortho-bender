@@ -3,7 +3,13 @@
  *
  * All functions throw on HTTP error or on {success: false} responses.
  * WebSocket connections return native WebSocket instances.
+ *
+ * The diagnostic WebSocket (/ws/motor/diag) requests binary MessagePack
+ * frames (?format=msgpack) for ~80 % bandwidth reduction at 200 Hz.
+ * The server falls back to JSON automatically when msgpack is unavailable.
  */
+
+import { decode as msgpackDecode } from "@msgpack/msgpack";
 
 const BASE_URL = import.meta.env.VITE_API_BASE ?? "";
 
@@ -291,6 +297,35 @@ function openWs<T>(path: string, onMessage: WsHandler<T>): WebSocket {
   return ws;
 }
 
+/**
+ * Open a WebSocket that requests MessagePack binary frames (?format=msgpack).
+ *
+ * Binary frames are decoded with @msgpack/msgpack.  If the server sends a
+ * text frame (e.g., during graceful fallback to JSON), it is parsed as JSON
+ * so callers always receive typed objects regardless of wire format.
+ */
+function openWsMsgpack<T>(path: string, onMessage: WsHandler<T>): WebSocket {
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const host = import.meta.env.VITE_WS_HOST ?? window.location.host;
+  const ws = new WebSocket(`${proto}//${host}${path}?format=msgpack`);
+  // Receive ArrayBuffer for binary frames
+  ws.binaryType = "arraybuffer";
+  ws.onmessage = (ev) => {
+    try {
+      if (ev.data instanceof ArrayBuffer) {
+        // Binary MessagePack frame
+        onMessage(msgpackDecode(new Uint8Array(ev.data)) as T);
+      } else {
+        // Text frame — JSON fallback (server without msgpack installed)
+        onMessage(JSON.parse(ev.data as string) as T);
+      }
+    } catch {
+      // ignore malformed frames
+    }
+  };
+  return ws;
+}
+
 export const wsApi = {
   motor:  (cb: WsHandler<{ type: string } & MotorStatus>): WebSocket =>
     openWs("/ws/motor", cb),
@@ -301,6 +336,13 @@ export const wsApi = {
   system: (cb: WsHandler<{ type: string; message: string; timestamp_us: number }>): WebSocket =>
     openWs("/ws/system", cb),
 
+  /**
+   * Diagnostic WebSocket — 200 Hz StallGuard2 / DRV_STATUS stream.
+   *
+   * Connects with ``?format=msgpack`` to receive binary frames (~80 % smaller
+   * than equivalent JSON).  Falls back transparently to JSON text if the
+   * server does not have msgpack installed.
+   */
   motorDiag: (cb: WsHandler<DiagEvent>): WebSocket =>
-    openWs("/ws/motor/diag", cb),
+    openWsMsgpack("/ws/motor/diag", cb),
 };
