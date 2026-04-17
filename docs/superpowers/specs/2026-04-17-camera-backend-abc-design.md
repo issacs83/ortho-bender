@@ -517,7 +517,16 @@ Every frame carries live telemetry — no separate polling needed during streami
 
 ### 5.1 VmbPyCameraBackend
 
-First production implementation targeting Allied Vision Alvium 1800 U-158m.
+Production implementation for USB3 Vision cameras via VmbPy (Vimba X GenTL).
+
+**Supported cameras:**
+
+| Camera | Sensor | Resolution | Max FPS | Type | Interface |
+|--------|--------|-----------|---------|------|-----------|
+| Allied Vision Alvium 1800 U-158m | IMX273 | 1456×1088 | 133 | Mono | USB3 Vision |
+| NOVITEC u-Nova2-23C (USB 2b00:f202) | AR0234CS | 1920×1200 | 120 | Color (Global Shutter) | USB3 Vision |
+
+All capabilities (resolution, ranges, pixel formats, features) are read dynamically from GenICam nodes at connect time — no camera-specific hardcoding in the backend. Any USB3 Vision compliant camera works without code changes.
 
 **GenICam Node Mapping (internal, never exposed to API):**
 
