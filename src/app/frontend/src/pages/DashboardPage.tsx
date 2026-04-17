@@ -116,8 +116,8 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
               </div>
 
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <StatusBadge variant={sysStatus.ipc_connected ? 'success' : 'error'} label="IPC" />
-                <StatusBadge variant={sysStatus.m7_heartbeat_ok ? 'success' : 'error'} label="M7" />
+                <StatusBadge variant={sysStatus.ipc_connected ? 'success' : 'error'} label="Link" />
+                <StatusBadge variant={sysStatus.m7_heartbeat_ok ? 'success' : 'error'} label="Controller" />
                 <StatusBadge variant={sysStatus.camera_connected ? 'success' : 'error'} label="CAM" />
               </div>
 
@@ -164,7 +164,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
           ) : !motorStatus && motorError ? (
             <div style={{ textAlign: 'center', padding: 24, color: TEXT_MUTED }}>
               <div style={{ fontSize: 13, marginBottom: 8 }}>Motor not available</div>
-              <div style={{ fontSize: 11 }}>M7 IPC not responding. Check Connection page.</div>
+              <div style={{ fontSize: 11 }}>Motor controller not responding. Check Connection page.</div>
             </div>
           ) : motorStatus ? (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -188,7 +188,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                       {ax.velocity.toFixed(2)}
                     </td>
                     <td style={{ padding: '6px 8px' }}>
-                      <StatusBadge variant={ax.drv_status === 0 ? 'success' : 'error'} label={ax.drv_status === 0 ? 'OK' : 'ERR'} />
+                      <StatusBadge variant={ax.drv_status === 0 ? 'success' : 'error'} label={ax.drv_status === 0 ? 'Normal' : 'Fault'} />
                     </td>
                   </tr>
                 ))}
@@ -282,7 +282,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       {showSystemCheckModal && (
         <ConfirmModal
           title="System Check"
-          description="Running connection check to all subsystems (Board, IPC, M7, Camera)..."
+          description="Running connection check to all subsystems (Board, Controller Link, Motor Controller, Camera)..."
           confirmLabel="OK"
           confirmVariant="primary"
           onConfirm={() => { setShowSystemCheckModal(false); systemApi.status().then(setSysStatus).catch(() => null); }}

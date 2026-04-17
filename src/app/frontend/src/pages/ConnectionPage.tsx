@@ -748,20 +748,20 @@ function BoardSystemTab() {
         )}
       </div>
 
-      {/* IPC Status */}
+      {/* Controller Link Status */}
       <div style={cardStyle}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h3 style={{ margin: 0, fontSize: 14, color: TEXT_PRIMARY }}>IPC Status</h3>
+          <h3 style={{ margin: 0, fontSize: 14, color: TEXT_PRIMARY }}>Controller Link</h3>
           <button
             onClick={() => setShowResetIpcModal(true)}
             style={{ ...btnBase, padding: '4px 10px', background: '#1e293b', color: TEXT_SECONDARY, border: `1px solid ${BORDER}`, fontSize: 12 }}
           >
-            Reset IPC
+            Reset Link
           </button>
         </div>
 
         <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
-          <StatusBadge variant={sysStatus?.ipc_connected ? 'success' : 'error'} label={`RPMsg: ${sysStatus?.ipc_connected ? 'OK' : 'FAIL'}`} />
+          <StatusBadge variant={sysStatus?.ipc_connected ? 'success' : 'error'} label={`Controller Link: ${sysStatus?.ipc_connected ? 'OK' : 'FAIL'}`} />
         </div>
 
         {[
@@ -787,8 +787,8 @@ function BoardSystemTab() {
 
         {showResetIpcModal && (
           <ConfirmModal
-            title="Reset IPC"
-            description="This will reset the RPMsg IPC channel. All in-flight commands will be discarded."
+            title="Reset Controller Link"
+            description="This will reset the controller link channel. All in-flight commands will be discarded."
             confirmLabel="Reset"
             confirmVariant="danger"
             onConfirm={() => { setShowResetIpcModal(false); setIpcEvents([]); }}

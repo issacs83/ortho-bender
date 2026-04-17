@@ -79,8 +79,8 @@ function PreflightModal({ sysStatus, steps, material, onStart, onCancel }: Prefl
   const checks = [
     { label: 'System IDLE',        ok: (sysStatus?.motion_state ?? -1) === 0 },
     { label: 'Board connected',    ok: true },
-    { label: 'IPC connected',      ok: sysStatus?.ipc_connected ?? false },
-    { label: 'M7 heartbeat OK',    ok: sysStatus?.m7_heartbeat_ok ?? false },
+    { label: 'Controller link',     ok: sysStatus?.ipc_connected ?? false },
+    { label: 'Motor controller',   ok: sysStatus?.m7_heartbeat_ok ?? false },
     { label: 'No active alarms',   ok: (sysStatus?.active_alarms ?? 1) === 0 },
     { label: 'B-code valid',       ok: steps.length > 0 },
     { label: 'Material selected',  ok: true },

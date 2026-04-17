@@ -80,8 +80,8 @@ export function SystemStatus() {
               <td style={tdVal}>{val}</td>
             </tr>
           ))}
-          <tr><td style={tdStyle}>IPC (RPMsg)</td><td style={tdVal}><StatusBadge ok={status.ipc_connected} label="IPC" /></td></tr>
-          <tr><td style={tdStyle}>M7 Heartbeat</td><td style={tdVal}><StatusBadge ok={status.m7_heartbeat_ok} label="M7" /></td></tr>
+          <tr><td style={tdStyle}>Controller Link</td><td style={tdVal}><StatusBadge ok={status.ipc_connected} label="Link" /></td></tr>
+          <tr><td style={tdStyle}>Motor Controller</td><td style={tdVal}><StatusBadge ok={status.m7_heartbeat_ok} label="Controller" /></td></tr>
           <tr><td style={tdStyle}>Camera</td><td style={tdVal}><StatusBadge ok={status.camera_connected} label="Camera" /></td></tr>
           <tr>
             <td style={tdStyle}>Active Alarms</td>

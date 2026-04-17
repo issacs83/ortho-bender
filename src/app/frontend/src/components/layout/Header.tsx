@@ -66,8 +66,8 @@ export function Header({
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, minWidth: 0, overflow: 'hidden' }}>
         <MotionStatePill stateNum={motionStateNum} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 1, overflow: 'hidden' }}>
-          <ConnectionIcon label="BD"  status={bdStatus} />
-          <ConnectionIcon label="IPC" status={ipcStatus} />
+          <ConnectionIcon label="SYS"  status={bdStatus} />
+          <ConnectionIcon label="LINK" status={ipcStatus} />
           <ConnectionIcon label={motorModel ?? 'MTR'} status={motorStatus} detail={motorDetail} />
           <ConnectionIcon label={camModel ? 'CAM' : 'CAM'} status={camStatus} detail={camModel ?? 'NO'} />
         </div>
