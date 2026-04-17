@@ -32,7 +32,6 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .routers import bending, cam, camera, docs, motor, system, wifi, diag_router
-from .services.camera_service import CameraService
 from .services.diag_service import DiagService
 from .services.ipc_client import IpcClient
 from .services.motor_backend import MockMotorBackend
@@ -75,9 +74,26 @@ async def lifespan(app: FastAPI):
         await ipc.connect()
     app.state.ipc_client = ipc
 
-    # Services — camera always uses real hardware when mock_mode=false
-    motor_svc  = MotorService(ipc)
-    camera_svc = CameraService(mock=cfg.mock_mode)
+    # Motor service
+    motor_svc = MotorService(ipc)
+
+    # Camera backend — select via OB_CAMERA_BACKEND env var
+    if cfg.camera_backend == "vmbpy" and not cfg.mock_mode:
+        try:
+            from .services.camera_backends.vmbpy_backend import VmbPyCameraBackend
+            camera_backend = VmbPyCameraBackend()
+            log.info("Camera backend: VmbPy (Allied Vision)")
+        except ImportError:
+            log.warning("VmbPy not available — falling back to mock camera")
+            from .services.camera_backends.mock_backend import MockCameraBackend
+            camera_backend = MockCameraBackend()
+    else:
+        from .services.camera_backends.mock_backend import MockCameraBackend
+        camera_backend = MockCameraBackend()
+        log.info("Camera backend: Mock")
+
+    from .services.camera_service import CameraService
+    camera_svc = CameraService(camera_backend)
     await camera_svc.connect()
 
     app.state.motor_service  = motor_svc
@@ -119,13 +135,24 @@ async def lifespan(app: FastAPI):
 
     async def _camera_provider():
         try:
-            jpeg = await camera_svc.capture_jpeg(quality=cfg.camera_jpeg_quality)
+            frame = await camera_svc.capture()
+            jpeg = frame.to_jpeg(quality=cfg.camera_jpeg_quality)
             if not jpeg:
                 return None
+            meta = frame.meta
             return {
                 "jpeg":   jpeg,
-                "width":  camera_svc._width or 0,
-                "height": camera_svc._height or 0,
+                "width":  meta.width,
+                "height": meta.height,
+                "meta": {
+                    "timestamp_us":  meta.timestamp_us,
+                    "exposure_us":   meta.exposure_us,
+                    "gain_db":       meta.gain_db,
+                    "temperature_c": meta.temperature_c,
+                    "fps_actual":    meta.fps_actual,
+                    "width":         meta.width,
+                    "height":        meta.height,
+                },
             }
         except Exception:
             return None
@@ -134,7 +161,7 @@ async def lifespan(app: FastAPI):
         try:
             return {
                 "ipc_connected":    ipc.connected,
-                "camera_connected": camera_svc._connected,
+                "camera_connected": camera_svc.is_connected,
                 "driver_probe":     app.state.driver_probe,
             }
         except Exception:

@@ -337,6 +337,7 @@ class WsManager:
                             "width":      frame.get("width", 0),
                             "height":     frame.get("height", 0),
                             "timestamp_us": int(time.monotonic() * 1_000_000),
+                            "meta":       frame.get("meta"),
                         })
                         await self.camera.broadcast(payload)
             except Exception as exc:

@@ -89,9 +89,15 @@ async def get_system_status(
         except Exception as exc:
             log.debug("Heartbeat poll failed: %s", exc)
 
-    # Camera model — read from actual hardware, not hardcoded
-    cam_status = camera.get_status()
-    camera_model: str | None = cam_status.get("device_id")
+    # Camera status — read from CameraBackend ABC
+    camera_connected = camera.is_connected
+    camera_model: str | None = None
+    if camera_connected:
+        try:
+            dev = camera.device_info()
+            camera_model = dev.get("model")
+        except Exception:
+            pass
 
     # Motor driver summary — count connected drivers from probe
     motor_connected = any(
@@ -104,7 +110,7 @@ async def get_system_status(
 
     return ok({
         "motion_state":     motion_state.value,
-        "camera_connected": cam_status["connected"] and cam_status["backend"] != "mock",
+        "camera_connected": camera_connected,
         "camera_model":     camera_model,
         "ipc_connected":    ipc_ok,
         "m7_heartbeat_ok":  m7_hb_ok,
