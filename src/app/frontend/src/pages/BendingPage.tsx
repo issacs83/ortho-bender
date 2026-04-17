@@ -12,7 +12,7 @@ import { Button } from '../components/ui/Button';
 import { Card, CardTitle } from '../components/ui/Card';
 import { useMotorWs } from '../hooks/useMotorWs';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { AXIS_COLORS, AXIS_NAMES, BG_PANEL, BORDER, TEXT_PRIMARY, WIRE_MATERIALS, WIRE_DIAMETERS, HISTORY_LEN, type WireMaterial } from '../constants';
+import { AXIS_COLORS, AXIS_NAMES, WIRE_MATERIALS, WIRE_DIAMETERS, HISTORY_LEN, type WireMaterial } from '../lib/domain-data';
 import { cn } from '../lib/cn';
 
 // ---------------------------------------------------------------------------
@@ -416,7 +416,7 @@ export function BendingPage() {
                 <LineChart data={chartHistory}>
                   <XAxis dataKey="t" hide />
                   <YAxis stroke="#475569" tick={{ fill: '#64748b', fontSize: 10 }} />
-                  <Tooltip contentStyle={{ background: BG_PANEL, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY }} />
+                  <Tooltip contentStyle={{ background: 'var(--surface-1)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                   {AXIS_NAMES.map((name, i) => (
                     <Line key={name} type="monotone" dataKey={name} stroke={AXIS_COLORS[i]} dot={false} isAnimationActive={false} strokeWidth={1.5} />
                   ))}

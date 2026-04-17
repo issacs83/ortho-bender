@@ -12,7 +12,7 @@ import { Card, CardTitle } from '../components/ui/Card';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useMotorWs } from '../hooks/useMotorWs';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { AXIS_COLORS, AXIS_NAMES, AXIS_UNITS, BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_MUTED, HISTORY_LEN } from '../constants';
+import { AXIS_COLORS, AXIS_NAMES, AXIS_UNITS, HISTORY_LEN } from '../lib/domain-data';
 import { cn } from '../lib/cn';
 
 type MotorSubTab = 'position' | 'driver' | 'stallguard' | 'diagnostics';
@@ -216,7 +216,7 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
               <LineChart data={history}>
                 <XAxis dataKey="t" hide />
                 <YAxis stroke="#475569" tick={{ fill: '#64748b', fontSize: 10 }} />
-                <Tooltip contentStyle={{ background: BG_PANEL, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY }} />
+                <Tooltip contentStyle={{ background: 'var(--surface-1)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                 {AXIS_NAMES.map((name, i) => (
                   <Line key={name} type="monotone" dataKey={name} stroke={AXIS_COLORS[i]} dot={false} isAnimationActive={false} strokeWidth={1.5} />
                 ))}
@@ -355,7 +355,7 @@ function StallGuardTab({ motorStatus }: { motorStatus: MotorStatus | null }) {
             <LineChart data={sgHistory}>
               <XAxis dataKey="t" hide />
               <YAxis stroke="#475569" tick={{ fill: '#64748b', fontSize: 10 }} />
-              <Tooltip contentStyle={{ background: BG_PANEL, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY }} />
+              <Tooltip contentStyle={{ background: 'var(--surface-1)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
               <ReferenceLine y={0} stroke="#ef4444" strokeDasharray="4 4" />
               {AXIS_NAMES.map((_, i) => (
                 <Line key={i} type="monotone" dataKey={`SG${i}`} stroke={AXIS_COLORS[i]} dot={false} isAnimationActive={false} strokeWidth={1.5} />
