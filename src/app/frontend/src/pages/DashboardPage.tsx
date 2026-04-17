@@ -166,6 +166,28 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
               <div style={{ fontSize: 13, marginBottom: 8 }}>Motor not available</div>
               <div style={{ fontSize: 11 }}>Motor controller not responding. Check Connection page.</div>
             </div>
+          ) : !sysStatus?.motor_connected ? (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr>
+                  {['Axis', 'Position', 'Velocity', 'Status'].map((h) => (
+                    <th key={h} style={{ padding: '4px 8px', textAlign: 'left', color: TEXT_MUTED, fontSize: 11, borderBottom: `1px solid ${BORDER}`, fontWeight: 600 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {AXIS_NAMES.map((name, i) => (
+                  <tr key={i} style={{ opacity: 0.5 }}>
+                    <td style={{ padding: '6px 8px', color: AXIS_COLORS[i], fontWeight: 600 }}>{name}</td>
+                    <td style={{ padding: '6px 8px', color: TEXT_MUTED }}>— {AXIS_UNITS[i]}</td>
+                    <td style={{ padding: '6px 8px', color: TEXT_MUTED }}>—</td>
+                    <td style={{ padding: '6px 8px' }}>
+                      <StatusBadge variant="neutral" label="No Driver" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           ) : motorStatus ? (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
