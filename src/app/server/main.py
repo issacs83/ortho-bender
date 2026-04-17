@@ -78,7 +78,16 @@ async def lifespan(app: FastAPI):
     motor_svc = MotorService(ipc)
 
     # Camera backend — select via OB_CAMERA_BACKEND env var
-    if cfg.camera_backend == "vmbpy" and not cfg.mock_mode:
+    if cfg.camera_backend == "novitec" and not cfg.mock_mode:
+        try:
+            from .services.camera_backends.novitec_backend import NovitecBackend
+            camera_backend = NovitecBackend()
+            log.info("Camera backend: NOVITEC u-Nova2 (GenCP/U3V)")
+        except (ImportError, Exception) as exc:
+            log.warning("NOVITEC backend failed (%s) — falling back to mock", exc)
+            from .services.camera_backends.mock_backend import MockCameraBackend
+            camera_backend = MockCameraBackend()
+    elif cfg.camera_backend == "vmbpy" and not cfg.mock_mode:
         try:
             from .services.camera_backends.vmbpy_backend import VmbPyCameraBackend
             camera_backend = VmbPyCameraBackend()
