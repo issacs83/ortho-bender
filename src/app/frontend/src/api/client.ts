@@ -38,17 +38,58 @@ export interface MotorStatus {
   driver_enabled: boolean;
 }
 
+// Camera feature types (matches backend camera_schemas.py)
+export interface NumericRange { min: number; max: number; step: number }
+export interface CamDeviceInfo { model: string; serial: string; firmware: string; vendor: string }
+export interface FrameMeta {
+  timestamp_us: number; exposure_us: number; gain_db: number;
+  temperature_c: number | null; fps_actual: number; width: number; height: number;
+}
+export interface FeatureCapability {
+  supported: boolean; range?: NumericRange; auto_available?: boolean;
+  available_values?: string[]; slots?: string[];
+}
+export interface CameraCapabilities { [feature: string]: FeatureCapability }
+export interface ConnectData { device: CamDeviceInfo; capabilities: CameraCapabilities }
+export interface ExposureInfo {
+  auto: boolean; time_us: number; range: NumericRange;
+  auto_available: boolean; invalidated: string[];
+}
+export interface GainInfo {
+  auto: boolean; value_db: number; range: NumericRange;
+  auto_available: boolean; invalidated: string[];
+}
+export interface RoiInfo {
+  width: number; height: number; offset_x: number; offset_y: number;
+  width_range: NumericRange; height_range: NumericRange;
+  offset_x_range: NumericRange; offset_y_range: NumericRange;
+  invalidated: string[];
+}
+export interface PixelFormatInfo {
+  format: string; available: string[]; invalidated: string[];
+}
+export interface FrameRateInfo {
+  enable: boolean; value: number; range: NumericRange; invalidated: string[];
+}
+export interface TriggerInfo {
+  mode: string; source: string | null; available_modes: string[];
+  available_sources: string[]; invalidated: string[];
+}
+export interface UserSetInfo {
+  current_slot: string; available_slots: string[]; default_slot: string;
+}
+
 export interface CameraStatus {
   connected: boolean;
-  device_id: string | null;
-  width: number | null;
-  height: number | null;
-  exposure_us: number | null;
-  gain_db: number | null;
-  format: string | null;
-  backend: string | null;
-  fps: number | null;
-  power_state: "on" | "standby" | "off";
+  streaming: boolean;
+  device: CamDeviceInfo | null;
+  current_exposure_us: number | null;
+  current_gain_db: number | null;
+  current_temperature_c: number | null;
+  current_fps: number | null;
+  current_pixel_format: string | null;
+  current_roi: { width: number; height: number; offset_x: number; offset_y: number } | null;
+  current_trigger_mode: string | null;
 }
 
 export interface BendingStatus {
@@ -188,26 +229,75 @@ export const motorApi = {
 // ---------------------------------------------------------------------------
 
 export const cameraApi = {
-  status: (): Promise<CameraStatus> =>
-    request("/api/camera/status"),
-
-  captureUrl: (): string =>
-    `${BASE_URL}/api/camera/capture`,
-
-  streamUrl: (): string =>
-    `${BASE_URL}/api/camera/stream`,
-
-  settings: (params: { exposure_us?: number; gain_db?: number; format?: string }): Promise<CameraStatus> =>
-    request("/api/camera/settings", {
-      method: "POST",
-      body: JSON.stringify(params),
-    }),
-
-  connect: (): Promise<CameraStatus> =>
+  // Connection & status
+  connect: (): Promise<ConnectData> =>
     request("/api/camera/connect", { method: "POST" }),
-
-  disconnect: (): Promise<CameraStatus> =>
+  disconnect: (): Promise<void> =>
     request("/api/camera/disconnect", { method: "POST" }),
+  status: () =>
+    request<CameraStatus>("/api/camera/status"),
+  capabilities: (): Promise<CameraCapabilities> =>
+    request("/api/camera/capabilities"),
+  deviceInfo: (): Promise<CamDeviceInfo> =>
+    request("/api/camera/device-info"),
+
+  // Exposure
+  getExposure: (): Promise<ExposureInfo> =>
+    request("/api/camera/exposure"),
+  setExposure: (params: { auto: boolean; time_us?: number }): Promise<ExposureInfo> =>
+    request("/api/camera/exposure", { method: "POST", body: JSON.stringify(params) }),
+
+  // Gain
+  getGain: (): Promise<GainInfo> =>
+    request("/api/camera/gain"),
+  setGain: (params: { auto: boolean; value_db?: number }): Promise<GainInfo> =>
+    request("/api/camera/gain", { method: "POST", body: JSON.stringify(params) }),
+
+  // ROI
+  getRoi: (): Promise<RoiInfo> =>
+    request("/api/camera/roi"),
+  setRoi: (params: { width: number; height: number; offset_x?: number; offset_y?: number }): Promise<RoiInfo> =>
+    request("/api/camera/roi", { method: "POST", body: JSON.stringify(params) }),
+  centerRoi: (): Promise<RoiInfo> =>
+    request("/api/camera/roi/center", { method: "POST" }),
+
+  // Pixel format
+  getPixelFormat: (): Promise<PixelFormatInfo> =>
+    request("/api/camera/pixel-format"),
+  setPixelFormat: (params: { format: string }): Promise<PixelFormatInfo> =>
+    request("/api/camera/pixel-format", { method: "POST", body: JSON.stringify(params) }),
+
+  // Frame rate
+  getFrameRate: (): Promise<FrameRateInfo> =>
+    request("/api/camera/frame-rate"),
+  setFrameRate: (params: { enable: boolean; value?: number }): Promise<FrameRateInfo> =>
+    request("/api/camera/frame-rate", { method: "POST", body: JSON.stringify(params) }),
+
+  // Trigger
+  getTrigger: (): Promise<TriggerInfo> =>
+    request("/api/camera/trigger"),
+  setTrigger: (params: { mode: string; source?: string }): Promise<TriggerInfo> =>
+    request("/api/camera/trigger", { method: "POST", body: JSON.stringify(params) }),
+  fireTrigger: (): Promise<void> =>
+    request("/api/camera/trigger/fire", { method: "POST" }),
+
+  // Temperature
+  getTemperature: (): Promise<{ value_c: number }> =>
+    request("/api/camera/temperature"),
+
+  // UserSet
+  getUserSet: (): Promise<UserSetInfo> =>
+    request("/api/camera/user-set"),
+  loadUserSet: (params: { slot: string }): Promise<void> =>
+    request("/api/camera/user-set/load", { method: "POST", body: JSON.stringify(params) }),
+  saveUserSet: (params: { slot: string }): Promise<void> =>
+    request("/api/camera/user-set/save", { method: "POST", body: JSON.stringify(params) }),
+  setDefaultUserSet: (params: { slot: string }): Promise<void> =>
+    request("/api/camera/user-set/default", { method: "POST", body: JSON.stringify(params) }),
+
+  // Capture & stream
+  captureUrl: (): string => `${BASE_URL}/api/camera/capture`,
+  streamUrl: (): string => `${BASE_URL}/api/camera/stream`,
 };
 
 // ---------------------------------------------------------------------------
@@ -330,7 +420,7 @@ export const wsApi = {
   motor:  (cb: WsHandler<{ type: string } & MotorStatus>): WebSocket =>
     openWs("/ws/motor", cb),
 
-  camera: (cb: WsHandler<{ type: string; frame_b64: string; timestamp_us: number }>): WebSocket =>
+  camera: (cb: WsHandler<{ type: string; frame_b64: string; width: number; height: number; timestamp_us: number; meta?: FrameMeta }>): WebSocket =>
     openWs("/ws/camera", cb),
 
   system: (cb: WsHandler<{ type: string; message: string; timestamp_us: number }>): WebSocket =>
