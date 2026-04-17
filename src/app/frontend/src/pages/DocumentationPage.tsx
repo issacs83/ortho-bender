@@ -57,8 +57,13 @@ function markdownToHtml(md: string): string {
     // Bold / italic
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    // Links
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" style="color:#5B8DEF;text-decoration:underline;word-break:break-all">$1</a>')
+    // Links (sanitize href — allow only http/https/mailto, block javascript: etc.)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, text, href) => {
+      const safe = /^(https?:|mailto:|\/|#)/.test(href.trim());
+      return safe
+        ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener" style="color:#5B8DEF;text-decoration:underline;word-break:break-all">${escapeHtml(text)}</a>`
+        : `<span style="color:#5B8DEF">${escapeHtml(text)}</span>`;
+    })
     // Tables (simple)
     .replace(/^\|(.+)\|$/gm, (line) => {
       const cells = line.split('|').filter(c => c.trim() !== '');

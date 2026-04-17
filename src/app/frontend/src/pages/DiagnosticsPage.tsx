@@ -20,11 +20,12 @@ import { Card, CardTitle } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { RefreshCw } from 'lucide-react';
+import { AXIS_COLORS, AXIS_NAMES } from '../lib/domain-data';
 
 // --- Channel configuration -------------------------------------------------
 const CHANNEL_KEYS = ['tmc260c_0', 'tmc260c_1', 'tmc5072_m0', 'tmc5072_m1'] as const;
-const CHANNEL_LABELS = ['FEED', 'BEND', 'ROTATE', 'LIFT'];
-const CHANNEL_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#a78bfa'];
+const CHANNEL_LABELS = [...AXIS_NAMES];
+const CHANNEL_COLORS = [...AXIS_COLORS];
 
 interface ChannelState {
   label: string;
