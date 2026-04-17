@@ -1,0 +1,19 @@
+[Unit]
+Description=Ortho-Bender SDK Backend (FastAPI)
+After=network.target wpa_supplicant@mlan0.service
+Wants=wpa_supplicant@mlan0.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ortho-bender
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+Environment=OB_MOCK_MODE=false
+Environment=GENICAM_GENTL64_PATH=/opt/VimbaX_2026-1/cti
+ExecStart=/usr/bin/python3 -m uvicorn server.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/ortho-backend.log
+StandardError=append:/var/log/ortho-backend.log
+
+[Install]
+WantedBy=multi-user.target

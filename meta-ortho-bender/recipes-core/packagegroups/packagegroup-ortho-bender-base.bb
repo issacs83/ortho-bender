@@ -5,5 +5,9 @@ inherit packagegroup
 
 RDEPENDS:${PN} = " \
     ortho-bender-app \
+    ortho-bender-services \
     imx-m7-demos \
+    fake-hwclock \
+    wireless-regdb-static \
+    firmware-imx-sdma \
 "

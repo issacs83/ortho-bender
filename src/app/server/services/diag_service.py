@@ -18,6 +18,7 @@ from ..models.diag_schemas import (
     DiagDumpResponse,
     DiagRegisterResponse,
     DriverId,
+    DriverProbeResult,
     SpiTestResult,
 )
 from .tmc260c_driver import Tmc260cDriver
@@ -49,6 +50,25 @@ class DiagService:
                 f"Unknown driver: {driver_id}. Valid: {list(drivers.keys())}"
             )
         return drivers[driver_id]
+
+    async def probe_drivers(self) -> list[DriverProbeResult]:
+        """Probe all motor driver CS lines and identify connected chips.
+
+        Reads identification registers via SPI to determine which drivers
+        are physically connected and what chip type they are.
+        """
+        results: list[DriverProbeResult] = []
+        for did, drv in (
+            (DriverId.TMC260C_0, self._tmc260c_0),
+            (DriverId.TMC260C_1, self._tmc260c_1),
+            (DriverId.TMC5072, self._tmc5072),
+        ):
+            connected, chip = await drv.probe()
+            results.append(DriverProbeResult(
+                driver=did, connected=connected, chip=chip,
+            ))
+            log.info("Driver probe %s: %s (%s)", did, "OK" if connected else "NOT FOUND", chip or "—")
+        return results
 
     async def spi_test(self) -> list[SpiTestResult]:
         """Test SPI connectivity with all drivers."""
@@ -109,8 +129,14 @@ class DiagService:
         return DiagDumpResponse(driver=DriverId(driver_id), registers=hex_dump)
 
     async def get_live_status(self) -> dict:
-        """Return live diagnostic status for all TMC260C drivers (for WS broadcast)."""
+        """Return live diagnostic status for all drivers (for WS broadcast).
+
+        Includes TMC260C x2 (StallGuard2 + fault flags) and
+        TMC5072 motor 0/1 (DRV_STATUS register).
+        """
         results = {}
+
+        # TMC260C drivers — full status with SG2, fault bits
         for did, drv in (("tmc260c_0", self._tmc260c_0), ("tmc260c_1", self._tmc260c_1)):
             try:
                 status = await drv.read_status()
@@ -126,6 +152,26 @@ class DiagService:
                 }
             except Exception:
                 results[did] = None
+
+        # TMC5072 — 2 motor channels, DRV_STATUS per channel
+        for motor in (0, 1):
+            did = f"tmc5072_m{motor}"
+            try:
+                drv_status = await self._tmc5072.get_drv_status(motor)
+                # TMC5072 DRV_STATUS bits: SG_RESULT[9:0], OT, OTPW, S2GA, S2GB, OLA, OLB, STST
+                results[did] = {
+                    "sg_result": drv_status & 0x3FF,
+                    "stst": bool(drv_status & (1 << 31)),
+                    "ot": bool(drv_status & (1 << 25)),
+                    "otpw": bool(drv_status & (1 << 26)),
+                    "s2ga": bool(drv_status & (1 << 27)),
+                    "s2gb": bool(drv_status & (1 << 28)),
+                    "ola": bool(drv_status & (1 << 29)),
+                    "olb": bool(drv_status & (1 << 30)),
+                }
+            except Exception:
+                results[did] = None
+
         return {"drivers": results}
 
     async def get_backend_info(self) -> DiagBackendResponse:
@@ -137,7 +183,13 @@ class DiagService:
             mode = "spidev"
         else:
             mode = "m7"
+
+        spi_device = getattr(self._backend, "_spi_device", None)
+        spi_speed = getattr(self._backend, "_spi_speed", None)
+
         return DiagBackendResponse(
             backend=mode,
+            spi_device=spi_device,
+            spi_speed_hz=spi_speed,
             drivers=[DriverId.TMC260C_0, DriverId.TMC260C_1, DriverId.TMC5072],
         )

@@ -3,7 +3,10 @@
  */
 
 import { Check } from 'lucide-react';
-import { TEXT_PRIMARY, TEXT_MUTED, COLOR_INFO } from '../../constants';
+
+const COLOR_INFO    = 'var(--info)';
+const TEXT_PRIMARY  = 'var(--text-primary)';
+const TEXT_MUTED    = 'var(--text-tertiary)';
 
 const STEPS = ['Material & Wire', 'B-code Editor', 'Execute & Monitor', 'Result & Inspect'];
 

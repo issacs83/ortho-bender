@@ -55,7 +55,8 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Camera
     # ------------------------------------------------------------------
-    camera_fps: float = 15.0
+    camera_backend: str = "mock"  # "mock" | "vmbpy"
+    camera_fps: float = 30.0
     camera_jpeg_quality: int = 85
     camera_pixel_format: str = "mono8"
 

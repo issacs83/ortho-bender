@@ -18,6 +18,11 @@ python-dotenv==1.0.1
 # WebSocket support (included in uvicorn[standard] via websockets)
 websockets==13.1
 
+# Binary serialisation for the diagnostic WebSocket (?format=msgpack)
+# Reduces /ws/motor/diag bandwidth by ~80 % vs JSON.
+# Gracefully optional — the server falls back to JSON if not installed.
+msgpack==1.1.0
+
 # Development utilities
 httpx==0.27.2         # for integration tests (async HTTP client)
 pytest==8.3.3

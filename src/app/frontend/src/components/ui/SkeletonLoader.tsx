@@ -1,39 +1,29 @@
-/**
- * SkeletonLoader.tsx — Shimmer animation placeholder for loading states.
- */
-
-import type { CSSProperties } from 'react';
+import { cn } from '../../lib/cn';
 
 interface SkeletonLoaderProps {
   lines?: number;
-  height?: number;
-  style?: CSSProperties;
+  className?: string;
 }
 
-export function SkeletonLoader({ lines = 4, height = 18, style }: SkeletonLoaderProps) {
+// gradient shimmer — backgroundImage/backgroundSize use CSS vars; cannot be expressed as Tailwind utility
+const shimmerStyle = {
+  backgroundImage: 'linear-gradient(90deg, var(--bg-surface-2) 25%, var(--bg-surface-3) 50%, var(--bg-surface-2) 75%)',
+  backgroundSize: '200% 100%',
+} as const;
+
+export function SkeletonLoader({ lines = 3, className }: SkeletonLoaderProps) {
   return (
-    <>
-      <style>{`
-        @keyframes shimmer {
-          0% { background-position: -400px 0; }
-          100% { background-position: 400px 0; }
-        }
-      `}</style>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, ...style }}>
-        {Array.from({ length: lines }).map((_, i) => (
-          <div
-            key={i}
-            style={{
-              height,
-              borderRadius: 4,
-              background: 'linear-gradient(90deg, #1e293b 25%, #263548 50%, #1e293b 75%)',
-              backgroundSize: '800px 100%',
-              animation: 'shimmer 1.5s infinite',
-              width: i === lines - 1 ? '60%' : '100%',
-            }}
-          />
-        ))}
-      </div>
-    </>
+    <div className={cn('flex flex-col gap-3', className)}>
+      {Array.from({ length: lines }, (_, i) => (
+        <div
+          key={i}
+          className={cn(
+            'h-4 rounded bg-surface-2 animate-skeleton',
+            i === lines - 1 ? 'w-3/5' : 'w-full',
+          )}
+          style={shimmerStyle}
+        />
+      ))}
+    </div>
   );
 }

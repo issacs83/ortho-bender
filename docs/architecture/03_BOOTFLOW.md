@@ -15,9 +15,14 @@ setenv serverip 192.168.77.1
 setenv gatewayip 192.168.77.1
 setenv netmask 255.255.255.0
 
-setenv boot_nfs_tftp 'tftp ${loadaddr} imx8mp/Image; tftp ${fdt_addr_r} imx8mp/imx8mp-evk-rpmsg.dtb; setenv bootargs console=ttymxc1,115200 root=/dev/nfs nfsroot=${serverip}:/srv/nfs/imx8mp-rootfs,v3,tcp ip=${ipaddr}:${serverip}:${gatewayip}:${netmask}:imx8mpevk:eth0:off rw; booti ${loadaddr} - ${fdt_addr_r}'
+setenv boot_nfs_tftp 'tftp ${loadaddr} imx8mp/Image; tftp ${fdt_addr_r} imx8mp/imx8mp-evk-rpmsg.dtb; setenv bootargs console=ttymxc1,115200 root=/dev/nfs nfsroot=${serverip}:/srv/nfs/imx8mp-rootfs,v3,tcp rw; booti ${loadaddr} - ${fdt_addr_r}'
 
 setenv boot_emmc_local 'fatload mmc 2:1 ${loadaddr} Image; fatload mmc 2:1 ${fdt_addr_r} imx8mp-evk-rpmsg.dtb; setenv bootargs console=ttymxc1,115200 root=/dev/mmcblk2p2 rootwait rw; booti ${loadaddr} - ${fdt_addr_r}'
+
+# NOTE: kernel ip= parameter removed from all profiles.
+# eth0 static IP (192.168.77.2/24) is handled by systemd-networkd
+# via /etc/systemd/network/10-eth0.network (installed by Yocto image).
+# NFS boot uses serverip/ipaddr env vars set above (U-Boot TFTP uses those directly).
 
 setenv boot_auto 'run boot_nfs_tftp || run boot_emmc_local'
 ```

@@ -26,13 +26,12 @@ import os
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Query, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .routers import bending, cam, camera, motor, system, wifi, diag_router
-from .services.camera_service import CameraService
+from .routers import bending, cam, camera, docs, motor, system, wifi, diag_router
 from .services.diag_service import DiagService
 from .services.ipc_client import IpcClient
 from .services.motor_backend import MockMotorBackend
@@ -75,9 +74,26 @@ async def lifespan(app: FastAPI):
         await ipc.connect()
     app.state.ipc_client = ipc
 
-    # Services — camera always uses real hardware when mock_mode=false
-    motor_svc  = MotorService(ipc)
-    camera_svc = CameraService(mock=cfg.mock_mode)
+    # Motor service
+    motor_svc = MotorService(ipc)
+
+    # Camera backend — select via OB_CAMERA_BACKEND env var
+    if cfg.camera_backend == "vmbpy" and not cfg.mock_mode:
+        try:
+            from .services.camera_backends.vmbpy_backend import VmbPyCameraBackend
+            camera_backend = VmbPyCameraBackend()
+            log.info("Camera backend: VmbPy (Allied Vision)")
+        except ImportError:
+            log.warning("VmbPy not available — falling back to mock camera")
+            from .services.camera_backends.mock_backend import MockCameraBackend
+            camera_backend = MockCameraBackend()
+    else:
+        from .services.camera_backends.mock_backend import MockCameraBackend
+        camera_backend = MockCameraBackend()
+        log.info("Camera backend: Mock")
+
+    from .services.camera_service import CameraService
+    camera_svc = CameraService(camera_backend)
     await camera_svc.connect()
 
     app.state.motor_service  = motor_svc
@@ -101,6 +117,12 @@ async def lifespan(app: FastAPI):
     diag_svc = DiagService(diag_backend)
     app.state.diag_service = diag_svc
 
+    # Probe motor drivers at startup — identify which chips are connected
+    driver_probe = await diag_svc.probe_drivers()
+    app.state.driver_probe = {r.driver: r.model_dump() for r in driver_probe}
+    connected_count = sum(1 for r in driver_probe if r.connected)
+    log.info("Driver probe complete: %d/%d connected", connected_count, len(driver_probe))
+
     # WebSocket manager + background tasks
     ws_manager = WsManager()
 
@@ -113,13 +135,24 @@ async def lifespan(app: FastAPI):
 
     async def _camera_provider():
         try:
-            jpeg = await camera_svc.capture_jpeg(quality=cfg.camera_jpeg_quality)
+            frame = await camera_svc.capture()
+            jpeg = frame.to_jpeg(quality=cfg.camera_jpeg_quality)
             if not jpeg:
                 return None
+            meta = frame.meta
             return {
                 "jpeg":   jpeg,
-                "width":  camera_svc._width or 0,
-                "height": camera_svc._height or 0,
+                "width":  meta.width,
+                "height": meta.height,
+                "meta": {
+                    "timestamp_us":  meta.timestamp_us,
+                    "exposure_us":   meta.exposure_us,
+                    "gain_db":       meta.gain_db,
+                    "temperature_c": meta.temperature_c,
+                    "fps_actual":    meta.fps_actual,
+                    "width":         meta.width,
+                    "height":        meta.height,
+                },
             }
         except Exception:
             return None
@@ -128,7 +161,8 @@ async def lifespan(app: FastAPI):
         try:
             return {
                 "ipc_connected":    ipc.connected,
-                "camera_connected": camera_svc._connected,
+                "camera_connected": camera_svc.is_connected,
+                "driver_probe":     app.state.driver_probe,
             }
         except Exception:
             return None
@@ -144,6 +178,7 @@ async def lifespan(app: FastAPI):
         camera_provider=_camera_provider,
         system_provider=_system_provider,
         diag_provider=_diag_provider,
+        camera_fps=cfg.camera_fps,
     )
     app.state.ws_manager = ws_manager
 
@@ -165,6 +200,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     cfg = get_settings()
 
+    # Disable built-in docs — we serve custom routes with local assets (offline)
     application = FastAPI(
         title="Ortho-Bender SDK API",
         description=(
@@ -172,10 +208,43 @@ def create_app() -> FastAPI:
             "Provides hardware-agnostic control of motor axes, camera, and B-code bending sequences."
         ),
         version="0.1.0",
-        docs_url="/docs",
-        redoc_url="/redoc",
+        docs_url=None,
+        redoc_url=None,
         lifespan=lifespan,
     )
+
+    # Serve Swagger/ReDoc assets locally (no CDN dependency — works offline)
+    from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+
+    _static_dir = os.path.join(os.path.dirname(__file__), "static")
+    _has_local = os.path.isdir(_static_dir)
+    if _has_local:
+        application.mount(
+            "/static-api",
+            StaticFiles(directory=_static_dir),
+            name="api-static",
+        )
+
+    _sw_js = "/static-api/swagger-ui/swagger-ui-bundle.js" if _has_local else "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"
+    _sw_css = "/static-api/swagger-ui/swagger-ui.css" if _has_local else "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css"
+    _rd_js = "/static-api/redoc/redoc.standalone.js" if _has_local else "https://cdn.jsdelivr.net/npm/redoc@2/bundles/redoc.standalone.js"
+
+    @application.get("/docs", include_in_schema=False)
+    async def swagger_ui():
+        return get_swagger_ui_html(
+            openapi_url=application.openapi_url,
+            title=application.title + " — Swagger UI",
+            swagger_js_url=_sw_js,
+            swagger_css_url=_sw_css,
+        )
+
+    @application.get("/redoc", include_in_schema=False)
+    async def redoc_ui():
+        return get_redoc_html(
+            openapi_url=application.openapi_url,
+            title=application.title + " — ReDoc",
+            redoc_js_url=_rd_js,
+        )
 
     # CORS — allow all origins in development; restrict in production via env
     application.add_middleware(
@@ -194,6 +263,7 @@ def create_app() -> FastAPI:
     application.include_router(system.router)
     application.include_router(wifi.router)
     application.include_router(diag_router.router)
+    application.include_router(docs.router)
 
     # WebSocket endpoints
     @application.websocket("/ws/motor")
@@ -209,8 +279,19 @@ def create_app() -> FastAPI:
         await application.state.ws_manager.handle_system(ws)
 
     @application.websocket("/ws/motor/diag")
-    async def ws_motor_diag(ws: WebSocket):
-        await application.state.ws_manager.handle_motor_diag(ws)
+    async def ws_motor_diag(
+        ws: WebSocket,
+        format: str = Query(default="json", alias="format"),
+    ):
+        """
+        Diagnostic WebSocket — 200 Hz StallGuard2 / DRV_STATUS stream.
+
+        Query parameters:
+          ``?format=msgpack``  — binary MessagePack frames (~80 % smaller).
+          ``?format=json``     — JSON text frames (default, backward compatible).
+        """
+        use_msgpack = format.lower() == "msgpack"
+        await application.state.ws_manager.handle_motor_diag(ws, use_msgpack=use_msgpack)
 
     # Health probe (used by systemd + load balancers)
     @application.get("/health", tags=["meta"])

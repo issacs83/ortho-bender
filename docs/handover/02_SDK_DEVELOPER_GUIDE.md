@@ -19,10 +19,10 @@
 │  │                                                  │  │
 │  │  ├─ REST  /api/system/*   /api/motor/*           │  │
 │  │  │        /api/camera/*   /api/bending/*         │  │
-│  │  │        /api/wifi/*     /api/simulation/*      │  │
+│  │  │        /api/wifi/*     /api/motor/diag/*      │  │
 │  │  │                                               │  │
 │  │  └─ WS    /ws/motor   /ws/camera                 │  │
-│  │           /ws/system  /ws/bending                │  │
+│  │           /ws/system  /ws/motor/diag             │  │
 │  └──────────────────┬───────────────────────────────┘  │
 │                     │                                  │
 │          ┌──────────┴──────────┐                       │
@@ -112,7 +112,8 @@ status().then(console.log);
 | `/api/motor` | 4축 모터 직접 제어 (개발자 모드) | `POST /enable`, `POST /jog`, `POST /home`, `POST /stop` |
 | `/api/camera` | Vimba X USB3 Vision 카메라 | `POST /connect`, `POST /grab`, `GET /stream`, `GET /frame` |
 | `/api/bending` | B-code 시퀀스 업로드/실행 | `POST /upload`, `POST /start`, `POST /pause`, `GET /progress` |
-| `/api/simulation` | 3D 곡선 → B-code 변환, 스프링백 미리보기 | `POST /convert`, `POST /preview` |
+| `/api/cam` | 3D 곡선 → B-code 변환, 스프링백 미리보기 | `POST /generate`, `POST /execute` |
+| `/api/motor/diag` | TMC 레지스터 진단 (테스트 벤치) | `GET /backend`, `GET /spi-test`, `GET /register/{d}/{a}`, `GET /dump/{d}` |
 | `/api/wifi` | AP 스캔/연결 (STA) | `GET /scan`, `GET /status`, `POST /connect`, `POST /disconnect` |
 
 전체 엔드포인트 상세(request/response 스키마, 에러 코드, 예시 호출)는 **`../sdk/02_API_REFERENCE.md`**를 참조하세요.
@@ -125,10 +126,10 @@ status().then(console.log);
 
 | 채널 | 메시지 타입 | 주기 | 용도 |
 |------|------------|------|------|
-| `/ws/system` | system_status | 1 Hz | 헬스, 알람 |
-| `/ws/motor` | motor_state | 20 Hz | 4축 위치/속도/상태 |
-| `/ws/camera` | camera_frame (base64 JPEG) | 5~30 FPS | 실시간 프리뷰 |
-| `/ws/bending` | bending_progress | 이벤트 기반 | 시퀀스 진행률, 스텝 완료 |
+| `/ws/system` | heartbeat | 1 Hz | 헬스, 알람 |
+| `/ws/motor` | motor_status | 10 Hz | 4축 위치/속도/상태 |
+| `/ws/camera` | camera_frame (base64 JPEG) | ~15 FPS | 실시간 프리뷰 |
+| `/ws/motor/diag` | diag_status | 200 Hz | TMC StallGuard2 + 폴트 모니터링 |
 
 ### Python 예시 (`websockets` 패키지)
 ```python
@@ -197,6 +198,58 @@ Python / cURL 예제는 저장소 내 `src/app/sdk-examples/` 에 있습니다:
 
 ---
 
+## 5.5 진단 테스트 워크플로우 (테스트 벤치)
+
+DRI0035 (TMC260C) 및 TMC5072-BOB 하드웨어를 EVK에 연결한 후 SPI 통신을 검증하는 절차:
+
+### Step 1: 백엔드 모드 확인
+```bash
+curl -s http://192.168.77.2:8000/api/motor/diag/backend | jq
+```
+`"backend": "spidev"` 인지 확인. `"mock"` 이면 `OB_MOTOR_BACKEND=spidev` 환경변수 설정 후 서비스 재시작.
+
+### Step 2: SPI 연결 테스트
+```bash
+curl -s http://192.168.77.2:8000/api/motor/diag/spi-test | jq
+```
+3개 드라이버(`tmc260c_0`, `tmc260c_1`, `tmc5072`)의 `ok` 필드가 모두 `true`인지 확인.
+실패 시 SPI 배선, 전원(VIO/VMot), CS 핀 연결을 점검.
+
+### Step 3: 레지스터 읽기/쓰기
+```bash
+# TMC260C #0 DRVCTRL 읽기
+curl -s http://192.168.77.2:8000/api/motor/diag/register/tmc260c_0/0x00 | jq
+
+# TMC5072 GCONF (0x00) 읽기
+curl -s http://192.168.77.2:8000/api/motor/diag/register/tmc5072/0x00 | jq
+
+# TMC260C #0 레지스터 쓰기
+curl -s -X POST http://192.168.77.2:8000/api/motor/diag/register/tmc260c_0/0x00 \
+  -H 'Content-Type: application/json' -d '{"value": 0}' | jq
+```
+
+### Step 4: 레지스터 전체 덤프
+```bash
+curl -s http://192.168.77.2:8000/api/motor/diag/dump/tmc260c_0 | jq
+```
+
+### Step 5: 실시간 모니터링
+브라우저에서 `http://192.168.77.2:8000/` 접속 → Diagnostics 탭:
+- **SPI Test**: 연결 상태 + 지연시간 확인
+- **StallGuard Chart**: TMC260C 0/1 SG2 실시간 그래프 (200 Hz)
+- **Register Inspector**: 레지스터 직접 읽기/쓰기
+
+또는 WebSocket으로 직접 구독:
+```javascript
+const ws = new WebSocket("ws://192.168.77.2:8000/ws/motor/diag");
+ws.onmessage = (e) => {
+  const data = JSON.parse(e.data);
+  console.log(data.drivers.tmc260c_0?.sg_result);
+};
+```
+
+---
+
 ## 6. 에러 핸들링 규약
 
 ### 6.1 에러 envelope
@@ -255,8 +308,9 @@ Python / cURL 예제는 저장소 내 `src/app/sdk-examples/` 에 있습니다:
 | 엔드포인트 상세/스키마 | `../sdk/02_API_REFERENCE.md` |
 | 아키텍처 / 기술 스택 | `../architecture/01_ARCHITECTURE.md` |
 | HW 추상화 계층 | `../architecture/02_HARDWARE_ABSTRACTION.md` |
-| Mock 모드 사용법 | `../sdk/03_MOCK_MODE.md` |
-| 배포/빌드 스크립트 | `../sdk/04_DEPLOYMENT.md` |
+| Mock 모드 + 3-mode 백엔드 | `../sdk/03_MOCK_MODE.md` |
+| 배포 + spidev 설정 | `../sdk/04_DEPLOYMENT.md` |
+| 테스트 벤치 HW 연결 | `../hardware/04_TEST_BENCH_CONNECTION.md` |
 | 문제 해결 | `../sdk/05_TROUBLESHOOTING.md` |
 | B-code 스펙 | `../algorithm/02_BCODE_SPEC.md` |
 | CAD/CAM 워크플로우 | `../algorithm/01_CAD_CAM_GUIDE.md` |

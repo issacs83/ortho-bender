@@ -1,11 +1,11 @@
 """
 spi_backend.py — Linux spidev + gpiod motor backend for test bench.
 
-Uses /dev/spidevX.Y for SPI transfers and gpiod for GPIO control.
+Uses /dev/spidevX.Y for SPI transfers and gpiod v2 API for GPIO control.
 STEP pulse generation uses a blocking sleep loop (adequate for bench
 test speeds up to 1 kHz; production uses M7 GPT timer ISR).
 
-Requires: python3-spidev, python3-gpiod (on target EVK)
+Requires: python3-spidev, python3-gpiod >= 2.0 (on target EVK)
 
 IEC 62304 SW Class: B
 """
@@ -24,23 +24,23 @@ log = logging.getLogger(__name__)
 # i.MX8MP GPIO chip mapping for gpiod
 # GPIO3_IOxx -> gpiochip2, GPIO5_IOxx -> gpiochip4
 _GPIO_CHIP_MAP = {
-    'GPIO3': 'gpiochip2',
-    'GPIO5': 'gpiochip4',
+    'GPIO3': '/dev/gpiochip2',
+    'GPIO5': '/dev/gpiochip4',
 }
 
 
 def _parse_gpio(pin: str) -> tuple[str, int]:
-    """Parse 'GPIO3_IO19' -> ('gpiochip2', 19)."""
+    """Parse 'GPIO3_IO19' -> ('/dev/gpiochip2', 19)."""
     parts = pin.split('_IO')
-    chip_name = _GPIO_CHIP_MAP.get(parts[0])
-    if chip_name is None:
+    chip_path = _GPIO_CHIP_MAP.get(parts[0])
+    if chip_path is None:
         raise ValueError(f"Unknown GPIO bank: {parts[0]}")
     offset = int(parts[1])
-    return chip_name, offset
+    return chip_path, offset
 
 
 class SpidevMotorBackend(MotorBackend):
-    """Hardware backend using Linux spidev for SPI and gpiod for GPIO."""
+    """Hardware backend using Linux spidev for SPI and gpiod v2 for GPIO."""
 
     def __init__(
         self,
@@ -62,7 +62,10 @@ class SpidevMotorBackend(MotorBackend):
             'dir': gpio_dir,
         }
         self._spi: Optional[object] = None
-        self._gpio_lines: dict[str, object] = {}
+        # gpiod v2: LineRequest objects keyed by chip path
+        self._gpio_requests: dict[str, object] = {}
+        # Map logical name -> (chip_path, offset) for value access
+        self._gpio_map: dict[str, tuple[str, int]] = {}
         self.positions: dict[int, int] = {0: 0, 1: 0, 2: 0, 3: 0}
 
     async def open(self) -> None:
@@ -73,8 +76,15 @@ class SpidevMotorBackend(MotorBackend):
             spi = spidev.SpiDev()
             spi.open(bus, dev)
             spi.max_speed_hz = self._spi_speed
-            spi.mode = 3  # CPOL=1, CPHA=1
             spi.bits_per_word = 8
+            # TMC requires SPI Mode 3 (CPOL=1, CPHA=1).
+            # On i.MX8MP ECSPI, the kernel may include CS_HIGH (0x4) based on
+            # DTS cs-gpios polarity, making mode readback 0x7 instead of 0x3.
+            try:
+                spi.mode = 3
+            except OSError:
+                spi.mode = 3 | 0x04  # mode 3 + CS_HIGH
+                log.warning("SPI mode 3 failed, set mode 0x7 (mode 3 + CS_HIGH)")
             self._spi = spi
             log.info("SPI opened: %s @ %d Hz", self._spi_device, self._spi_speed)
         except ImportError:
@@ -83,27 +93,61 @@ class SpidevMotorBackend(MotorBackend):
 
         try:
             import gpiod
+            from gpiod.line import Direction, Value
+
+            # Group GPIO lines by chip for efficient request
+            chip_lines: dict[str, dict[str, int]] = {}  # chip_path -> {name: offset}
             for name, gpio_str in self._gpio_names.items():
-                chip_name, offset = _parse_gpio(gpio_str)
-                chip = gpiod.Chip(chip_name)
-                line = chip.get_line(offset)
-                config = gpiod.LineRequest()
-                config.consumer = "ortho-bender-diag"
-                config.request_type = gpiod.LINE_REQ_DIR_OUT
-                line.request(config)
-                line.set_value(1 if name.startswith('cs') else 0)  # CS idle high
-                self._gpio_lines[name] = line
-                log.info("GPIO %s (%s) configured as output", gpio_str, name)
+                chip_path, offset = _parse_gpio(gpio_str)
+                self._gpio_map[name] = (chip_path, offset)
+                chip_lines.setdefault(chip_path, {})[name] = offset
+
+            for chip_path, lines in chip_lines.items():
+                offsets = list(lines.values())
+                names = list(lines.keys())
+
+                # Build per-line output config with initial values
+                line_cfg = {
+                    offset: gpiod.LineSettings(
+                        direction=Direction.OUTPUT,
+                        output_value=Value.ACTIVE if name.startswith('cs') else Value.INACTIVE,
+                    )
+                    for name, offset in zip(names, offsets)
+                }
+
+                req = gpiod.request_lines(
+                    chip_path,
+                    consumer="ortho-bender-diag",
+                    config=line_cfg,
+                )
+                self._gpio_requests[chip_path] = req
+                log.info("GPIO chip %s: requested lines %s", chip_path,
+                         {n: o for n, o in zip(names, offsets)})
+
         except ImportError:
-            log.error("gpiod module not available — install python3-gpiod")
+            log.error("gpiod module not available — install python3-gpiod >= 2.0")
             raise
+
+    def _gpio_set(self, name: str, high: bool) -> None:
+        """Set a GPIO line by logical name."""
+        from gpiod.line import Value
+        chip_path, offset = self._gpio_map[name]
+        req = self._gpio_requests[chip_path]
+        req.set_value(offset, Value.ACTIVE if high else Value.INACTIVE)
+
+    def _gpio_get(self, name: str) -> bool:
+        """Read a GPIO line by logical name."""
+        from gpiod.line import Value
+        chip_path, offset = self._gpio_map[name]
+        req = self._gpio_requests[chip_path]
+        return req.get_value(offset) == Value.ACTIVE
 
     async def close(self) -> None:
         """Release SPI and GPIO resources."""
         if self._spi:
             self._spi.close()
-        for line in self._gpio_lines.values():
-            line.release()
+        for req in self._gpio_requests.values():
+            req.release()
 
     @staticmethod
     def _parse_spidev_path(path: str) -> tuple[int, int]:
@@ -119,31 +163,30 @@ class SpidevMotorBackend(MotorBackend):
 
         # CS0 is hardware-controlled by spidev; CS1/CS2 are GPIO
         if cs == 1:
-            self._gpio_lines['cs1'].set_value(0)
+            self._gpio_set('cs1', False)
         elif cs == 2:
-            self._gpio_lines['cs2'].set_value(0)
+            self._gpio_set('cs2', False)
 
         try:
             result = self._spi.xfer2(list(data))
             return bytes(result)
         finally:
             if cs == 1:
-                self._gpio_lines['cs1'].set_value(1)
+                self._gpio_set('cs1', True)
             elif cs == 2:
-                self._gpio_lines['cs2'].set_value(1)
+                self._gpio_set('cs2', True)
 
     async def set_gpio(self, pin: str, value: bool) -> None:
-        # Find the line by GPIO name match
         for name, gpio_str in self._gpio_names.items():
-            if gpio_str == pin and name in self._gpio_lines:
-                self._gpio_lines[name].set_value(int(value))
+            if gpio_str == pin and name in self._gpio_map:
+                self._gpio_set(name, value)
                 return
         log.warning("GPIO %s not configured", pin)
 
     async def get_gpio(self, pin: str) -> bool:
         for name, gpio_str in self._gpio_names.items():
-            if gpio_str == pin and name in self._gpio_lines:
-                return bool(self._gpio_lines[name].get_value())
+            if gpio_str == pin and name in self._gpio_map:
+                return self._gpio_get(name)
         return False
 
     async def pulse_step(self, axis: int, count: int,
@@ -153,20 +196,18 @@ class SpidevMotorBackend(MotorBackend):
         Runs in a thread to avoid blocking the asyncio event loop.
         """
         step_key = 'feed_step' if axis == 0 else 'bend_step'
-        step_line = self._gpio_lines.get(step_key)
-        dir_line = self._gpio_lines.get('dir')
-        if not step_line or not dir_line:
+        if step_key not in self._gpio_map or 'dir' not in self._gpio_map:
             log.error("GPIO lines not available for axis %d", axis)
             return
 
         def _pulse_blocking():
-            dir_line.set_value(1 if direction > 0 else 0)
+            self._gpio_set('dir', direction > 0)
             time.sleep(0.000005)  # 5 us direction setup time
             half_period = 1.0 / (2 * freq_hz)
             for _ in range(count):
-                step_line.set_value(1)
+                self._gpio_set(step_key, True)
                 time.sleep(half_period)
-                step_line.set_value(0)
+                self._gpio_set(step_key, False)
                 time.sleep(half_period)
 
         await asyncio.to_thread(_pulse_blocking)

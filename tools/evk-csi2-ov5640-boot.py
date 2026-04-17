@@ -59,8 +59,9 @@ UBOOT_COMMANDS = [
     ("fdt print /soc@0/bus@30800000/i2c@30a40000/ov5640_mipi@3c reset-gpios", 1),
     ("fdt print /soc@0/bus@30800000/i2c@30a40000/ov5640_mipi@3c status", 1),
     # Set boot args
-    ("setenv bootargs console=ttymxc1,115200 root=/dev/mmcblk1p2 rootwait rw "
-     "ip=192.168.77.2::192.168.77.1:255.255.255.0:imx8mp-quarkers-evk:eth0:off", 1),
+    # ip= removed — systemd-networkd handles eth0 static IP (192.168.77.2/24)
+    # to avoid ~100s boot delay when Ethernet cable is not connected.
+    ("setenv bootargs console=ttymxc1,115200 root=/dev/mmcblk1p2 rootwait rw", 1),
     # Boot
     ("booti 0x40480000 - 0x43000000", 0),
 ]

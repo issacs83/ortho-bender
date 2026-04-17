@@ -70,10 +70,13 @@ def _mock_scan_response() -> dict:
 # Helpers
 # ---------------------------------------------------------------------------
 
+WPA_CLI = "/usr/sbin/wpa_cli"
+
+
 async def _run_wpa_cli(*args: str) -> tuple[str, int]:
     """Run wpa_cli command and return (stdout, returncode)."""
     proc = await asyncio.create_subprocess_exec(
-        "wpa_cli", "-i", IFACE, *args,
+        WPA_CLI, "-i", IFACE, *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -98,8 +101,8 @@ async def _ensure_wpa_supplicant() -> bool:
     # Attempt to start wpa_supplicant
     log.info("wpa_supplicant not running — attempting to start")
     start = await asyncio.create_subprocess_exec(
-        "wpa_supplicant", "-B", "-i", IFACE,
-        "-c", "/etc/wpa_supplicant.conf",
+        "/usr/sbin/wpa_supplicant", "-B", "-i", IFACE,
+        "-c", "/etc/wpa_supplicant/wpa_supplicant-mlan0.conf",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -129,6 +132,29 @@ def _parse_flags(flags: str) -> str:
 class WifiConnectRequest(BaseModel):
     ssid: str
     password: str | None = None
+
+
+async def _find_network_by_ssid(ssid: str) -> str | None:
+    """Return the wpa_cli network id for a saved SSID, or None."""
+    result, _ = await _run_wpa_cli("list_networks")
+    for line in result.split("\n")[1:]:  # skip header
+        parts = line.split("\t")
+        if len(parts) >= 2 and parts[1] == ssid:
+            return parts[0]
+    return None
+
+
+async def _request_dhcp() -> None:
+    """Request DHCP lease on the STA interface."""
+    try:
+        dhcp = await asyncio.create_subprocess_exec(
+            "udhcpc", "-i", IFACE, "-n", "-q",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(dhcp.communicate(), timeout=10)
+    except (asyncio.TimeoutError, FileNotFoundError):
+        log.warning("udhcpc unavailable or timed out on %s", IFACE)
 
 
 # ---------------------------------------------------------------------------
@@ -235,20 +261,37 @@ async def wifi_connect(req: WifiConnectRequest):
     if not await _ensure_wpa_supplicant():
         return {"success": False, "error": "wpa_supplicant not available"}
 
-    # Add a new network entry
-    net_id, rc = await _run_wpa_cli("add_network")
-    if rc != 0 or not net_id.isdigit():
-        return {"success": False, "error": f"add_network failed: {net_id}"}
+    # Check if a saved network with the same SSID already exists
+    existing_id = await _find_network_by_ssid(req.ssid)
 
-    await _run_wpa_cli("set_network", net_id, "ssid", f'"{req.ssid}"')
-
-    if req.password:
-        await _run_wpa_cli("set_network", net_id, "psk", f'"{req.password}"')
+    if existing_id is not None:
+        net_id = existing_id
+        # Update password if provided
+        if req.password:
+            await _run_wpa_cli("set_network", net_id, "psk", f'"{req.password}"')
+        elif not req.password:
+            await _run_wpa_cli("set_network", net_id, "key_mgmt", "NONE")
     else:
-        await _run_wpa_cli("set_network", net_id, "key_mgmt", "NONE")
+        # Add a new network entry
+        net_id_str, rc = await _run_wpa_cli("add_network")
+        if rc != 0 or not net_id_str.isdigit():
+            return {"success": False, "error": f"add_network failed: {net_id_str}"}
+        net_id = net_id_str
 
+        await _run_wpa_cli("set_network", net_id, "ssid", f'"{req.ssid}"')
+        if req.password:
+            await _run_wpa_cli("set_network", net_id, "psk", f'"{req.password}"')
+        else:
+            await _run_wpa_cli("set_network", net_id, "key_mgmt", "NONE")
+
+    # Enable and connect — use enable_network (not select_network which
+    # disables all others) + reassociate to trigger connection.
     await _run_wpa_cli("enable_network", net_id)
-    await _run_wpa_cli("select_network", net_id)
+    await _run_wpa_cli("disconnect")
+    await asyncio.sleep(0.3)
+    await _run_wpa_cli("reconnect")
+
+    # Persist to config so this network survives reboot
     await _run_wpa_cli("save_config")
 
     # Wait for wpa_supplicant to associate
@@ -259,15 +302,7 @@ async def wifi_connect(req: WifiConnectRequest):
 
     # Request DHCP lease if newly connected
     if connected:
-        try:
-            dhcp = await asyncio.create_subprocess_exec(
-                "udhcpc", "-i", IFACE, "-n", "-q",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(dhcp.communicate(), timeout=10)
-        except (asyncio.TimeoutError, FileNotFoundError):
-            log.warning("udhcpc unavailable or timed out on %s", IFACE)
+        await _request_dhcp()
 
     return {
         "success": True,
@@ -283,3 +318,44 @@ async def wifi_disconnect():
 
     await _run_wpa_cli("disconnect")
     return {"success": True, "data": {"connected": False}}
+
+
+@router.get("/saved")
+async def wifi_saved_networks():
+    """List saved WiFi networks (credentials stored on board)."""
+    if _is_mock():
+        return {"success": True, "data": []}
+
+    if not await _ensure_wpa_supplicant():
+        return {"success": False, "error": "wpa_supplicant not available"}
+
+    result, _ = await _run_wpa_cli("list_networks")
+    networks: list[dict] = []
+    for line in result.split("\n")[1:]:
+        parts = line.split("\t")
+        if len(parts) >= 4:
+            networks.append({
+                "id": parts[0],
+                "ssid": parts[1],
+                "bssid": parts[2] if parts[2] != "any" else None,
+                "flags": parts[3],
+            })
+    return {"success": True, "data": networks}
+
+
+@router.post("/forget")
+async def wifi_forget(req: WifiConnectRequest):
+    """Remove a saved WiFi network by SSID."""
+    if _is_mock():
+        return {"success": True, "data": {"removed": False}}
+
+    if not await _ensure_wpa_supplicant():
+        return {"success": False, "error": "wpa_supplicant not available"}
+
+    net_id = await _find_network_by_ssid(req.ssid)
+    if net_id is None:
+        return {"success": True, "data": {"removed": False, "reason": "not found"}}
+
+    await _run_wpa_cli("remove_network", net_id)
+    await _run_wpa_cli("save_config")
+    return {"success": True, "data": {"removed": True, "ssid": req.ssid}}

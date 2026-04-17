@@ -303,6 +303,125 @@ Vimba X SDK 를 정상 종료 시퀀스로 닫습니다 (frame release → `cam.
 
 ---
 
+## 7.5 `/api/motor/diag` — TMC 레지스터 진단
+
+모터 드라이버(TMC260C x2, TMC5072)에 대한 저수준 SPI 레지스터 접근.
+테스트 벤치 진단 및 드라이버 구성 검증용.
+
+### GET `/api/motor/diag/backend`
+현재 모터 백엔드 모드와 등록된 드라이버 목록.
+
+**Response (data)**
+```json
+{
+  "backend": "spidev",
+  "drivers": ["tmc260c_0", "tmc260c_1", "tmc5072"]
+}
+```
+- `backend`: `"mock" | "spidev" | "m7"`
+
+### GET `/api/motor/diag/spi-test`
+모든 드라이버에 SPI 통신 테스트 (ping).
+
+**Response (data)**
+```json
+{
+  "results": [
+    { "driver": "tmc260c_0", "ok": true, "latency_us": 42.3, "error": null },
+    { "driver": "tmc260c_1", "ok": true, "latency_us": 38.1, "error": null },
+    { "driver": "tmc5072",   "ok": false, "latency_us": 2001.0, "error": "SPI timeout" }
+  ]
+}
+```
+
+### GET `/api/motor/diag/register/{driver}/{addr}`
+단일 레지스터 읽기.
+
+- `driver`: `tmc260c_0 | tmc260c_1 | tmc5072`
+- `addr`: 레지스터 주소 (10진수 또는 `0x` 접두 16진수)
+
+**Response (data)**
+```json
+{
+  "driver": "tmc260c_0",
+  "addr": "0x04",
+  "value": 65749,
+  "value_hex": "0x000100D5"
+}
+```
+
+### POST `/api/motor/diag/register/{driver}/{addr}`
+단일 레지스터 쓰기.
+
+**Request body**
+```json
+{ "value": 65749 }
+```
+
+**Response**: 읽기와 동일 형식 (write-back 값).
+
+### GET `/api/motor/diag/dump/{driver}`
+지정 드라이버의 모든 상태 레지스터 덤프.
+
+**Response (data)**
+```json
+{
+  "driver": "tmc260c_0",
+  "registers": {
+    "DRVCTRL":  "0x00000000",
+    "CHOPCONF": "0x000901B5",
+    "SMARTEN":  "0x000A8202",
+    "SGCSCONF": "0x000D0505",
+    "DRVCONF":  "0x000EF040"
+  }
+}
+```
+
+### `/ws/motor/diag` — 200 Hz 진단 스트림
+
+StallGuard2 + 드라이버 상태를 200 Hz (5 ms 간격)로 브로드캐스트.
+TMC260C 0/1에 대한 실시간 로드/폴트 모니터링용.
+
+```json
+{
+  "type": "diag_status",
+  "timestamp_us": 1234567890,
+  "drivers": {
+    "tmc260c_0": {
+      "sg_result": 245,
+      "stst": false,
+      "ot": false,
+      "otpw": false,
+      "s2ga": false,
+      "s2gb": false,
+      "ola": false,
+      "olb": false
+    },
+    "tmc260c_1": null
+  }
+}
+```
+- `sg_result`: StallGuard2 측정값 (0~1023, 높을수록 부하 적음)
+- `stst`: standstill indicator
+- `ot`: overtemperature shutdown
+- `otpw`: overtemperature pre-warning
+- `s2ga/s2gb`: short to ground (coil A/B)
+- `ola/olb`: open load (coil A/B)
+- 드라이버 값이 `null`이면 해당 드라이버 통신 실패
+
+**에러 코드** (진단 전용)
+
+| Code | 언제 | 조치 |
+|------|------|------|
+| `DIAG_BACKEND_ERROR` | 백엔드 정보 조회 실패 | 서비스 재시작 |
+| `SPI_TEST_ERROR` | SPI 테스트 실행 실패 | 배선/전원 확인 |
+| `INVALID_PARAM` | 잘못된 driver 이름 또는 주소 | `tmc260c_0 / tmc260c_1 / tmc5072` 사용 |
+| `DIAG_READ_ERROR` | 레지스터 읽기 SPI 실패 | SPI 배선 확인 |
+| `DIAG_WRITE_ERROR` | 레지스터 쓰기 SPI 실패 | SPI 배선 확인 |
+| `DIAG_DUMP_ERROR` | 덤프 실패 | 드라이버 전원 확인 |
+
+---
+
 ## 8. 에러 코드 카탈로그
 
 | Code | HTTP | 언제 | 조치 |
@@ -324,7 +443,12 @@ Vimba X SDK 를 정상 종료 시퀀스로 닫습니다 (frame release → `cam.
 
 ## 9. Rate Limiting
 
-현재 제한 없음. WebSocket 은 서버 측에서 broadcast 를 10 Hz 로 스로틀링.
+현재 제한 없음. WebSocket 은 서버 측에서 채널별로 스로틀링:
+- `/ws/motor`: 10 Hz (100 ms)
+- `/ws/camera`: ~15 fps (66 ms)
+- `/ws/system`: 1 Hz (1000 ms)
+- `/ws/motor/diag`: 200 Hz (5 ms) — 클라이언트 연결 시에만 활성화
+
 `/api/camera/capture` 는 카메라 트리거 한도(~30 fps)에 종속.
 
 ---
