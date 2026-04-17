@@ -78,11 +78,17 @@ class VmbPyCameraBackend(CameraBackend):
                 raise CameraDisconnectedError("No cameras found")
             cam = cams[0]
             cam.__enter__()
+            def _safe_feature(cam, name: str, default: str = "unknown") -> str:
+                try:
+                    return cam.get_feature_by_name(name).get()
+                except Exception:
+                    return default
+
             info = DeviceInfo(
                 model=cam.get_model(),
                 serial=cam.get_serial(),
-                firmware=cam.get_feature_by_name("DeviceFirmwareVersion").get(),
-                vendor=cam.get_feature_by_name("DeviceVendorName").get(),
+                firmware=_safe_feature(cam, "DeviceFirmwareVersion", "0.0.0"),
+                vendor=_safe_feature(cam, "DeviceVendorName", "Unknown"),
             )
             return vmb, cam, info
 
@@ -136,9 +142,15 @@ class VmbPyCameraBackend(CameraBackend):
         elapsed = time.monotonic() - self._start_time
         fps = self._frame_count / max(elapsed, 0.001)
 
-        # Read current telemetry
-        exp_us = await self._get_feature_value("ExposureTime")
-        gain_db = await self._get_feature_value("Gain")
+        # Read current telemetry (safe — features may not exist on all cameras)
+        try:
+            exp_us = await self._get_feature_value("ExposureTime")
+        except Exception:
+            exp_us = None
+        try:
+            gain_db = await self._get_feature_value("Gain")
+        except Exception:
+            gain_db = None
         try:
             temp = await self._get_feature_value("DeviceTemperature")
         except Exception:
@@ -183,8 +195,8 @@ class VmbPyCameraBackend(CameraBackend):
             auto_available=self._has_feature("ExposureAuto"),
         )
         caps[Feature.GAIN] = FeatureCapability(
-            supported=True,
-            range=self._get_numeric_range("Gain"),
+            supported=self._has_feature("Gain"),
+            range=self._get_numeric_range("Gain") if self._has_feature("Gain") else None,
             auto_available=self._has_feature("GainAuto"),
         )
         caps[Feature.ROI] = FeatureCapability(
@@ -223,8 +235,14 @@ class VmbPyCameraBackend(CameraBackend):
                 current_pixel_format=None, current_roi=None,
                 current_trigger_mode=None,
             )
-        exp = await self._get_feature_value("ExposureTime")
-        gain = await self._get_feature_value("Gain")
+        try:
+            exp = await self._get_feature_value("ExposureTime")
+        except Exception:
+            exp = None
+        try:
+            gain = await self._get_feature_value("Gain")
+        except Exception:
+            gain = None
         try:
             temp = await self._get_feature_value("DeviceTemperature")
         except Exception:
@@ -258,9 +276,12 @@ class VmbPyCameraBackend(CameraBackend):
                            time_us: Optional[float] = None) -> ExposureInfo:
         self._require_connected()
         if auto:
+            if not self._has_feature("ExposureAuto"):
+                raise FeatureNotSupportedError(Feature.EXPOSURE)
             await self._set_feature_str("ExposureAuto", "Continuous")
         else:
-            await self._set_feature_str("ExposureAuto", "Off")
+            if self._has_feature("ExposureAuto"):
+                await self._set_feature_str("ExposureAuto", "Off")
             if time_us is not None:
                 r = self._get_numeric_range("ExposureTime")
                 if time_us < r.min or time_us > r.max:
@@ -271,12 +292,17 @@ class VmbPyCameraBackend(CameraBackend):
     async def get_exposure(self) -> ExposureInfo:
         self._require_connected()
         val = await self._get_feature_value("ExposureTime")
-        auto_str = await self._get_feature_value_str("ExposureAuto")
+        has_auto = self._has_feature("ExposureAuto")
+        if has_auto:
+            auto_str = await self._get_feature_value_str("ExposureAuto")
+            is_auto = auto_str != "Off"
+        else:
+            is_auto = False
         return ExposureInfo(
-            auto=auto_str != "Off",
+            auto=is_auto,
             time_us=val,
             range=self._get_numeric_range("ExposureTime"),
-            auto_available=self._has_feature("ExposureAuto"),
+            auto_available=has_auto,
         )
 
     # --- Gain ---
@@ -284,10 +310,15 @@ class VmbPyCameraBackend(CameraBackend):
     async def set_gain(self, *, auto: bool = False,
                        value_db: Optional[float] = None) -> GainInfo:
         self._require_connected()
+        if not self._has_feature("Gain"):
+            raise FeatureNotSupportedError(Feature.GAIN)
         if auto:
+            if not self._has_feature("GainAuto"):
+                raise FeatureNotSupportedError(Feature.GAIN)
             await self._set_feature_str("GainAuto", "Continuous")
         else:
-            await self._set_feature_str("GainAuto", "Off")
+            if self._has_feature("GainAuto"):
+                await self._set_feature_str("GainAuto", "Off")
             if value_db is not None:
                 r = self._get_numeric_range("Gain")
                 if value_db < r.min or value_db > r.max:
@@ -297,13 +328,20 @@ class VmbPyCameraBackend(CameraBackend):
 
     async def get_gain(self) -> GainInfo:
         self._require_connected()
+        if not self._has_feature("Gain"):
+            raise FeatureNotSupportedError(Feature.GAIN)
         val = await self._get_feature_value("Gain")
-        auto_str = await self._get_feature_value_str("GainAuto")
+        has_auto = self._has_feature("GainAuto")
+        if has_auto:
+            auto_str = await self._get_feature_value_str("GainAuto")
+            is_auto = auto_str != "Off"
+        else:
+            is_auto = False
         return GainInfo(
-            auto=auto_str != "Off",
+            auto=is_auto,
             value_db=val,
             range=self._get_numeric_range("Gain"),
-            auto_available=self._has_feature("GainAuto"),
+            auto_available=has_auto,
         )
 
     # --- ROI ---
