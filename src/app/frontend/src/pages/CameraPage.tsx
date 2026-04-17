@@ -60,20 +60,20 @@ function LiveCapture({ status }: { status: CameraStatus | null }) {
 
   return (
     <div>
-      <div style={{ position: 'relative', background: '#000', borderRadius: 8, overflow: 'hidden', marginBottom: 12, minHeight: 240, border: `1px solid ${BORDER}` }}>
+      <div style={{ position: 'relative', background: '#000', borderRadius: 8, overflow: 'hidden', marginBottom: 12, minHeight: 200, maxHeight: 400, border: `1px solid ${BORDER}` }}>
         {/* Stream */}
         {!useWs ? (
           <img
             src={streamSrc}
             alt="Camera stream"
-            style={{ width: '100%', display: 'block', transform: `scale(${zoom})`, transformOrigin: 'center center' }}
+            style={{ width: '100%', maxHeight: 400, objectFit: 'contain', display: 'block', transform: `scale(${zoom})`, transformOrigin: 'center center' }}
             onError={() => setUseWs(true)}
           />
         ) : wsFrame ? (
           <img
             src={`data:image/jpeg;base64,${wsFrame}`}
             alt="WS frame"
-            style={{ width: '100%', display: 'block', transform: `scale(${zoom})` }}
+            style={{ width: '100%', maxHeight: 400, objectFit: 'contain', display: 'block', transform: `scale(${zoom})` }}
           />
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 240, color: TEXT_MUTED, fontSize: 13 }}>
