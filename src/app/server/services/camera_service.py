@@ -176,9 +176,13 @@ class CameraService:
                 if not cams:
                     vmb.__exit__(None, None, None)
                     return None, None
-                # Prefer real cameras over simulators
+                # Only accept real cameras — reject simulators
                 real_cams = [c for c in cams if 'Simulator' not in c.get_model()]
-                cam = real_cams[0] if real_cams else cams[0]
+                if not real_cams:
+                    log.info("VmbPy: %d camera(s) found but all are simulators — ignoring", len(cams))
+                    vmb.__exit__(None, None, None)
+                    return None, None
+                cam = real_cams[0]
                 log.info("VmbPy: selected camera %s (%s), %d total (%d real)",
                          cam.get_name(), cam.get_model(), len(cams), len(real_cams))
                 cam.__enter__()
@@ -232,7 +236,14 @@ class CameraService:
 
         def _open():
             cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-            return cap if cap.isOpened() else None
+            if not cap.isOpened():
+                return None
+            # Read a test frame to verify a real sensor is behind the device
+            ok, _ = cap.read()
+            if not ok:
+                cap.release()
+                return None
+            return cap
 
         cap = await loop.run_in_executor(None, _open)
         if cap is None:
@@ -258,7 +269,15 @@ class CameraService:
 
         def _open():
             cap = cv2.VideoCapture(0)
-            return cap if cap.isOpened() else None
+            if not cap.isOpened():
+                return None
+            # Read a test frame — ISI/CSI nodes without a sensor open
+            # successfully but fail to deliver frames.
+            ok, _ = cap.read()
+            if not ok:
+                cap.release()
+                return None
+            return cap
 
         cap = await loop.run_in_executor(None, _open)
         if cap is None:
@@ -278,9 +297,15 @@ class CameraService:
     # ------------------------------------------------------------------
 
     def get_status(self) -> dict:
+        device_id = None
+        if self._connected and self._vmb_cam is not None:
+            try:
+                device_id = self._vmb_cam.get_model()
+            except Exception:
+                device_id = "Alvium_1800_U-158m"
         return {
             "connected":    self._connected,
-            "device_id":    "Alvium_1800_U-158m" if self._connected else None,
+            "device_id":    device_id,
             "width":        self._width or None,
             "height":       self._height or None,
             "exposure_us":  self._exposure_us,
