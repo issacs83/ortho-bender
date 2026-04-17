@@ -3,8 +3,10 @@
  */
 
 import { useState } from 'react';
-import { BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, BG_PRIMARY } from '../constants';
+import { Card, CardTitle } from '../components/ui/Card';
+import { Button } from '../components/ui/Button';
 import { StatusBadge } from '../components/ui/StatusBadge';
+import { cn } from '../lib/cn';
 
 type Role = 'Operator' | 'Engineer' | 'Admin';
 
@@ -28,6 +30,14 @@ const ROLE_INFO: Record<Role, { desc: string; access: string[] }> = {
     access: ['All Engineer features', 'System Reboot', 'Firmware Update', 'Factory Reset'],
   },
 };
+
+const inputClass = cn(
+  'w-full bg-surface-2 border border-border text-text-primary',
+  'px-2.5 py-1.5 rounded text-[13px]',
+  'focus:outline-none focus:border-accent/60',
+);
+
+const selectClass = cn(inputClass, 'cursor-pointer');
 
 export function SettingsPage() {
   const [currentRole, setCurrentRole] = useState<Role>('Engineer');
@@ -54,98 +64,109 @@ export function SettingsPage() {
     setPinError(null);
   }
 
-  const cardStyle = { background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 20, marginBottom: 16 };
-  const inputStyle = { background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '6px 10px', borderRadius: 4, fontSize: 13, width: '100%' };
-  const selectStyle = { ...inputStyle };
-
   return (
-    <div style={{ padding: 20, maxWidth: 700, margin: '0 auto' }}>
-      <h2 style={{ margin: '0 0 20px', color: TEXT_PRIMARY, fontSize: 18 }}>Settings</h2>
+    <div className="p-4 max-w-[700px] mx-auto">
+      <h2 className="text-lg font-semibold text-text-primary mb-4">Settings</h2>
 
       {/* User Roles */}
-      <div style={cardStyle}>
-        <h3 style={{ margin: '0 0 16px', fontSize: 14, color: TEXT_PRIMARY }}>User Role</h3>
-        <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 13, color: TEXT_MUTED }}>Current Role:</span>
+      <Card className="mb-3">
+        <CardTitle className="mb-4">User Role</CardTitle>
+
+        <div className="flex items-center gap-2.5 mb-3.5">
+          <span className="text-[13px] text-text-tertiary">Current Role:</span>
           <StatusBadge variant="info" label={currentRole} />
         </div>
 
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>Switch to Role</label>
-          <select value={targetRole} onChange={(e) => setTargetRole(e.target.value as Role)} style={{ ...selectStyle, width: 200 }}>
+        <div className="mb-3">
+          <label className="block text-[12px] text-text-tertiary mb-1">Switch to Role</label>
+          <select
+            value={targetRole}
+            onChange={(e) => setTargetRole(e.target.value as Role)}
+            className={cn(selectClass, 'max-w-[200px]')}
+          >
             {(['Operator', 'Engineer', 'Admin'] as Role[]).map((r) => (
               <option key={r}>{r}</option>
             ))}
           </select>
         </div>
 
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>PIN</label>
+        <div className="mb-3">
+          <label className="block text-[12px] text-text-tertiary mb-1">PIN</label>
           <input
             type="password"
             value={pin}
             onChange={(e) => setPin(e.target.value)}
             placeholder="Enter role PIN"
-            style={{ ...inputStyle, width: 200 }}
+            className={cn(inputClass, 'max-w-[200px]')}
           />
-          {pinError && <div style={{ fontSize: 12, color: '#ef4444', marginTop: 4 }}>{pinError}</div>}
+          {pinError && (
+            <p className="text-[12px] text-danger mt-1">{pinError}</p>
+          )}
         </div>
 
-        <button
-          onClick={handleSwitchRole}
-          style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
-        >
+        <Button variant="primary" onClick={handleSwitchRole}>
           Switch Role
-        </button>
+        </Button>
 
-        <div style={{ marginTop: 16, padding: 12, background: BG_PRIMARY, borderRadius: 6, border: `1px solid ${BORDER}` }}>
-          <div style={{ fontSize: 12, color: TEXT_MUTED, marginBottom: 6 }}>{ROLE_INFO[currentRole].desc}</div>
-          <div style={{ fontSize: 11, color: TEXT_MUTED }}>
+        <div className="mt-4 p-3 bg-surface-2 rounded border border-border">
+          <p className="text-[12px] text-text-tertiary mb-1.5">{ROLE_INFO[currentRole].desc}</p>
+          <p className="text-[11px] text-text-tertiary">
             Access: {ROLE_INFO[currentRole].access.join(' · ')}
-          </div>
+          </p>
         </div>
-      </div>
+      </Card>
 
       {/* Appearance */}
-      <div style={cardStyle}>
-        <h3 style={{ margin: '0 0 16px', fontSize: 14, color: TEXT_PRIMARY }}>Appearance</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+      <Card className="mb-3">
+        <CardTitle className="mb-4">Appearance</CardTitle>
+        <div className="grid grid-cols-2 gap-3.5">
           <div>
-            <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>Theme</label>
-            <select value={theme} onChange={(e) => setTheme(e.target.value)} style={selectStyle}>
+            <label className="block text-[12px] text-text-tertiary mb-1">Theme</label>
+            <select
+              value={theme}
+              onChange={(e) => setTheme(e.target.value)}
+              className={selectClass}
+            >
               {['Dark', 'Light', 'System'].map((t) => <option key={t}>{t}</option>)}
             </select>
           </div>
           <div>
-            <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>Language</label>
-            <select value={language} onChange={(e) => setLanguage(e.target.value)} style={selectStyle}>
+            <label className="block text-[12px] text-text-tertiary mb-1">Language</label>
+            <select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+              className={selectClass}
+            >
               {['English', 'Korean', 'Japanese'].map((l) => <option key={l}>{l}</option>)}
             </select>
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* Notifications */}
-      <div style={cardStyle}>
-        <h3 style={{ margin: '0 0 16px', fontSize: 14, color: TEXT_PRIMARY }}>Notifications</h3>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <Card>
+        <CardTitle className="mb-4">Notifications</CardTitle>
+        <div className="flex flex-col gap-3">
           {([
             ['Fault / E-Stop alerts', notifFault, setNotifFault],
             ['Warning alerts',        notifWarning, setNotifWarning],
             ['Bending complete',      notifComplete, setNotifComplete],
           ] as [string, boolean, (v: boolean) => void][]).map(([label, value, setter]) => (
-            <label key={label} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13, color: TEXT_SECONDARY }}>
+            <label
+              key={label}
+              className="flex items-center gap-2.5 cursor-pointer text-[13px] text-text-secondary"
+            >
               <input
                 type="checkbox"
                 checked={value}
                 onChange={(e) => setter(e.target.checked)}
-                style={{ accentColor: '#3b82f6', width: 16, height: 16 }}
+                className="accent-accent w-4 h-4"
               />
               {label}
             </label>
           ))}
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
