@@ -63,6 +63,10 @@ class CameraService:
         caps = self._backend.capabilities()
         return {f.value: _cap_to_dict(c) for f, c in caps.items()}
 
+    def capabilities_raw(self) -> dict:
+        """Raw Feature→FeatureCapability dict for schema serialization."""
+        return self._backend.capabilities()
+
     def device_info(self) -> dict:
         d = self._backend.device_info()
         return {"model": d.model, "serial": d.serial,

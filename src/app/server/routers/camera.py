@@ -12,14 +12,12 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from ..models.camera_schemas import (
-    ConnectResponse, ExposureRequest, ExposureResponse, FrameRateRequest,
-    FrameRateResponse, GainRequest, GainResponse, PixelFormatRequest,
-    PixelFormatResponse, RoiRequest, RoiResponse, TemperatureResponse,
-    TriggerRequest, TriggerResponse, UserSetResponse, UserSetSlotRequest,
+    ExposureRequest, FrameRateRequest, GainRequest, PixelFormatRequest,
+    RoiRequest, TriggerRequest, UserSetSlotRequest,
     capabilities_to_schema, exposure_to_response, frame_rate_to_response,
     gain_to_response, pixel_format_to_response, roi_to_response,
     status_to_schema, trigger_to_response, userset_to_response,
@@ -116,8 +114,9 @@ async def get_camera_status(svc: CameraService = Depends(_svc)):
 async def get_capabilities(svc: CameraService = Depends(_svc)):
     """Supported features and their metadata (ranges, enums, auto)."""
     try:
-        caps = svc.capabilities()
-        return ok(caps)
+        caps = svc.capabilities_raw()
+        return ok({k: v.model_dump() for k, v in
+                   capabilities_to_schema(caps).items()})
     except CameraError as exc:
         return _error_response(exc)
 
@@ -349,7 +348,7 @@ async def set_default_user_set(body: UserSetSlotRequest,
 # ---------------------------------------------------------------------------
 
 @router.post("/capture")
-async def camera_capture(quality: int = 85,
+async def camera_capture(quality: int = Query(default=85, ge=1, le=100),
                          svc: CameraService = Depends(_svc)):
     """Capture a single frame as JPEG."""
     try:
@@ -375,10 +374,15 @@ async def camera_stream(fps: float = 15.0,
         })
 
     async def _mjpeg():
-        async for frame in svc.stream_frames(fps=fps):
-            jpeg = frame.to_jpeg(quality=85)
-            yield (b"--frame\r\n"
-                   b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n")
+        try:
+            async for frame in svc.stream_frames(fps=fps):
+                jpeg = frame.to_jpeg(quality=85)
+                yield (b"--frame\r\n"
+                       b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n")
+        except CameraError as exc:
+            log.error("MJPEG stream error: %s", exc)
+        except Exception as exc:
+            log.error("MJPEG stream unexpected error: %s", exc)
 
     return StreamingResponse(
         _mjpeg(),
