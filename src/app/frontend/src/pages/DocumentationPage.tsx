@@ -9,15 +9,12 @@
  *   - Quick links to API docs (/docs, /redoc) — works on any IP (AP/STA/wired)
  */
 
-import { useEffect, useState, useCallback, type CSSProperties } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   FileText, Folder, FolderOpen, Download, ExternalLink,
   ChevronRight, ChevronDown, ChevronLeft, BookOpen, RefreshCw,
 } from 'lucide-react';
-import {
-  BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED,
-  COLOR_INFO, COLOR_INFO_BG,
-} from '../constants';
+import { cn } from '../lib/cn';
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
 
@@ -49,32 +46,32 @@ function markdownToHtml(md: string): string {
   let html = md
     // Code blocks (fenced)
     .replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang, code) =>
-      `<pre style="background:#0f172a;padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;line-height:1.5;border:1px solid #334155;white-space:pre-wrap;word-break:break-word"><code class="lang-${lang}">${escapeHtml(code.trimEnd())}</code></pre>`)
+      `<pre style="background:#0f172a;padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;line-height:1.5;border:1px solid rgba(255,255,255,0.10);white-space:pre-wrap;word-break:break-word"><code class="lang-${lang}">${escapeHtml(code.trimEnd())}</code></pre>`)
     // Inline code
-    .replace(/`([^`]+)`/g, '<code style="background:#334155;padding:2px 5px;border-radius:3px;font-size:12px;word-break:break-all">$1</code>')
+    .replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.10);padding:2px 5px;border-radius:3px;font-size:12px;word-break:break-all">$1</code>')
     // Headers
-    .replace(/^#### (.+)$/gm, '<h4 style="margin:16px 0 6px;color:#f1f5f9;font-size:14px">$1</h4>')
-    .replace(/^### (.+)$/gm, '<h3 style="margin:20px 0 8px;color:#f1f5f9;font-size:15px">$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2 style="margin:24px 0 10px;color:#f1f5f9;font-size:17px;border-bottom:1px solid #334155;padding-bottom:6px">$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1 style="margin:0 0 12px;color:#f1f5f9;font-size:20px;border-bottom:1px solid #334155;padding-bottom:8px">$1</h1>')
+    .replace(/^#### (.+)$/gm, '<h4 style="margin:16px 0 6px;color:#ECEFF4;font-size:14px">$1</h4>')
+    .replace(/^### (.+)$/gm, '<h3 style="margin:20px 0 8px;color:#ECEFF4;font-size:15px">$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2 style="margin:24px 0 10px;color:#ECEFF4;font-size:17px;border-bottom:1px solid rgba(255,255,255,0.10);padding-bottom:6px">$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1 style="margin:0 0 12px;color:#ECEFF4;font-size:20px;border-bottom:1px solid rgba(255,255,255,0.10);padding-bottom:8px">$1</h1>')
     // Bold / italic
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     // Links
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:underline;word-break:break-all">$1</a>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" style="color:#5B8DEF;text-decoration:underline;word-break:break-all">$1</a>')
     // Tables (simple)
     .replace(/^\|(.+)\|$/gm, (line) => {
       const cells = line.split('|').filter(c => c.trim() !== '');
       if (cells.every(c => /^[\s-:]+$/.test(c))) return '<!-- separator -->';
       const tag = 'td';
       return '<tr>' + cells.map(c =>
-        `<${tag} style="padding:4px 8px;border:1px solid #334155;white-space:nowrap">${c.trim()}</${tag}>`
+        `<${tag} style="padding:4px 8px;border:1px solid rgba(255,255,255,0.10);white-space:nowrap">${c.trim()}</${tag}>`
       ).join('') + '</tr>';
     })
     // Unordered lists
     .replace(/^[-*] (.+)$/gm, '<li style="margin:3px 0">$1</li>')
     // Horizontal rule
-    .replace(/^---+$/gm, '<hr style="border:0;border-top:1px solid #334155;margin:12px 0"/>')
+    .replace(/^---+$/gm, '<hr style="border:0;border-top:1px solid rgba(255,255,255,0.10);margin:12px 0"/>')
     // Paragraphs (blank lines)
     .replace(/\n\n/g, '</p><p style="margin:6px 0;line-height:1.6">')
     // Single newlines in paragraphs
@@ -106,23 +103,27 @@ function TreeItem({ node, selected, onSelect, depth = 0 }: {
   const isDir = node.type === 'dir';
   const isActive = !isDir && node.path === selected;
 
-  const style: CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: 6,
-    padding: `6px 8px 6px ${8 + depth * 14}px`,
-    cursor: 'pointer', fontSize: 13, borderRadius: 4,
-    background: isActive ? COLOR_INFO_BG : 'transparent',
-    color: isActive ? '#93c5fd' : TEXT_SECONDARY,
-    border: 'none', width: '100%', textAlign: 'left',
-  };
+  const paddingLeft = 8 + depth * 14;
 
   if (isDir) {
     const dir = node as DocDir;
     return (
       <>
-        <button style={style} onClick={() => setOpen(o => !o)}>
+        <button
+          style={{ paddingLeft }}
+          className={cn(
+            'flex items-center gap-1.5 pr-2 py-1.5 cursor-pointer text-[13px] rounded',
+            'bg-transparent border-none w-full text-left text-text-secondary hover:text-text-primary',
+            'hover:bg-surface-2 transition-colors',
+          )}
+          onClick={() => setOpen(o => !o)}
+        >
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          {open ? <FolderOpen size={14} color="#f59e0b" /> : <Folder size={14} color="#f59e0b" />}
-          <span style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dir.name}</span>
+          {open
+            ? <FolderOpen size={14} className="text-warning shrink-0" />
+            : <Folder size={14} className="text-warning shrink-0" />
+          }
+          <span className="font-medium overflow-hidden text-ellipsis whitespace-nowrap">{dir.name}</span>
         </button>
         {open && dir.children.map(c => (
           <TreeItem key={c.path} node={c} selected={selected} onSelect={onSelect} depth={depth + 1} />
@@ -132,9 +133,19 @@ function TreeItem({ node, selected, onSelect, depth = 0 }: {
   }
 
   return (
-    <button style={style} onClick={() => onSelect(node.path)}>
-      <FileText size={14} style={{ flexShrink: 0 }} />
-      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.name.replace(/\.md$/, '')}</span>
+    <button
+      style={{ paddingLeft }}
+      className={cn(
+        'flex items-center gap-1.5 pr-2 py-1.5 cursor-pointer text-[13px] rounded',
+        'border-none w-full text-left transition-colors',
+        isActive
+          ? 'bg-info/12 text-accent'
+          : 'bg-transparent text-text-secondary hover:text-text-primary hover:bg-surface-2',
+      )}
+      onClick={() => onSelect(node.path)}
+    >
+      <FileText size={14} className="shrink-0" />
+      <span className="overflow-hidden text-ellipsis whitespace-nowrap">{node.name.replace(/\.md$/, '')}</span>
     </button>
   );
 }
@@ -190,61 +201,71 @@ export function DocumentationPage() {
     setContent('');
   }
 
-  const panelStyle: CSSProperties = {
-    background: BG_PANEL, borderRadius: 8, border: `1px solid ${BORDER}`,
-  };
-
   // Mobile: show tree OR content, not both
   const showTree = !isMobile || !selectedPath;
   const showContent = !isMobile || !!selectedPath;
 
   return (
-    <div style={{ padding: isMobile ? 12 : 20, maxWidth: 1400, margin: '0 auto' }}>
+    <div className={cn('max-w-[1400px] mx-auto', isMobile ? 'p-3' : 'p-5')}>
       {/* Page header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-        <BookOpen size={20} color={COLOR_INFO} />
-        <h2 style={{ margin: 0, fontSize: 18, color: TEXT_PRIMARY }}>Documentation</h2>
+      <div className="flex items-center gap-2.5 mb-4">
+        <BookOpen size={20} className="text-info" />
+        <h2 className="m-0 text-[18px] text-text-primary font-semibold">Documentation</h2>
       </div>
 
       {/* Quick links — use current origin so it works on any IP */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
-        <a href={`${window.location.origin}/docs`} target="_blank" rel="noopener"
-          style={{ ...linkCardStyle, textDecoration: 'none' }}>
+      <div className="flex gap-2.5 mb-4 flex-wrap">
+        <a
+          href={`${window.location.origin}/docs`}
+          target="_blank"
+          rel="noopener"
+          className={cn(
+            'flex items-center gap-1.5 px-3.5 py-1.5 rounded-md border border-border no-underline',
+            'bg-info/12 text-accent text-[13px] font-medium hover:opacity-80 transition-opacity',
+          )}
+        >
           <ExternalLink size={14} /> Swagger UI
         </a>
-        <a href={`${window.location.origin}/redoc`} target="_blank" rel="noopener"
-          style={{ ...linkCardStyle, textDecoration: 'none' }}>
+        <a
+          href={`${window.location.origin}/redoc`}
+          target="_blank"
+          rel="noopener"
+          className={cn(
+            'flex items-center gap-1.5 px-3.5 py-1.5 rounded-md border border-border no-underline',
+            'bg-info/12 text-accent text-[13px] font-medium hover:opacity-80 transition-opacity',
+          )}
+        >
           <ExternalLink size={14} /> ReDoc
         </a>
       </div>
 
       {/* Main layout */}
-      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+      <div className="flex gap-4 items-start">
 
         {/* File tree panel */}
         {showTree && (
-          <div style={{
-            ...panelStyle,
-            width: isMobile ? '100%' : 260,
-            minWidth: isMobile ? undefined : 200,
-            flexShrink: 0,
-            padding: '10px 6px',
-            maxHeight: isMobile ? undefined : 'calc(100vh - 220px)',
-            overflowY: 'auto',
-          }}>
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '0 8px 8px', borderBottom: `1px solid ${BORDER}`, marginBottom: 6,
-            }}>
-              <span style={{ fontSize: 11, fontWeight: 600, color: TEXT_MUTED, textTransform: 'uppercase', letterSpacing: 1 }}>
+          <div
+            className={cn(
+              'bg-surface-1 border border-border rounded-lg shrink-0',
+              'pt-2.5 pb-2.5 px-1.5 overflow-y-auto',
+              isMobile ? 'w-full' : 'w-[260px] min-w-[200px]',
+            )}
+            style={{ maxHeight: isMobile ? undefined : 'calc(100vh - 220px)' }}
+          >
+            <div className="flex items-center justify-between px-2 pb-2 border-b border-border mb-1.5">
+              <span className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wider">
                 Files
               </span>
-              <button onClick={loadTree} style={{ background: 'none', border: 'none', cursor: 'pointer', color: TEXT_MUTED, padding: 2 }} title="Refresh">
+              <button
+                onClick={loadTree}
+                className="bg-transparent border-none cursor-pointer text-text-tertiary p-0.5 hover:text-text-secondary transition-colors"
+                title="Refresh"
+              >
                 <RefreshCw size={13} />
               </button>
             </div>
             {tree.length === 0 ? (
-              <div style={{ padding: 16, textAlign: 'center', color: TEXT_MUTED, fontSize: 13 }}>
+              <div className="p-4 text-center text-text-tertiary text-[13px]">
                 No documentation files found.
               </div>
             ) : (
@@ -257,22 +278,20 @@ export function DocumentationPage() {
 
         {/* Content panel */}
         {showContent && (
-          <div style={{
-            ...panelStyle,
-            flex: 1,
-            minWidth: 0,
-            width: isMobile ? '100%' : undefined,
-            padding: isMobile ? 14 : 24,
-            minHeight: isMobile ? 300 : 400,
-            overflowX: 'hidden',
-          }}>
+          <div
+            className={cn(
+              'bg-surface-1 border border-border rounded-lg flex-1 min-w-0 overflow-x-hidden',
+              isMobile ? 'w-full p-3.5' : 'p-6',
+              isMobile ? 'min-h-[300px]' : 'min-h-[400px]',
+            )}
+          >
             {!selectedPath && !isMobile && (
-              <div style={{ textAlign: 'center', paddingTop: 80, color: TEXT_MUTED }}>
-                <BookOpen size={48} style={{ opacity: 0.3, marginBottom: 16 }} />
-                <p style={{ fontSize: 15 }}>Select a document to view it here.</p>
-                <p style={{ fontSize: 13, marginTop: 8 }}>
+              <div className="text-center pt-20 text-text-tertiary">
+                <BookOpen size={48} className="opacity-30 mx-auto mb-4" />
+                <p className="text-[15px]">Select a document to view it here.</p>
+                <p className="text-[13px] mt-2">
                   Or visit the{' '}
-                  <a href={`${window.location.origin}/docs`} target="_blank" rel="noopener" style={{ color: '#60a5fa' }}>
+                  <a href={`${window.location.origin}/docs`} target="_blank" rel="noopener" className="text-accent underline">
                     API Reference
                   </a>{' '}
                   for endpoint documentation.
@@ -280,58 +299,44 @@ export function DocumentationPage() {
               </div>
             )}
             {loading && (
-              <div style={{ textAlign: 'center', paddingTop: 60, color: TEXT_MUTED }}>Loading...</div>
+              <div className="text-center pt-16 text-text-tertiary">Loading...</div>
             )}
             {error && (
-              <div style={{ color: '#ef4444', padding: 16 }}>{error}</div>
+              <div className="text-danger p-4">{error}</div>
             )}
             {selectedPath && !loading && !error && (
               <>
                 {/* File header with back button on mobile */}
-                <div style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  marginBottom: 12, paddingBottom: 10,
-                  borderBottom: `1px solid ${BORDER}`, gap: 8,
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1 }}>
+                <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-border gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
                     {isMobile && (
                       <button
                         onClick={handleBack}
-                        style={{
-                          background: 'none', border: 'none', cursor: 'pointer',
-                          color: '#60a5fa', padding: 2, flexShrink: 0,
-                        }}
+                        className="bg-transparent border-none cursor-pointer text-accent p-0.5 shrink-0 hover:opacity-80"
                       >
                         <ChevronLeft size={18} />
                       </button>
                     )}
-                    <span style={{
-                      fontSize: 12, color: TEXT_MUTED, fontFamily: 'monospace',
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}>
+                    <span className="text-[12px] text-text-tertiary font-mono overflow-hidden text-ellipsis whitespace-nowrap">
                       {selectedPath}
                     </span>
                   </div>
                   <a
                     href={`${BASE}/api/docs/download/${selectedPath}`}
                     download
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, flexShrink: 0,
-                      color: '#60a5fa', textDecoration: 'none',
-                      padding: '4px 10px', borderRadius: 4,
-                      border: '1px solid #334155', background: '#1e3a5f',
-                    }}
+                    className={cn(
+                      'flex items-center gap-1 text-[12px] shrink-0 no-underline',
+                      'text-accent px-2.5 py-1 rounded border border-border/60 bg-info/12',
+                      'hover:opacity-80 transition-opacity',
+                    )}
                   >
                     <Download size={13} /> Download
                   </a>
                 </div>
                 {/* Rendered markdown */}
                 <div
-                  style={{
-                    color: TEXT_SECONDARY, fontSize: 13, lineHeight: 1.6,
-                    wordBreak: 'break-word', overflowWrap: 'break-word',
-                    overflowX: 'auto',
-                  }}
+                  className="text-text-secondary text-[13px] leading-relaxed break-words overflow-x-auto"
+                  style={{ overflowWrap: 'break-word' }}
                   dangerouslySetInnerHTML={{ __html: markdownToHtml(content) }}
                 />
               </>
@@ -342,11 +347,3 @@ export function DocumentationPage() {
     </div>
   );
 }
-
-const linkCardStyle: CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 6,
-  padding: '7px 14px', borderRadius: 6,
-  background: COLOR_INFO_BG, color: '#93c5fd',
-  fontSize: 13, fontWeight: 500,
-  border: `1px solid ${BORDER}`,
-};
