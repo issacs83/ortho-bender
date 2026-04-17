@@ -52,6 +52,12 @@ export default function App() {
   const boardStatus: ConnStatus = sysStatus ? 'connected' : 'disconnected';
   const ipcStatus: ConnStatus = sysStatus?.ipc_connected ? 'connected' : 'disconnected';
   const motorConnStatus: ConnStatus = sysStatus?.motor_connected ? 'connected' : 'disconnected';
+  const driverProbe = sysStatus?.driver_probe ?? {};
+  const driverTotal = Object.keys(driverProbe).length;
+  const driverConnected = Object.values(driverProbe).filter((d) => d.connected).length;
+  const motorDetail = driverTotal > 0
+    ? `${driverConnected}/${driverTotal}`
+    : 'NO';
   const camStatus: ConnStatus = sysStatus?.camera_connected ? 'connected' : 'disconnected';
 
   const sidebarWidth = sidebarCollapsed ? 56 : 240;
@@ -146,6 +152,7 @@ export default function App() {
           ipcStatus={ipcStatus}
           motorStatus={motorConnStatus}
           motorModel={sysStatus?.motor_model ?? null}
+          motorDetail={motorDetail}
           camStatus={camStatus}
           camModel={sysStatus?.camera_model ?? null}
           onEstopAction={handleEstopAction}

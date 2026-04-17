@@ -15,6 +15,7 @@ interface HeaderProps {
   ipcStatus: ConnStatus;
   motorStatus: ConnStatus;
   motorModel: string | null;
+  motorDetail: string;
   camStatus: ConnStatus;
   camModel: string | null;
   onEstopAction?: () => void;
@@ -27,6 +28,7 @@ export function Header({
   ipcStatus,
   motorStatus,
   motorModel,
+  motorDetail,
   camStatus,
   camModel,
   onEstopAction,
@@ -66,7 +68,7 @@ export function Header({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 1, overflow: 'hidden' }}>
           <ConnectionIcon label="BD"  status={bdStatus} />
           <ConnectionIcon label="IPC" status={ipcStatus} />
-          <ConnectionIcon label={motorModel ?? 'MTR'} status={motorStatus} detail={motorModel ? 'OK' : 'NO'} />
+          <ConnectionIcon label={motorModel ?? 'MTR'} status={motorStatus} detail={motorDetail} />
           <ConnectionIcon label={camModel ? 'CAM' : 'CAM'} status={camStatus} detail={camModel ?? 'NO'} />
         </div>
       </div>
