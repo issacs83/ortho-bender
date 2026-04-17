@@ -2,6 +2,7 @@
   "name": "ortho-bender-dashboard",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "Ortho-Bender SDK example dashboard",
   "scripts": {
     "dev": "vite",
@@ -10,16 +11,22 @@
     "lint": "eslint src --ext .ts,.tsx --report-unused-disable-directives"
   },
   "dependencies": {
+    "clsx": "^2.1.1",
     "lucide-react": "^1.8.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "recharts": "^2.13.3"
+    "recharts": "^2.13.3",
+    "tailwind-merge": "^2.6.1"
   },
   "devDependencies": {
+    "@tailwindcss/forms": "^0.5.11",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.5.0",
     "eslint": "^9.13.0",
+    "postcss": "^8.5.10",
+    "tailwindcss": "^3.4.19",
     "typescript": "^5.6.3",
     "vite": "^5.4.10"
   }
