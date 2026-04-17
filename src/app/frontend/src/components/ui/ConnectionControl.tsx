@@ -1,28 +1,8 @@
-/**
- * ConnectionControl.tsx — Reusable connect/disconnect widget.
- *
- * Combines a StatusBadge with a single action button that flips between
- * Connect and Disconnect. Shown next to any feature that has a connection
- * lifecycle (Camera SDK, Motor DRV_ENN, WiFi, ...).
- *
- * Usage::
- *
- *   <ConnectionControl
- *     label="Camera"
- *     connected={status.power_state === 'on'}
- *     onConnect={() => cameraApi.connect()}
- *     onDisconnect={() => cameraApi.disconnect()}
- *     disconnectConfirm={{
- *       title: 'Disconnect camera?',
- *       description: 'Vimba X SDK will close and frame capture will stop.',
- *     }}
- *   />
- */
-
 import { useState } from 'react';
-import { BORDER, TEXT_SECONDARY } from '../../constants';
-import { ConfirmModal } from './ConfirmModal';
+import { cn } from '../../lib/cn';
+import { Button } from './Button';
 import { StatusBadge } from './StatusBadge';
+import { ConfirmModal } from './ConfirmModal';
 
 interface DisconnectConfirm {
   title: string;
@@ -40,18 +20,15 @@ interface ConnectionControlProps {
   disconnectConfirm?: DisconnectConfirm;
   connectedLabel?: string;
   disconnectedLabel?: string;
+  detail?: string;
+  className?: string;
 }
 
 export function ConnectionControl({
-  label,
-  connected,
-  busy = false,
-  disabled = false,
-  onConnect,
-  onDisconnect,
-  disconnectConfirm,
-  connectedLabel = 'Connected',
-  disconnectedLabel = 'Disconnected',
+  label, connected, busy = false, disabled = false,
+  onConnect, onDisconnect, disconnectConfirm,
+  connectedLabel = 'Connected', disconnectedLabel = 'Disconnected',
+  detail, className,
 }: ConnectionControlProps) {
   const [pending, setPending] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -87,42 +64,36 @@ export function ConnectionControl({
   };
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 6,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ fontSize: 13, color: TEXT_SECONDARY, minWidth: 72 }}>{label}</span>
-        <StatusBadge
-          variant={connected ? 'success' : 'neutral'}
-          label={connected ? connectedLabel : disconnectedLabel}
-        />
-        <button
-          onClick={connected ? handleDisconnectClick : handleConnect}
+    <div className={cn('flex flex-col gap-1.5', className)}>
+      <div className="flex items-center justify-between py-2">
+        <div className="flex items-center gap-3">
+          <div className={cn(
+            'w-2 h-2 rounded-full',
+            connected ? 'bg-success' : isBusy ? 'bg-warning animate-pulse' : 'bg-danger',
+          )} />
+          <div>
+            <div className="text-[13px] text-text-primary font-medium">{label}</div>
+            {detail && <div className="text-[11px] text-text-tertiary">{detail}</div>}
+            <StatusBadge
+              variant={connected ? 'success' : 'neutral'}
+              label={connected ? connectedLabel : disconnectedLabel}
+              className="mt-0.5"
+            />
+          </div>
+        </div>
+        <Button
+          variant={connected ? 'ghost' : 'primary'}
+          size="sm"
+          loading={isBusy}
           disabled={disabled || isBusy}
-          style={{
-            marginLeft: 'auto',
-            padding: '6px 14px',
-            background: connected ? '#dc2626' : '#3b82f6',
-            border: `1px solid ${BORDER}`,
-            color: '#fff',
-            borderRadius: 6,
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: (disabled || isBusy) ? 'not-allowed' : 'pointer',
-            opacity: (disabled || isBusy) ? 0.6 : 1,
-            minWidth: 110,
-          }}
+          onClick={connected ? handleDisconnectClick : handleConnect}
         >
           {isBusy ? '...' : connected ? 'Disconnect' : 'Connect'}
-        </button>
+        </Button>
       </div>
 
       {error && (
-        <div style={{ fontSize: 11, color: '#f87171', paddingLeft: 82 }}>
-          {error}
-        </div>
+        <p className="text-[11px] text-danger pl-5">{error}</p>
       )}
 
       {confirmOpen && disconnectConfirm && (
