@@ -56,14 +56,23 @@ class DiagService:
 
         Reads identification registers via SPI to determine which drivers
         are physically connected and what chip type they are.
+
+        Short-circuits to connected=False when the backend is not real
+        hardware (e.g., MockMotorBackend) — mock SPI returns plausible
+        chip-ID patterns that would otherwise fool probe logic and
+        falsely report drivers as connected in the UI.
         """
         results: list[DriverProbeResult] = []
+        is_real = getattr(self._backend, "is_real_hardware", False)
         for did, drv in (
             (DriverId.TMC260C_0, self._tmc260c_0),
             (DriverId.TMC260C_1, self._tmc260c_1),
             (DriverId.TMC5072, self._tmc5072),
         ):
-            connected, chip = await drv.probe()
+            if not is_real:
+                connected, chip = False, None
+            else:
+                connected, chip = await drv.probe()
             results.append(DriverProbeResult(
                 driver=did, connected=connected, chip=chip,
             ))

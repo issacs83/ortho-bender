@@ -19,6 +19,12 @@ from abc import ABC, abstractmethod
 class MotorBackend(ABC):
     """Transport abstraction for motor driver communication."""
 
+    # Real-hardware backends (spidev, IPC) override to True.
+    # Used by diag_service to avoid reporting mock responses as
+    # "driver connected" — mock SPI returns plausible patterns that
+    # would otherwise fool chip-ID probes.
+    is_real_hardware: bool = False
+
     @abstractmethod
     async def spi_transfer(self, cs: int, data: bytes) -> bytes:
         """Send SPI datagram to chip-select `cs`, return response bytes."""

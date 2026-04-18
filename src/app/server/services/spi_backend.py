@@ -42,6 +42,8 @@ def _parse_gpio(pin: str) -> tuple[str, int]:
 class SpidevMotorBackend(MotorBackend):
     """Hardware backend using Linux spidev for SPI and gpiod v2 for GPIO."""
 
+    is_real_hardware = True
+
     def __init__(
         self,
         spi_device: str = "/dev/spidev1.0",

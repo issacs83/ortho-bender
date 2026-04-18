@@ -78,7 +78,44 @@ async def lifespan(app: FastAPI):
     motor_svc = MotorService(ipc)
 
     # Camera backend — select via OB_CAMERA_BACKEND env var
-    if cfg.camera_backend == "novitec" and not cfg.mock_mode:
+    # Default is "auto" (hot-plug detection); explicit values override.
+    backend_kind = (cfg.camera_backend or "auto").lower()
+    if cfg.mock_mode or backend_kind == "mock":
+        from .services.camera_backends.mock_backend import MockCameraBackend
+        camera_backend = MockCameraBackend()
+        log.info("Camera backend: Mock")
+    elif backend_kind == "auto":
+        try:
+            from .services.camera_backends.auto_backend import AutoCameraBackend
+
+            async def _emit_camera_event(event: dict) -> None:
+                """Broadcast hot-plug events on /ws/system."""
+                mgr = getattr(application.state, "ws_manager", None)
+                if mgr is None:
+                    return
+                import json as _json
+                import time as _time
+                payload = {
+                    "timestamp_us": int(_time.monotonic() * 1_000_000),
+                    **event,
+                }
+                try:
+                    await mgr.system.broadcast(_json.dumps(payload))
+                except Exception as exc:  # pragma: no cover - best effort
+                    log.debug("camera hot-plug broadcast failed: %s", exc)
+
+            camera_backend = AutoCameraBackend(
+                ws_event_callback=_emit_camera_event,
+            )
+            log.info("Camera backend: Auto (hot-plug, USB VID scan)")
+        except Exception as exc:
+            log.warning(
+                "AutoCameraBackend init failed (%s) — falling back to mock",
+                exc,
+            )
+            from .services.camera_backends.mock_backend import MockCameraBackend
+            camera_backend = MockCameraBackend()
+    elif backend_kind == "novitec":
         try:
             from .services.camera_backends.novitec_backend import NovitecBackend
             camera_backend = NovitecBackend()
@@ -87,7 +124,7 @@ async def lifespan(app: FastAPI):
             log.warning("NOVITEC backend failed (%s) — falling back to mock", exc)
             from .services.camera_backends.mock_backend import MockCameraBackend
             camera_backend = MockCameraBackend()
-    elif cfg.camera_backend == "vmbpy" and not cfg.mock_mode:
+    elif backend_kind == "vmbpy":
         try:
             from .services.camera_backends.vmbpy_backend import VmbPyCameraBackend
             camera_backend = VmbPyCameraBackend()
@@ -99,7 +136,8 @@ async def lifespan(app: FastAPI):
     else:
         from .services.camera_backends.mock_backend import MockCameraBackend
         camera_backend = MockCameraBackend()
-        log.info("Camera backend: Mock")
+        log.warning(
+            "Unknown OB_CAMERA_BACKEND=%r — using Mock", cfg.camera_backend)
 
     from .services.camera_service import CameraService
     camera_svc = CameraService(camera_backend)

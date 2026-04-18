@@ -55,7 +55,9 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Camera
     # ------------------------------------------------------------------
-    camera_backend: str = "mock"  # "mock" | "vmbpy"
+    # "auto" = USB VID hot-plug auto-detect (default)
+    # "mock" | "vmbpy" | "novitec" = force a specific backend
+    camera_backend: str = "auto"
     camera_fps: float = 30.0
     camera_jpeg_quality: int = 85
     camera_pixel_format: str = "mono8"
