@@ -32,13 +32,35 @@ class CameraService:
         self._backend = backend
         self._lock = asyncio.Lock()
         self._streaming = False
-        self._connected = False
 
     async def connect(self) -> dict:
+        """Connect to the camera — never raises on hardware-absent.
+
+        Backends that support hot-plug (e.g. NovitecBackend) return a
+        placeholder DeviceInfo and leave `is_connected=False` when the
+        hardware is not present, then auto-reconnect in the background.
+        This service layer mirrors that behaviour so FastAPI startup
+        succeeds even if the camera is unplugged.
+        """
         async with self._lock:
-            device = await self._backend.connect()
-            caps = self._backend.capabilities()
-            self._connected = True
+            try:
+                device = await self._backend.connect()
+            except Exception as exc:
+                # Hard failure during connect — keep the service usable
+                # and let /api/camera/status reflect connected=False.
+                log.warning("CameraBackend.connect raised (%s) — "
+                            "continuing in disconnected state", exc)
+                return {
+                    "device": {"model": "", "serial": "",
+                                "firmware": "", "vendor": ""},
+                    "capabilities": {},
+                }
+            try:
+                caps = self._backend.capabilities()
+            except Exception as exc:
+                log.warning(
+                    "CameraBackend.capabilities raised (%s)", exc)
+                caps = {}
             return {
                 "device": {
                     "model": device.model, "serial": device.serial,
@@ -52,8 +74,11 @@ class CameraService:
     async def disconnect(self) -> None:
         async with self._lock:
             self._streaming = False
-            await self._backend.disconnect()
-            self._connected = False
+            try:
+                await self._backend.disconnect()
+            except Exception as exc:
+                log.warning(
+                    "CameraBackend.disconnect raised (%s)", exc)
 
     async def get_status(self) -> CameraStatus:
         async with self._lock:
@@ -183,7 +208,11 @@ class CameraService:
 
     @property
     def is_connected(self) -> bool:
-        return self._connected
+        # Mirror the backend so hot-plug state is always reflected.
+        try:
+            return bool(self._backend.is_connected)
+        except Exception:
+            return False
 
     @property
     def is_streaming(self) -> bool:

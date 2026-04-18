@@ -89,11 +89,14 @@ SBRM_SIRM_ADDR = 0x20
 # SIRM offsets (relative to SIRM base)
 # ---------------------------------------------------------------------------
 SIRM_CONTROL         = 0x04
-SIRM_REQ_PAYLOAD     = 0x08   # 8 bytes
+SIRM_REQ_PAYLOAD     = 0x08   # 8 bytes (low + high)
 SIRM_REQ_LEADER      = 0x10
 SIRM_REQ_TRAILER     = 0x14
-SIRM_TRANSFER1       = 0x2C
-SIRM_TRANSFER2       = 0x30
+# U3V SI payload transfer registers
+SIRM_XFER_SIZE       = 0x20   # SI_Payload_Transfer_Size
+SIRM_XFER_COUNT      = 0x24   # SI_Payload_Transfer_Count
+SIRM_FINAL1          = 0x28   # SI_Payload_Final_Transfer1_Size
+SIRM_FINAL2          = 0x2C   # SI_Payload_Final_Transfer2_Size
 
 # ---------------------------------------------------------------------------
 # Camera register addresses (from GenICam XML: NOVITEC_U-NOVA2.xml)
@@ -162,11 +165,34 @@ BAYER_CV_CODE = {
     PFNC_BAYER_BG8: cv2.COLOR_BAYER_BG2BGR,
 }
 
+# NOVITEC custom packet framing constants (v4, verified on real data from
+# /tmp/novitec_raw_evk.bin — produces coherent Mono8 1920x1200 frames).
+#
+# Each USB bulk packet of 32768 bytes carries 128 bytes of header + 32640
+# bytes of 8-bit pixel payload. 32640 == 1920 * 17 (1920 u8 pixels × 17
+# rows per packet). The sensor is monochrome (Mono8 only) — PFNC codes
+# reported by the camera are ignored for the wire format.
+#
+# Packet header (128 B):
+#   [0]    : sub_index (u8)  — only sub=0 carries pixel data for the frame
+#   [1:8]  : magic bytes "00 f0 7f 01 4b 00 1e"
+#   [8:12] : counter (u32 LE)
+#
+# Packet payload (32640 B): 1920 columns × 17 rows of u8 Mono8 data.
+# Packets with sub_index != 0 are metadata/control frames and must be
+# discarded. 71 sub=0 packets ≈ 1207 rows → crop to 1200.
+NOVITEC_PKT_SIZE     = 32768
+NOVITEC_HDR_SIZE     = 128
+NOVITEC_PAYLOAD_SIZE = NOVITEC_PKT_SIZE - NOVITEC_HDR_SIZE  # 32640
+NOVITEC_COLS         = 1920    # u8 pixels per row
+NOVITEC_ROWS_PER_PKT = 17      # rows per sub=0 packet
+_NOVITEC_MAGIC       = bytes.fromhex("00f07f014b001e")  # header bytes [1:8]
+
 # Stream constants
-LEADER_SIZE  = 52
-TRAILER_SIZE = 32
-USB_CHUNK    = 131072   # 128 KB — natural USB transfer boundary
-READ_CHUNK   = 16384    # 16 KB per bulk read call
+USB_CHUNK    = 131072   # 128 KB — U3V transfer boundary
+
+# Background reconnect poll interval (seconds)
+_RECONNECT_POLL_S = 3.0
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +303,83 @@ def _get_usb() -> _LibUSB:
 
 
 # ---------------------------------------------------------------------------
+# NOVITEC packet framing decoder
+# ---------------------------------------------------------------------------
+
+
+def _novitec_decode_stream(raw: bytes, width: int, height: int) -> bytes:
+    """Decode a NOVITEC USB bulk stream into 8-bit Mono8 pixel data (v4).
+
+    Input: concatenated 32768 B packets from EP 0x82.
+    Output: width*height bytes of 8-bit Mono8 pixels (monochrome sensor —
+    no Bayer demosaic needed).
+
+    Wire format (reverse-engineered and verified on real capture
+    /tmp/novitec_raw_evk.bin):
+        Header (128 B):
+          [0]    : sub_index (u8)  — only sub=0 carries frame pixel data
+          [1:8]  : magic "00 f0 7f 01 4b 00 1e"
+          [8:12] : counter (u32 LE) shared by packets in the same xfer
+        Payload (32640 B): 1920 columns × 17 rows of u8 Mono8 pixels.
+
+    Non-sub-0 packets are metadata / bookkeeping and are discarded.
+    We accumulate sub=0 packet payloads row-by-row until we have at
+    least `height` rows, then return the top `height` rows.
+
+    Note: the u-Nova2-23C is a monochrome sensor — Bayer demosaic must
+    NOT be applied even if REG_PIXEL_FORMAT reports a Bayer PFNC code.
+    """
+    n_packets = len(raw) // NOVITEC_PKT_SIZE
+    if n_packets == 0:
+        raise CameraError("Novitec decode: no complete packets in stream")
+
+    # Pixel data width is fixed by the wire format (1920 u8 pixels per row).
+    # `width` parameter is honored only if it is smaller (ROI crop).
+    wire_cols = NOVITEC_COLS
+    crop_w = min(width, wire_cols)
+    crop_h = height
+
+    mv = memoryview(raw)
+    rows: list[np.ndarray] = []
+    row_count = 0
+
+    for i in range(n_packets):
+        off = i * NOVITEC_PKT_SIZE
+        if bytes(mv[off + 1:off + 8]) != _NOVITEC_MAGIC:
+            continue
+        sub = mv[off]
+        if sub != 0:
+            continue
+        payload = raw[off + NOVITEC_HDR_SIZE:off + NOVITEC_PKT_SIZE]
+        if len(payload) != NOVITEC_PAYLOAD_SIZE:
+            continue
+        arr = np.frombuffer(payload, dtype=np.uint8).reshape(
+            NOVITEC_ROWS_PER_PKT, wire_cols,
+        )
+        rows.append(arr)
+        row_count += NOVITEC_ROWS_PER_PKT
+        if row_count >= crop_h:
+            break
+
+    if not rows:
+        raise CameraError("Novitec decode: no sub=0 packets in stream")
+
+    stacked = np.vstack(rows)
+    if stacked.shape[0] < crop_h:
+        raise CameraError(
+            f"Novitec decode: only {stacked.shape[0]} rows, need {crop_h}"
+        )
+
+    frame = stacked[:crop_h, :crop_w]
+    # If the caller asked for an unusual W different from wire_cols, resize
+    # horizontally; otherwise return as-is.
+    if crop_w != width or crop_h != height:
+        frame = cv2.resize(frame, (width, height),
+                           interpolation=cv2.INTER_AREA)
+    return bytes(frame.tobytes())
+
+
+# ---------------------------------------------------------------------------
 # NovitecBackend
 # ---------------------------------------------------------------------------
 
@@ -303,6 +406,9 @@ class NovitecBackend(CameraBackend):
         self._height_max = 0
         self._width_min = 0
         self._height_min = 0
+        # Background reconnect task (spawned on first connect() call)
+        self._reconnect_task: Optional[asyncio.Task] = None
+        self._shutdown = False
 
     # --- Helpers ---
 
@@ -380,14 +486,19 @@ class NovitecBackend(CameraBackend):
     def _configure_sirm(self, width: int, height: int) -> None:
         """Configure SIRM for streaming at given resolution."""
         payload_size = width * height  # 1 bpp for 8-bit formats
-        self._gencp_writemem(
-            self._sirm_addr + SIRM_REQ_PAYLOAD,
-            struct.pack('<Q', payload_size),
-        )
-        self._write_u32(self._sirm_addr + SIRM_REQ_LEADER, LEADER_SIZE)
-        self._write_u32(self._sirm_addr + SIRM_REQ_TRAILER, TRAILER_SIZE)
-        self._write_u32(self._sirm_addr + SIRM_TRANSFER1, USB_CHUNK)
-        self._write_u32(self._sirm_addr + SIRM_TRANSFER2, USB_CHUNK)
+        xfer_count = payload_size // USB_CHUNK
+        remainder = payload_size - xfer_count * USB_CHUNK
+
+        self._write_u32(self._sirm_addr + SIRM_REQ_PAYLOAD, payload_size)
+        self._write_u32(self._sirm_addr + SIRM_REQ_PAYLOAD + 4, 0)
+        # Camera sends raw pixels — no U3V leader/trailer
+        self._write_u32(self._sirm_addr + SIRM_REQ_LEADER, 0)
+        self._write_u32(self._sirm_addr + SIRM_REQ_TRAILER, 0)
+        # U3V transfer packetization
+        self._write_u32(self._sirm_addr + SIRM_XFER_SIZE, USB_CHUNK)
+        self._write_u32(self._sirm_addr + SIRM_XFER_COUNT, xfer_count)
+        self._write_u32(self._sirm_addr + SIRM_FINAL1, remainder)
+        self._write_u32(self._sirm_addr + SIRM_FINAL2, 0)
 
     def _start_acquisition(self) -> None:
         self._write_u32(self._sirm_addr + SIRM_CONTROL, 1)
@@ -410,43 +521,69 @@ class NovitecBackend(CameraBackend):
                 break
 
     def _read_frame_sync(self) -> tuple[bytes, int, int, int]:
-        """Read one frame from EP 0x82. Returns (raw_pixels, width, height, pfnc)."""
-        width = self._read_u32(REG_WIDTH)
+        """Read one frame from EP 0x82 and decode the NOVITEC packet framing.
+
+        The NOVITEC u-Nova2 wraps each USB packet with a 128-byte custom
+        header before the pixel bytes. We read enough WIRE bytes to obtain
+        width*height bytes of net pixel payload, then strip headers and
+        discard LEADER/TRAILER groups.
+
+        Returns:
+            (raw_pixels, width, height, pfnc) where raw_pixels has length
+            width*height (8-bit pixels, ready for debayer).
+        """
+        width  = self._read_u32(REG_WIDTH)
         height = self._read_u32(REG_HEIGHT)
-        pfnc = self._read_u32(REG_PIXEL_FORMAT)
-        payload_size = width * height
-        total_frame = LEADER_SIZE + payload_size + TRAILER_SIZE
+        pfnc   = self._read_u32(REG_PIXEL_FORMAT)
+
+        frame_size = width * height                       # net pixel bytes
+        # Mono8 wire format: only sub_index=0 packets carry pixel rows
+        # (17 rows × 1920 cols each). In a real stream the sub=0 ratio is
+        # roughly 1:4 (DATA group has subs 0/1/2/4). For a 1200-row frame
+        # we need ≥71 sub=0 packets, so ~300 total packets worst case.
+        need_sub0_pkts = (height + NOVITEC_ROWS_PER_PKT - 1) // NOVITEC_ROWS_PER_PKT
+        max_wire_bytes = 6 * need_sub0_pkts * NOVITEC_PKT_SIZE  # ~430 pkts @1200 rows
+        # Minimum wire bytes before attempting early decode (enough to
+        # possibly contain one full frame's worth of sub=0 packets).
+        min_decode_bytes = 4 * need_sub0_pkts * NOVITEC_PKT_SIZE  # ~285 pkts @1200
 
         frame_buf = bytearray()
         timeout_count = 0
 
-        for _ in range(2000):
+        for _ in range(5000):
             data = self._usb.bulk_read(self._handle, EP_STREAM_IN,
-                                       READ_CHUNK, timeout_ms=1000)
+                                       USB_CHUNK, timeout_ms=2000)
             if data is None:
                 timeout_count += 1
-                if timeout_count > 5:
+                if timeout_count > 10:
                     break
-                # IO error — clear halt and retry
                 self._usb.clear_halt(self._handle, EP_STREAM_IN)
                 continue
             if len(data) == 0:
-                # ZLP — USB transfer boundary, keep reading
                 continue
             frame_buf.extend(data)
             timeout_count = 0
-            if len(frame_buf) >= total_frame:
+            # Attempt decode once we have enough wire data.
+            if len(frame_buf) >= max_wire_bytes:
                 break
+            # Early-out: try to decode as soon as theoretically sufficient.
+            if len(frame_buf) >= min_decode_bytes:
+                try:
+                    pixels = _novitec_decode_stream(bytes(frame_buf),
+                                                    width, height)
+                    return pixels, width, height, pfnc
+                except CameraError:
+                    continue
 
-        if len(frame_buf) < payload_size:
+        if len(frame_buf) < min_decode_bytes:
             raise CameraTimeoutError(
-                f"Incomplete frame: {len(frame_buf)}/{total_frame} bytes"
+                f"Incomplete frame: {len(frame_buf)}/{min_decode_bytes} "
+                f"wire bytes (target {max_wire_bytes})"
             )
 
-        # Extract raw pixel data (skip leader if present)
-        # The NOVITEC stream data starts with raw pixels at offset 0
-        # (no standard U3V leader magic). Use the payload directly.
-        return bytes(frame_buf[:payload_size]), width, height, pfnc
+        # Final decode (may raise CameraError if truly insufficient).
+        pixels = _novitec_decode_stream(bytes(frame_buf), width, height)
+        return pixels, width, height, pfnc
 
     def _debayer(self, raw: np.ndarray, pfnc: int) -> np.ndarray:
         """Convert Bayer raw to BGR. Returns mono unchanged."""
@@ -459,19 +596,44 @@ class NovitecBackend(CameraBackend):
 
     # --- CameraBackend required methods ---
 
-    async def connect(self) -> DeviceInfo:
-        if self._connected:
-            return self._device
+    def _connect_sync_attempt(self) -> bool:
+        """Try to open USB + bring the camera into a known-good state.
 
-        self._loop = asyncio.get_event_loop()
+        Returns True on success, False if the USB device is not present
+        or any step of the init sequence fails. NEVER raises — callers
+        can treat False as "hardware not ready, will retry later".
+        """
+        global _usb
+        # Re-use the existing libusb context if any — creating a fresh
+        # context on every attempt leaks file descriptors when the
+        # camera is absent.
+        if self._usb is None:
+            try:
+                self._usb = _get_usb()
+            except Exception as exc:  # libusb_init failed
+                log.warning("NOVITEC libusb_init failed: %s", exc)
+                return False
 
-        def _connect_sync():
-            self._usb = _get_usb()
+        try:
             self._handle = self._usb.open(self._vid, self._pid)
+        except CameraError as exc:
+            # Expected when the camera is not plugged in. Log at debug
+            # level after the first warning so the log does not flood.
+            log.debug("NOVITEC USB open failed: %s", exc)
+            self._handle = None
+            return False
+        except Exception as exc:
+            log.warning("NOVITEC USB open unexpected error: %s", exc)
+            self._handle = None
+            return False
 
+        try:
             # Clear halt on all endpoints
             for ep in [EP_CTRL_OUT, EP_CTRL_IN, EP_STREAM_IN]:
-                self._usb.clear_halt(self._handle, ep)
+                try:
+                    self._usb.clear_halt(self._handle, ep)
+                except Exception:
+                    pass
 
             # Read device info from ABRM
             vendor = self._read_string(ABRM_MANUFACTURER)
@@ -483,11 +645,63 @@ class NovitecBackend(CameraBackend):
             sbrm_addr = self._read_u64(ABRM_SBRM_ADDR)
             self._sirm_addr = self._read_u64(sbrm_addr + SBRM_SIRM_ADDR)
 
+            # Force-stop any previous streaming session left over
+            try:
+                self._gencp_writemem(
+                    self._sirm_addr + SIRM_CONTROL,
+                    struct.pack('<I', 0),
+                )
+            except CameraError:
+                pass
+            try:
+                self._gencp_writemem(REG_ACQ_STOP, struct.pack('<I', 0))
+            except CameraError:
+                pass
+            # Drain stale stream data
+            for _ in range(30):
+                d = self._usb.bulk_read(self._handle, EP_STREAM_IN,
+                                        65536, timeout_ms=100)
+                if d is None or len(d) == 0:
+                    break
+
             # Cache sensor limits
             self._width_max = self._read_u32(REG_WIDTH_MAX)
             self._height_max = self._read_u32(REG_HEIGHT_MAX)
             self._width_min = self._read_u32(REG_WIDTH_MIN)
             self._height_min = self._read_u32(REG_HEIGHT_MIN)
+
+            # Ensure width/height are set to full resolution — some cameras
+            # do not default to max after USB reset
+            cur_w = self._read_u32(REG_WIDTH)
+            cur_h = self._read_u32(REG_HEIGHT)
+            if cur_w < self._width_min or cur_h < self._height_min:
+                log.warning(
+                    "Camera W×H=%dx%d invalid, resetting to %dx%d",
+                    cur_w, cur_h,
+                    self._width_max, self._height_max,
+                )
+                self._write_u32(REG_WIDTH, self._width_max)
+                self._write_u32(REG_HEIGHT, self._height_max)
+
+            cur_trig = self._read_u32(REG_TRIGGER_MODE)
+            if cur_trig != 0:
+                log.warning("Camera trigger=%d (hardware), forcing freerun",
+                            cur_trig)
+                self._write_u32(REG_TRIGGER_MODE, 0)
+
+            # The u-Nova2-23C is a monochrome sensor. Force Mono8 so the
+            # sensor reports a sane PFNC code; the wire format is always
+            # Mono8 regardless.
+            try:
+                cur_pf = self._read_u32(REG_PIXEL_FORMAT)
+                if cur_pf != PFNC_MONO8:
+                    log.info(
+                        "Camera pixel format 0x%08x → forcing Mono8",
+                        cur_pf,
+                    )
+                    self._write_u32(REG_PIXEL_FORMAT, PFNC_MONO8)
+            except CameraError:
+                pass
 
             self._device = DeviceInfo(
                 model=model, serial=serial,
@@ -501,17 +715,110 @@ class NovitecBackend(CameraBackend):
                      vendor, model, serial, firmware)
             log.info("Sensor: %dx%d, SIRM at 0x%x",
                      self._width_max, self._height_max, self._sirm_addr)
+            return True
+        except Exception as exc:
+            # Init sequence failed after open. Close the handle and
+            # leave _connected=False so the reconnect loop retries.
+            log.warning("NOVITEC init failed after open: %s", exc)
+            try:
+                if self._handle:
+                    self._usb.close(self._handle)
+            except Exception:
+                pass
+            self._handle = None
+            self._connected = False
+            return False
 
-        await self._run_sync(_connect_sync)
+    async def connect(self) -> DeviceInfo:
+        """Connect to the camera (idempotent, never raises).
 
-        # Build capabilities cache
-        self._caps = self._build_capabilities()
+        If the camera is not currently plugged in, this returns an empty
+        DeviceInfo and leaves the backend in a disconnected state. A
+        background task continues to poll for the camera and transitions
+        the backend to connected when the hardware appears.
+        """
+        if self._connected and self._device is not None:
+            return self._device
+
+        self._loop = asyncio.get_running_loop()
+        self._shutdown = False
+
+        await self._run_sync(self._connect_sync_attempt)
+
+        if self._connected:
+            # Build capabilities cache when hardware is live.
+            try:
+                self._caps = self._build_capabilities()
+            except CameraError as exc:
+                log.warning("NOVITEC capability probe failed: %s", exc)
+                self._caps = {}
+        else:
+            # Hardware absent — return a placeholder so the FastAPI
+            # startup can proceed. The reconnect loop will populate the
+            # real DeviceInfo once the camera is attached.
+            log.warning(
+                "NOVITEC camera not present at VID=%04x PID=%04x "
+                "— running disconnected, will auto-reconnect when "
+                "hardware appears",
+                self._vid, self._pid,
+            )
+            self._device = DeviceInfo(
+                model="", serial="", firmware="", vendor="",
+            )
+            self._caps = {}
+
+        # Spawn the background reconnect task once.
+        if self._reconnect_task is None or self._reconnect_task.done():
+            self._reconnect_task = self._loop.create_task(
+                self._reconnect_loop(),
+                name="novitec-reconnect",
+            )
+
         return self._device
 
+    async def _reconnect_loop(self) -> None:
+        """Periodic USB presence check; reconnect when the camera appears."""
+        log.info("NOVITEC reconnect loop started (interval=%.1fs)",
+                 _RECONNECT_POLL_S)
+        while not self._shutdown:
+            try:
+                await asyncio.sleep(_RECONNECT_POLL_S)
+            except asyncio.CancelledError:
+                break
+            if self._shutdown:
+                break
+            if self._connected:
+                continue
+            try:
+                ok = await self._run_sync(self._connect_sync_attempt)
+            except Exception as exc:
+                log.debug("NOVITEC reconnect attempt raised: %s", exc)
+                ok = False
+            if ok:
+                try:
+                    self._caps = self._build_capabilities()
+                except CameraError as exc:
+                    log.warning(
+                        "NOVITEC capability probe failed: %s", exc)
+                    self._caps = {}
+                log.info("NOVITEC camera auto-reconnected")
+        log.info("NOVITEC reconnect loop exited")
+
     async def disconnect(self) -> None:
+        self._shutdown = True
+        self._streaming = False
+
+        # Stop background reconnect task
+        if self._reconnect_task is not None:
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._reconnect_task = None
+
         if not self._connected:
             return
-        self._streaming = False
 
         def _disconnect_sync():
             try:
@@ -519,12 +826,59 @@ class NovitecBackend(CameraBackend):
             except Exception:
                 pass
             if self._handle:
-                self._usb.close(self._handle)
+                try:
+                    self._usb.close(self._handle)
+                except Exception:
+                    pass
                 self._handle = None
             self._connected = False
 
         await self._run_sync(_disconnect_sync)
         log.info("NOVITEC disconnected")
+
+    def _reconnect_sync(self) -> None:
+        """Re-establish USB connection after a communication failure."""
+        log.warning("NOVITEC USB reconnecting...")
+        # Close old handle only (keep libusb context alive — other threads
+        # may still reference it)
+        if self._handle:
+            try:
+                self._usb.close(self._handle)
+            except Exception:
+                pass
+            self._handle = None
+        self._connected = False
+        self._streaming = False
+
+        # Re-open on same libusb context (VID/PID scan finds new device#)
+        time.sleep(1.0)
+        self._handle = self._usb.open(self._vid, self._pid)
+        for ep in [EP_CTRL_OUT, EP_CTRL_IN, EP_STREAM_IN]:
+            self._usb.clear_halt(self._handle, ep)
+        time.sleep(0.3)
+
+        # Re-resolve SIRM
+        sbrm_addr = self._read_u64(ABRM_SBRM_ADDR)
+        self._sirm_addr = self._read_u64(sbrm_addr + SBRM_SIRM_ADDR)
+
+        # Stop any leftover stream
+        try:
+            self._gencp_writemem(
+                self._sirm_addr + SIRM_CONTROL,
+                struct.pack('<I', 0),
+            )
+        except CameraError:
+            pass
+        for _ in range(30):
+            d = self._usb.bulk_read(self._handle, EP_STREAM_IN,
+                                    65536, timeout_ms=100)
+            if d is None or len(d) == 0:
+                break
+
+        self._connected = True
+        self._frame_count = 0
+        self._start_time = time.monotonic()
+        log.info("NOVITEC USB reconnected (SIRM at 0x%x)", self._sirm_addr)
 
     async def capture(self) -> CapturedFrame:
         self._require_connected()
@@ -539,7 +893,21 @@ class NovitecBackend(CameraBackend):
                 self._start_acquisition()
                 time.sleep(0.15)  # allow first frame to arrive
 
-            raw_bytes, w, h, pfnc = self._read_frame_sync()
+            try:
+                raw_bytes, w, h, _pfnc = self._read_frame_sync()
+            except (CameraError, CameraTimeoutError):
+                # Clean up on failure so next capture starts fresh
+                if not was_streaming:
+                    try:
+                        self._stop_acquisition()
+                    except CameraError:
+                        pass
+                for ep in [EP_CTRL_OUT, EP_CTRL_IN, EP_STREAM_IN]:
+                    try:
+                        self._usb.clear_halt(self._handle, ep)
+                    except Exception:
+                        pass
+                raise
 
             if not was_streaming:
                 self._stop_acquisition()
@@ -548,12 +916,17 @@ class NovitecBackend(CameraBackend):
             elapsed = time.monotonic() - self._start_time
             fps = self._frame_count / elapsed if elapsed > 0 else 0.0
 
-            raw = np.frombuffer(raw_bytes, dtype=np.uint8).reshape(h, w)
-            img = self._debayer(raw, pfnc)
+            # u-Nova2-23C is a monochrome sensor; the wire format is
+            # always Mono8 regardless of PFNC code. Do NOT debayer.
+            img = np.frombuffer(raw_bytes, dtype=np.uint8).reshape(h, w)
 
-            exposure_us = float(self._read_u32(REG_EXPOSURE_TIME))
-            gain_raw = self._read_u32(REG_GAIN)
-            gain_db = gain_raw / 100.0
+            try:
+                exposure_us = float(self._read_u32(REG_EXPOSURE_TIME))
+                gain_raw = self._read_u32(REG_GAIN)
+                gain_db = gain_raw / 100.0
+            except (CameraError, CameraTimeoutError):
+                exposure_us = 0.0
+                gain_db = 0.0
 
             meta = FrameMeta(
                 timestamp_us=int(time.monotonic() * 1_000_000),
@@ -564,10 +937,26 @@ class NovitecBackend(CameraBackend):
                 width=w,
                 height=h,
             )
-            pf_str = PFNC_TO_STR.get(pfnc, f"0x{pfnc:08x}")
-            return CapturedFrame(array=img, pixel_format=pf_str, meta=meta)
+            return CapturedFrame(array=img, pixel_format="mono8", meta=meta)
 
-        return await self._run_sync(_capture_sync)
+        try:
+            return await self._run_sync(_capture_sync)
+        except CameraError as exc:
+            # USB communication failure — mark disconnected; the background
+            # reconnect loop (single source of truth) will re-establish the
+            # link. Avoid racing _reconnect_sync here.
+            log.warning("NOVITEC capture failed (%s: %s); marking disconnected",
+                        type(exc).__name__, exc)
+            if self._handle:
+                try:
+                    self._usb.close(self._handle)
+                except Exception:
+                    pass
+                self._handle = None
+            self._connected = False
+            raise CameraDisconnectedError(
+                f"NOVITEC camera disconnected: {exc}"
+            ) from exc
 
     async def stream(self, fps: float = 30.0) -> AsyncIterator[CapturedFrame]:
         self._require_connected()
@@ -596,10 +985,18 @@ class NovitecBackend(CameraBackend):
             await self._run_sync(self._stop_acquisition)
 
     def capabilities(self) -> dict[Feature, FeatureCapability]:
-        self._require_connected()
-        if self._caps:
+        # Return cached caps if available (populated on connect). When
+        # the camera is not connected, return an empty dict so status
+        # endpoints can serialize without raising.
+        if self._caps is not None:
             return self._caps
-        self._caps = self._build_capabilities()
+        if not self._connected:
+            return {}
+        try:
+            self._caps = self._build_capabilities()
+        except CameraError as exc:
+            log.warning("NOVITEC capability probe failed: %s", exc)
+            self._caps = {}
         return self._caps
 
     def _build_capabilities(self) -> dict[Feature, FeatureCapability]:
@@ -668,7 +1065,28 @@ class NovitecBackend(CameraBackend):
         return caps
 
     async def get_status(self) -> CameraStatus:
-        self._require_connected()
+        """Return the current camera status.
+
+        Safe to call when the camera is not connected — returns a
+        CameraStatus with connected=False and the last known device
+        info (empty placeholder if it has never been connected).
+        """
+        if not self._connected:
+            return CameraStatus(
+                connected=False,
+                streaming=False,
+                device=self._device or DeviceInfo(
+                    model="", serial="", firmware="", vendor="",
+                ),
+                current_exposure_us=0.0,
+                current_gain_db=0.0,
+                current_temperature_c=None,
+                current_fps=0.0,
+                current_pixel_format="",
+                current_roi={"width": 0, "height": 0,
+                             "offset_x": 0, "offset_y": 0},
+                current_trigger_mode="freerun",
+            )
 
         def _status_sync():
             exposure_us = float(self._read_u32(REG_EXPOSURE_TIME))
@@ -695,11 +1113,29 @@ class NovitecBackend(CameraBackend):
                 current_trigger_mode="freerun" if trig == 0 else "hardware",
             )
 
-        return await self._run_sync(_status_sync)
+        try:
+            return await self._run_sync(_status_sync)
+        except CameraError as exc:
+            log.warning(
+                "NOVITEC get_status failed (%s) — marking disconnected, "
+                "reconnect loop will retry",
+                exc,
+            )
+            # Drop the handle so the reconnect loop re-opens cleanly.
+            self._connected = False
+            if self._handle is not None:
+                try:
+                    self._usb.close(self._handle)
+                except Exception:
+                    pass
+                self._handle = None
+            return await self.get_status()
 
     def device_info(self) -> DeviceInfo:
-        self._require_connected()
-        return self._device
+        # Safe when disconnected — returns placeholder DeviceInfo.
+        return self._device or DeviceInfo(
+            model="", serial="", firmware="", vendor="",
+        )
 
     @property
     def is_connected(self) -> bool:
