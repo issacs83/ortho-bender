@@ -253,9 +253,31 @@ interface AcquisitionProps {
   capabilities: CameraCapabilities;
   features: FeatureState;
   onFeatureChange: (updated: Partial<FeatureState>, invalidated?: string[]) => void;
+  onReset?: () => Promise<void>;
 }
 
-function Acquisition({ capabilities, features, onFeatureChange }: AcquisitionProps) {
+function Acquisition({ capabilities, features, onFeatureChange, onReset }: AcquisitionProps) {
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+
+  async function handleReset() {
+    if (!onReset) return;
+    const ok = window.confirm(
+      'Reset all camera settings to factory defaults?\n\n' +
+      'This will load the "Default" UserSet and discard current Exposure, ' +
+      'Gain, ROI, PixelFormat, Frame Rate and Trigger changes.',
+    );
+    if (!ok) return;
+    setResetting(true); setResetError(null);
+    try {
+      await onReset();
+    } catch (e) {
+      setResetError(String(e));
+    } finally {
+      setResetting(false);
+    }
+  }
+
   // Exposure
   const [expAuto, setExpAuto] = useState(features.exposure?.auto ?? false);
   const [expUs, setExpUs] = useState(features.exposure?.time_us ?? 5000);
@@ -348,7 +370,21 @@ function Acquisition({ capabilities, features, onFeatureChange }: AcquisitionPro
   const availableTriggerSources = features.trigger?.available_sources ?? [];
 
   return (
-    <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
+    <div className="flex flex-col gap-4">
+      {onReset && (
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="text-[12px] text-text-tertiary">
+            Reset reloads the camera's <span className="numeric">Default</span> UserSet (factory state).
+          </div>
+          <div className="flex items-center gap-2">
+            {resetError && <span className="text-[12px] text-danger">{resetError}</span>}
+            <Button variant="secondary" size="sm" loading={resetting} onClick={handleReset}>
+              Reset to Defaults
+            </Button>
+          </div>
+        </div>
+      )}
+      <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
 
       {/* Exposure */}
       {(expCap?.supported ?? true) && (
@@ -492,6 +528,7 @@ function Acquisition({ capabilities, features, onFeatureChange }: AcquisitionPro
         </Card>
       )}
 
+      </div>
     </div>
   );
 }
@@ -890,6 +927,14 @@ export function CameraPage() {
     await refreshStatus();
   }
 
+  async function handleResetDefaults() {
+    await cameraApi.loadUserSet({ slot: 'Default' });
+    // UserSetLoad can change every feature — refresh status + all feature
+    // values so the UI reflects the reloaded camera state.
+    await refreshStatus();
+    await fetchFeatures(capabilities);
+  }
+
   return (
     <div className="px-[clamp(12px,3vw,20px)] max-w-[1100px] mx-auto">
       <h2 className="text-text-primary text-[18px] font-semibold mb-1 mt-0">Camera</h2>
@@ -938,6 +983,7 @@ export function CameraPage() {
           capabilities={capabilities}
           features={features}
           onFeatureChange={handleFeatureChange}
+          onReset={status?.connected ? handleResetDefaults : undefined}
         />
       )}
       {subTab === 'processing' && (
