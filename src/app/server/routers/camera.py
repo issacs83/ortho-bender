@@ -373,12 +373,21 @@ async def camera_stream(fps: float = 15.0,
             "code": "CAMERA_DISCONNECTED",
         })
 
+    import asyncio as _aio
+    _loop = _aio.get_event_loop()
+
     async def _mjpeg():
         try:
             async for frame in svc.stream_frames(fps=fps):
-                jpeg = frame.to_jpeg(quality=85)
+                # Prefer pre-encoded JPEG from the broadcast producer
+                # (encoded once per frame, shared across all consumers).
+                jpeg = getattr(frame, "_cached_jpeg", None) or frame.__dict__.get("_cached_jpeg")
+                if jpeg is None:
+                    jpeg = await _loop.run_in_executor(None, frame.to_jpeg, 75)
                 yield (b"--frame\r\n"
-                       b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n")
+                       b"Content-Type: image/jpeg\r\n"
+                       b"Content-Length: " + str(len(jpeg)).encode() + b"\r\n\r\n"
+                       + jpeg + b"\r\n")
         except CameraError as exc:
             log.error("MJPEG stream error: %s", exc)
         except Exception as exc:
