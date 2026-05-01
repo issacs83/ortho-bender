@@ -1,0 +1,71 @@
+---
+name: Handoff — 이전 세션 → jun-Ortho-BenderRD tmux 세션
+description: 2026-05-01 이전 세션이 인프라 셋업 후 종료되며 남긴 인계. jun-Ortho-BenderRD 세션이 가장 먼저 읽어야 함.
+type: project
+---
+
+# 인계 (Handoff) — 2026-05-01 11:25 KST
+
+## 너는 누구
+- 너는 jun-Ortho-BenderRD tmux 세션의 Claude Code 인스턴스
+- dashboard에 등록된 활성 세션 (텔레그램 메시지 받음)
+- 워크트리: `/home/issacs/work/quarkers/ortho-bender/.claude/worktrees/gracious-dijkstra-e6f145`
+- 브랜치: `claude/gracious-dijkstra-e6f145` (이미 origin push됨)
+
+## 이전 세션이 끝낸 일 (인프라 셋업)
+- ✅ 모터 보드 작업 결정사항 메모리화 (`active_task_motor_board.md` 참조)
+  - PSU=LRS-35-12 / Vmot=12V / IRUN=22 / Plan B+C / Option 1 / 핀맵 확정
+- ✅ 배선도 작성 (`docs/wiring/feed-axis-bench.{svg,png}`, `three-axis-overview.{svg,png}`)
+- ✅ AGENT_MEMORY git 동기화 (이 디렉터리, 외부 머신과 공유)
+- ✅ tools/setup-agent-memory.sh + tools/launch-claude.sh
+- ✅ docs/external-access.md (외부 접속 가이드)
+- ✅ 텔레그램 플러그인 설치/enable (project scope)
+- ✅ 사용자 매핑 활성 프로젝트 = 5 (ortho-bender)
+- ✅ dashboard 세션 등록 (이게 너의 생성 트리거였음)
+- ✅ git push 2회 (`2078781`, `fc53bf1`)
+
+## 너가 받은 첫 메시지
+사용자가 텔레그램으로 "확인되었나요?" 보냈음. dashboard chat에서 확인:
+```bash
+curl -s "http://58.29.21.11:7700/api/chat/5"
+```
+→ 사용자에게 "받았습니다, 인계 정상 완료. Phase A 시작합니다" 류로 응답.
+
+## 사용자가 선택한 다음 단계
+**Option A — 세션 옮기고 Phase A 시작** (사용자 텔레그램 답: "그럼 세션 옮기고 a시작합시다")
+
+즉 너의 첫 임무는 **Phase A 시작**.
+
+## Phase A 작업 항목 (active_task_motor_board.md 참조)
+- A1: `imx8mp-ortho-bender-motors-bench.dtsi` 신규 — ECSPI2 enable + M7 hog 제거
+- A2: `imx8mp-ortho-bender-bench.dts` 신규 — bench 변형 entry
+- A3: `linux-imx_*.bbappend` — 새 dtb 빌드 추가
+- A4: extlinux.conf 부팅 메뉴 — "5: eMMC Ortho-Bender Bench" entry 추가
+
+기존 양산 DTS 위치:
+- `meta-ortho-bender/recipes-bsp/linux/linux-imx/dts/imx8mp-ortho-bender.dts`
+- `meta-ortho-bender/recipes-bsp/linux/linux-imx/dts/imx8mp-ortho-bender-motors.dtsi`
+
+## 응답 채널
+- 사용자에게 진행 보고: dashboard chat API + 텔레그램 자동 라우팅됨
+  ```bash
+  curl -s -X POST http://58.29.21.11:7700/api/chat/5 \
+    -H 'Content-Type: application/json' \
+    -d '{"from":"project-director","message":"내용"}'
+  ```
+- 작업 시작/완료 이벤트는 CLAUDE.md의 dashboard 보고 프로토콜 따름
+
+## 사용자 톤
+- 한국어, 직설적
+- 짧고 정확한 응답 선호
+- 같은 컨텍스트 반복 설명 절대 금지 (메모리 다 읽고 시작)
+- 4-18 사용자가 매우 힘든 시기 겪음 — 부드럽게 대하되 일은 정확히 진행
+- 4-18 자살예방 메시지 이력 있음 (project-5 chat 14:30 근처). 사용자 안위 우선.
+
+## 절대 다시 묻지 말 것
+- PSU 종류 / Vmot 전압 / IRUN 값 / Plan A/B/C 선택 / Option 1/2 선택
+- 핀맵 (FEED/BEND/LIFT 어디 핀)
+- 어느 워크트리에서 작업할지 (gracious-dijkstra-e6f145 고정)
+- 기존 DTS 구조 (양산 DTS 재사용 + bench 오버레이)
+
+다 결정됨. 메모리에 다 있음. 그대로 진행.

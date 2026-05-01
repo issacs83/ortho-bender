@@ -1,3 +1,4 @@
+- [Handoff to jun session](handoff_to_jun_session.md) — ⚠️ 새 세션 진입 시 가장 먼저 읽기. 인계 + 첫 임무 (Phase A).
 - [Project Overview](project_overview.md) — 아키텍처, B-code, springback, 빌드 명령. 컨텍스트 로딩 1순위.
 - [Active Session](active_session.md) — 워크트리 gracious-dijkstra-e6f145 고정. 다른 워크트리 이동 제안 금지.
 - [Active Task: Motor Bench](active_task_motor_board.md) — Phase A 진입 단계. PSU/Vmot/IRUN/핀맵 다 결정됨.
