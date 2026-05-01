@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 900" font-family="'Noto Sans CJK KR', 'Noto Sans', Arial, sans-serif">
+  <defs>
+    <style>
+      .title { font: bold 22px 'Noto Sans CJK KR', Arial; fill: #111; }
+      .h2    { font: bold 16px 'Noto Sans CJK KR', Arial; fill: #111; }
+      .h3    { font: bold 13px 'Noto Sans CJK KR', Arial; fill: #111; }
+      .label { font: 12px 'Noto Sans CJK KR', Arial; fill: #222; }
+      .pin   { font: 11px 'Noto Sans CJK KR', Arial; fill: #222; }
+      .small { font: 10px 'Noto Sans CJK KR', Arial; fill: #555; }
+      .note  { font: italic 11px 'Noto Sans CJK KR', Arial; fill: #b00; }
+      .pwr   { stroke: #d00; stroke-width: 2.5; fill: none; }
+      .gnd   { stroke: #000; stroke-width: 2; fill: none; }
+      .spi   { stroke: #06b; stroke-width: 1.8; fill: none; }
+      .ctl   { stroke: #c80; stroke-width: 1.6; fill: none; }
+      .sg    { stroke: #080; stroke-width: 1.6; fill: none; }
+      .box   { stroke: #333; stroke-width: 1.5; fill: #fafafa; }
+      .boxb  { stroke: #333; stroke-width: 1.5; fill: #e6efff; }
+      .boxg  { stroke: #333; stroke-width: 1.5; fill: #e6f4e6; }
+      .boxr  { stroke: #333; stroke-width: 1.5; fill: #ffe6e6; }
+      .boxy  { stroke: #333; stroke-width: 1.5; fill: #fffadc; }
+    </style>
+  </defs>
+
+  <!-- TITLE -->
+  <text x="40" y="40" class="title">Ortho-Bender 3축 시스템 오버뷰 (FEED + BEND + LIFT)</text>
+  <text x="40" y="62" class="small">DRI0035 ×3 (TMC260) | 17HE15-1504S ×3 | LRS-35-12 12V/3A | TXS0108E ×2 (16ch) | i.MX8MP EVK | SPI bus shared, per-axis CS/STEP/DIR/SG</text>
+
+  <!-- ============ EVK ============ -->
+  <g id="evk">
+    <rect x="60" y="120" width="240" height="640" class="box" rx="6"/>
+    <text x="180" y="146" class="h2" text-anchor="middle">i.MX8MP EVK</text>
+    <text x="180" y="164" class="small" text-anchor="middle">Linux + spi_backend.py</text>
+
+    <text x="180" y="210" class="h3" text-anchor="middle">ECSPI2 (SPI bus)</text>
+    <rect x="80" y="220" width="200" height="22" class="boxb"/>
+    <text x="180" y="236" class="pin" text-anchor="middle">SS0 (HW CS) → CS_FEED</text>
+    <rect x="80" y="244" width="200" height="22" class="boxb"/>
+    <text x="180" y="260" class="pin" text-anchor="middle">GPIO3_IO19 → CS_BEND</text>
+    <rect x="80" y="268" width="200" height="22" class="boxb"/>
+    <text x="180" y="284" class="pin" text-anchor="middle">GPIO3_IO20 → CS_LIFT</text>
+    <rect x="80" y="292" width="200" height="22" class="boxb"/>
+    <text x="180" y="308" class="pin" text-anchor="middle">SCLK / MOSI / MISO (공유)</text>
+
+    <text x="180" y="348" class="h3" text-anchor="middle">FEED 축 (Phase 1)</text>
+    <rect x="80" y="358" width="200" height="20" class="boxg"/>
+    <text x="180" y="372" class="pin" text-anchor="middle">GPIO4_IO00 STEP</text>
+    <rect x="80" y="380" width="200" height="20" class="boxg"/>
+    <text x="180" y="394" class="pin" text-anchor="middle">GPIO4_IO01 DIR</text>
+    <rect x="80" y="402" width="200" height="20" class="boxg"/>
+    <text x="180" y="416" class="pin" text-anchor="middle">GPIO4_IO05 SG</text>
+
+    <text x="180" y="448" class="h3" text-anchor="middle">BEND 축 (Phase 1)</text>
+    <rect x="80" y="458" width="200" height="20" class="boxg"/>
+    <text x="180" y="472" class="pin" text-anchor="middle">GPIO4_IO02 STEP</text>
+    <rect x="80" y="480" width="200" height="20" class="boxg"/>
+    <text x="180" y="494" class="pin" text-anchor="middle">GPIO4_IO03 DIR</text>
+    <rect x="80" y="502" width="200" height="20" class="boxg"/>
+    <text x="180" y="516" class="pin" text-anchor="middle">GPIO4_IO06 SG</text>
+
+    <text x="180" y="548" class="h3" text-anchor="middle">LIFT 축 (Phase 2 → 1)</text>
+    <rect x="80" y="558" width="200" height="20" class="boxg"/>
+    <text x="180" y="572" class="pin" text-anchor="middle">GPIO3_IO25 STEP</text>
+    <rect x="80" y="580" width="200" height="20" class="boxg"/>
+    <text x="180" y="594" class="pin" text-anchor="middle">GPIO4_IO28 DIR</text>
+    <rect x="80" y="602" width="200" height="20" class="boxg"/>
+    <text x="180" y="616" class="pin" text-anchor="middle">GPIO4_IO30 SG</text>
+
+    <text x="180" y="648" class="h3" text-anchor="middle">공통 / 안전</text>
+    <rect x="80" y="658" width="200" height="20" class="boxr"/>
+    <text x="180" y="672" class="pin" text-anchor="middle">GPIO4_IO04 DRV_ENN</text>
+    <rect x="80" y="680" width="200" height="20" class="boxr"/>
+    <text x="180" y="694" class="pin" text-anchor="middle">GPIO4_IO07 ← E-STOP</text>
+    <rect x="80" y="702" width="200" height="20" class="boxr"/>
+    <text x="180" y="716" class="pin" text-anchor="middle">3.3V / 5V / GND</text>
+  </g>
+
+  <!-- ============ TXS0108E ×2 ============ -->
+  <g id="txs">
+    <rect x="350" y="200" width="180" height="220" class="boxy" rx="4"/>
+    <text x="440" y="226" class="h2" text-anchor="middle">TXS0108E #1</text>
+    <text x="440" y="244" class="small" text-anchor="middle">SPI 1.8V↔5V</text>
+    <text x="365" y="270" class="pin">A: CS_F, CS_B,</text>
+    <text x="365" y="288" class="pin">   CS_L, SCK,</text>
+    <text x="365" y="306" class="pin">   MOSI, MISO</text>
+    <text x="365" y="346" class="pin">B: → DRI 3대</text>
+    <text x="365" y="364" class="pin">   SPI 공유</text>
+    <text x="365" y="402" class="small" fill="#080">VCCA=1.8V VCCB=5V</text>
+
+    <rect x="350" y="450" width="180" height="280" class="boxy" rx="4"/>
+    <text x="440" y="476" class="h2" text-anchor="middle">TXS0108E #2</text>
+    <text x="440" y="494" class="small" text-anchor="middle">Motion 1.8V↔5V</text>
+    <text x="365" y="520" class="pin">STEP×3 (F, B, L)</text>
+    <text x="365" y="540" class="pin">DIR×3 (F, B, L)</text>
+    <text x="365" y="560" class="pin">DRV_ENN (공통)</text>
+    <text x="365" y="580" class="pin">────────────</text>
+    <text x="365" y="600" class="pin">SG_FEED (in)</text>
+    <text x="365" y="620" class="pin">SG_BEND (in)</text>
+    <text x="365" y="640" class="pin">SG_LIFT (in)</text>
+    <text x="365" y="678" class="small" fill="#080">8ch 모두 사용</text>
+    <text x="365" y="696" class="small" fill="#a40">⚠ STEP은 출력 전용</text>
+    <text x="365" y="710" class="small" fill="#a40">  SG는 입력 전용</text>
+  </g>
+
+  <!-- ============ DRI0035 ×3 ============ -->
+  <g id="dri-f">
+    <rect x="600" y="120" width="220" height="160" class="boxg" rx="4"/>
+    <text x="710" y="144" class="h2" text-anchor="middle">DRI0035 #1 — FEED</text>
+    <text x="710" y="160" class="small" text-anchor="middle">TMC260 (CS_FEED)</text>
+    <text x="615" y="186" class="pin">VMOT 12V</text>
+    <text x="615" y="204" class="pin">VDD 5V</text>
+    <text x="615" y="222" class="pin">GND</text>
+    <text x="805" y="186" class="pin" text-anchor="end">M1A/B</text>
+    <text x="805" y="204" class="pin" text-anchor="end">M2A/B</text>
+    <text x="710" y="252" class="small" text-anchor="middle">SPI: CS_F, SCK, MOSI, MISO</text>
+    <text x="710" y="268" class="small" text-anchor="middle">Motion: STEP_F, DIR_F, EN, SG_F</text>
+  </g>
+
+  <g id="dri-b">
+    <rect x="600" y="320" width="220" height="160" class="boxg" rx="4"/>
+    <text x="710" y="344" class="h2" text-anchor="middle">DRI0035 #2 — BEND</text>
+    <text x="710" y="360" class="small" text-anchor="middle">TMC260 (CS_BEND)</text>
+    <text x="615" y="386" class="pin">VMOT 12V</text>
+    <text x="615" y="404" class="pin">VDD 5V</text>
+    <text x="615" y="422" class="pin">GND</text>
+    <text x="805" y="386" class="pin" text-anchor="end">M1A/B</text>
+    <text x="805" y="404" class="pin" text-anchor="end">M2A/B</text>
+    <text x="710" y="452" class="small" text-anchor="middle">SPI: CS_B, SCK, MOSI, MISO</text>
+    <text x="710" y="468" class="small" text-anchor="middle">Motion: STEP_B, DIR_B, EN, SG_B</text>
+  </g>
+
+  <g id="dri-l">
+    <rect x="600" y="520" width="220" height="160" class="boxg" rx="4"/>
+    <text x="710" y="544" class="h2" text-anchor="middle">DRI0035 #3 — LIFT</text>
+    <text x="710" y="560" class="small" text-anchor="middle">TMC260 (CS_LIFT)</text>
+    <text x="615" y="586" class="pin">VMOT 12V</text>
+    <text x="615" y="604" class="pin">VDD 5V</text>
+    <text x="615" y="622" class="pin">GND</text>
+    <text x="805" y="586" class="pin" text-anchor="end">M1A/B</text>
+    <text x="805" y="604" class="pin" text-anchor="end">M2A/B</text>
+    <text x="710" y="652" class="small" text-anchor="middle">SPI: CS_L, SCK, MOSI, MISO</text>
+    <text x="710" y="668" class="small" text-anchor="middle">Motion: STEP_L, DIR_L, EN, SG_L</text>
+  </g>
+
+  <!-- ============ MOTORS ×3 ============ -->
+  <g id="m-f">
+    <circle cx="970" cy="200" r="55" stroke="#444" stroke-width="2" fill="#cccccc"/>
+    <text x="970" y="170" class="h3" text-anchor="middle">17HE15-1504S</text>
+    <text x="970" y="205" class="label" text-anchor="middle">FEED</text>
+    <text x="970" y="222" class="small" text-anchor="middle">42 N·cm</text>
+    <line x1="915" y1="200" x2="820" y2="195" stroke="#444" stroke-width="1.5"/>
+  </g>
+  <g id="m-b">
+    <circle cx="970" cy="400" r="55" stroke="#444" stroke-width="2" fill="#cccccc"/>
+    <text x="970" y="370" class="h3" text-anchor="middle">17HE15-1504S</text>
+    <text x="970" y="405" class="label" text-anchor="middle">BEND</text>
+    <text x="970" y="422" class="small" text-anchor="middle">42 N·cm</text>
+    <line x1="915" y1="400" x2="820" y2="395" stroke="#444" stroke-width="1.5"/>
+  </g>
+  <g id="m-l">
+    <circle cx="970" cy="600" r="55" stroke="#444" stroke-width="2" fill="#cccccc"/>
+    <text x="970" y="570" class="h3" text-anchor="middle">17HE15-1504S</text>
+    <text x="970" y="605" class="label" text-anchor="middle">LIFT</text>
+    <text x="970" y="622" class="small" text-anchor="middle">42 N·cm</text>
+    <line x1="915" y1="600" x2="820" y2="595" stroke="#444" stroke-width="1.5"/>
+  </g>
+
+  <!-- ============ POWER (PSU + bulk cap) ============ -->
+  <g id="psu">
+    <rect x="1080" y="120" width="280" height="100" class="boxr" rx="4"/>
+    <text x="1220" y="146" class="h2" text-anchor="middle">LRS-35-12 PSU</text>
+    <text x="1220" y="164" class="small" text-anchor="middle">12V / 3A / 36W</text>
+    <text x="1220" y="184" class="small" text-anchor="middle">Hiccup OCP, OVP</text>
+    <text x="1100" y="208" class="pin">+12V</text>
+    <text x="1340" y="208" class="pin" text-anchor="end">GND</text>
+
+    <rect x="1080" y="240" width="280" height="80" class="box" rx="4"/>
+    <text x="1220" y="264" class="h2" text-anchor="middle">Bulk Cap 1000µF/25V</text>
+    <text x="1220" y="284" class="small" text-anchor="middle">PSU 출력 직후 병렬</text>
+    <text x="1220" y="304" class="small" text-anchor="middle">가속 transient 흡수</text>
+
+    <rect x="1080" y="340" width="280" height="100" class="boxy" rx="4"/>
+    <text x="1220" y="366" class="h2" text-anchor="middle">전력 마진</text>
+    <text x="1220" y="386" class="small" text-anchor="middle">3축 IRUN=22 정상: 1.65A (55%)</text>
+    <text x="1220" y="404" class="small" text-anchor="middle">3축 가속 피크: ~2.7A (90%)</text>
+    <text x="1220" y="424" class="small" text-anchor="middle">→ 동시 가속 회피 + bulk cap</text>
+  </g>
+
+  <!-- ============ TMC260 SPI register summary ============ -->
+  <g id="tmc-cfg">
+    <rect x="1080" y="460" width="280" height="280" class="boxg" rx="4"/>
+    <text x="1220" y="486" class="h2" text-anchor="middle">TMC260 SPI 초기 설정</text>
+    <text x="1100" y="514" class="pin">GCONF      = 0x00000000</text>
+    <text x="1100" y="534" class="pin">SGCSCONF   = 0x00010016</text>
+    <text x="1100" y="550" class="small">  CS=22 (≈1.06A RMS)</text>
+    <text x="1100" y="566" class="small">  SGT=0  SFILT=1</text>
+    <text x="1100" y="586" class="pin">SMARTEN    = 0x00000000</text>
+    <text x="1100" y="602" class="small">  CoolStep OFF (초기)</text>
+    <text x="1100" y="622" class="pin">DRVCONF    = 0x000ED040</text>
+    <text x="1100" y="638" class="small">  TS2G=3.2µs SLP=med</text>
+    <text x="1100" y="658" class="pin">CHOPCONF   = 0x00091935</text>
+    <text x="1100" y="674" class="small">  SpreadCycle TBL=36</text>
+    <text x="1100" y="690" class="small">  HEND=3 HSTRT=3 TOFF=4</text>
+    <text x="1220" y="720" class="note" text-anchor="middle">R_SENSE = 0.15Ω 가정</text>
+  </g>
+
+  <!-- ============ CONNECTIONS (schematic flow) ============ -->
+  <!-- SPI bus shared -->
+  <path class="spi" d="M 300 235 L 350 235"/>          <!-- CS_F to TXS1 -->
+  <path class="spi" d="M 300 259 L 320 259 L 320 285 L 350 285"/>  <!-- CS_B -->
+  <path class="spi" d="M 300 283 L 310 283 L 310 305 L 350 305"/>  <!-- CS_L -->
+  <path class="spi" d="M 300 308 L 350 308"/>          <!-- SCK/MOSI/MISO -->
+  <path class="spi" d="M 530 240 L 600 200"/>          <!-- TXS1 -> FEED -->
+  <path class="spi" d="M 530 320 L 600 400"/>          <!-- TXS1 -> BEND -->
+  <path class="spi" d="M 530 380 L 600 600"/>          <!-- TXS1 -> LIFT -->
+
+  <!-- Motion -->
+  <path class="ctl" d="M 300 372 L 320 372 L 320 530 L 350 530"/>
+  <path class="ctl" d="M 300 472 L 330 472 L 330 540 L 350 540"/>
+  <path class="ctl" d="M 300 572 L 340 572 L 340 550 L 350 550"/>
+  <path class="ctl" d="M 530 540 C 580 540, 590 200, 600 200"/>
+  <path class="ctl" d="M 530 540 L 600 400"/>
+  <path class="ctl" d="M 530 540 C 580 540, 590 600, 600 600"/>
+
+  <!-- SG -->
+  <path class="sg" d="M 530 600 C 580 600, 590 250, 600 250" stroke-dasharray="3 2"/>
+  <path class="sg" d="M 530 620 C 580 620, 590 450, 600 450" stroke-dasharray="3 2"/>
+  <path class="sg" d="M 530 640 L 600 650" stroke-dasharray="3 2"/>
+
+  <!-- Power 12V (PSU -> 3 DRI VMOT) -->
+  <path class="pwr" d="M 1080 200 L 1010 200 L 1010 80 L 720 80 L 720 186"/>
+  <path class="pwr" d="M 720 80 L 920 80 L 920 360 L 720 386"/>
+  <path class="pwr" d="M 920 80 L 920 560 L 720 586"/>
+
+  <!-- Power 5V (EVK 5V -> DRI VDD) -->
+  <path class="pwr" d="M 300 720 L 555 720 L 555 70 L 720 70 L 720 204" stroke-dasharray="6 3"/>
+  <path class="pwr" d="M 555 70 L 920 70 L 920 360 L 720 404" stroke-dasharray="6 3"/>
+  <path class="pwr" d="M 920 70 L 920 560 L 720 604" stroke-dasharray="6 3"/>
+
+  <!-- GND bus -->
+  <path class="gnd" d="M 300 720 L 1080 720 L 1080 200" stroke-opacity="0.5"/>
+
+  <!-- ============ NOTES ============ -->
+  <g id="notes">
+    <rect x="60" y="780" width="1300" height="100" class="box" rx="4"/>
+    <text x="80" y="804" class="h2">설계 결정 요약</text>
+    <text x="80" y="824" class="small">• Vmot = 12V (양산 일치) | LRS-35-12 단일 PSU 3축 공유 + 1000µF bulk cap | Plan B (정격 IRUN=22, 3축 동시 가속 회피)</text>
+    <text x="80" y="842" class="small">• ECSPI2 (SPI bus) 공유: SS0=HW CS_FEED, GPIO3_IO19=CS_BEND, GPIO3_IO20=CS_LIFT (양산 ROTATE/LIFT CS 핀 재사용 — 테스트벤치는 ROTATE 미사용)</text>
+    <text x="80" y="860" class="small">• 향후 Plan C: LRS-75-12 (75W/6A) 업그레이드 시 4축 (+CUTTER) + 마진 확보 가능 | DRV8825는 미래 ROTATE/CUTTER용 예비</text>
+  </g>
+
+</svg>

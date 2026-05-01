@@ -49,9 +49,12 @@ claude-dev-forge/
 kc_test/
 
 # Internal dev tooling / project management (do not publish)
-.claude/
-CLAUDE.md
-MEMORY.md
+# .claude/ is ignored except AGENT_MEMORY/ which we sync via git
+.claude/*
+!.claude/AGENT_MEMORY/
+.claude/AGENT_MEMORY/.*
+/CLAUDE.md
+/MEMORY.md
 output/
 ref/
 

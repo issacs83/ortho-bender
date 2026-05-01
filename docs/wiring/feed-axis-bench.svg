@@ -1,0 +1,315 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 900" font-family="'Noto Sans CJK KR', 'Noto Sans', Arial, sans-serif">
+  <!-- ============ STYLES ============ -->
+  <defs>
+    <style>
+      .title  { font: bold 22px 'Noto Sans CJK KR', Arial; fill: #111; }
+      .h2     { font: bold 16px 'Noto Sans CJK KR', Arial; fill: #111; }
+      .label  { font: 12px 'Noto Sans CJK KR', Arial; fill: #222; }
+      .pin    { font: 11px 'Noto Sans CJK KR', Arial; fill: #222; }
+      .small  { font: 10px 'Noto Sans CJK KR', Arial; fill: #555; }
+      .note   { font: italic 11px 'Noto Sans CJK KR', Arial; fill: #b00; }
+      .pwr    { stroke: #d00; stroke-width: 2.5; fill: none; }
+      .gnd    { stroke: #000; stroke-width: 2; fill: none; }
+      .sig    { stroke: #06b; stroke-width: 1.6; fill: none; }
+      .sigy   { stroke: #c80; stroke-width: 1.6; fill: none; }
+      .sigp   { stroke: #80a; stroke-width: 1.6; fill: none; }
+      .siggn  { stroke: #080; stroke-width: 1.6; fill: none; }
+      .motor  { stroke: #444; stroke-width: 2; fill: none; }
+      .box    { stroke: #333; stroke-width: 1.5; fill: #fafafa; }
+      .boxy   { stroke: #333; stroke-width: 1.5; fill: #fffadc; }
+      .boxg   { stroke: #333; stroke-width: 1.5; fill: #e6f4e6; }
+      .boxb   { stroke: #333; stroke-width: 1.5; fill: #e6efff; }
+      .boxr   { stroke: #333; stroke-width: 1.5; fill: #ffe6e6; }
+      .pad    { fill: #ffd; stroke: #aa9; }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#06b"/>
+    </marker>
+  </defs>
+
+  <!-- ============ TITLE ============ -->
+  <text x="40" y="40" class="title">Ortho-Bender FEED 단축 배선도 (DRI0035 + 17HE15-1504S, 12V Vmot)</text>
+  <text x="40" y="62" class="small">Single-axis test bench — i.MX8MP EVK → TXS0108E ×2 → DRI0035 (TMC260) → 17HE15-1504S | LRS-35-12 PSU | E-STOP active-low</text>
+
+  <!-- ============ 1. i.MX8MP EVK BOARD ============ -->
+  <g id="evk">
+    <rect x="60" y="120" width="260" height="640" class="box" rx="6"/>
+    <text x="190" y="148" class="h2" text-anchor="middle">i.MX8MP EVK</text>
+    <text x="190" y="166" class="small" text-anchor="middle">(Linux gpiod / spidev)</text>
+
+    <!-- Power rails -->
+    <rect x="80" y="190" width="60" height="22" class="boxr"/>
+    <text x="110" y="206" class="pin" text-anchor="middle">3.3V</text>
+    <rect x="80" y="218" width="60" height="22" class="boxr"/>
+    <text x="110" y="234" class="pin" text-anchor="middle">5V</text>
+    <rect x="80" y="246" width="60" height="22" class="box"/>
+    <text x="110" y="262" class="pin" text-anchor="middle">GND</text>
+
+    <!-- ECSPI2 SPI bus (J21 expansion) -->
+    <text x="190" y="296" class="h2" text-anchor="middle">ECSPI2 (1.8V)</text>
+    <rect x="155" y="308" width="155" height="22" class="boxb"/>
+    <text x="232" y="324" class="pin" text-anchor="middle">SS0   GPIO5_IO13 → CS_FEED</text>
+    <rect x="155" y="332" width="155" height="22" class="boxb"/>
+    <text x="232" y="348" class="pin" text-anchor="middle">SCLK  GPIO5_IO10</text>
+    <rect x="155" y="356" width="155" height="22" class="boxb"/>
+    <text x="232" y="372" class="pin" text-anchor="middle">MOSI  GPIO5_IO11</text>
+    <rect x="155" y="380" width="155" height="22" class="boxb"/>
+    <text x="232" y="396" class="pin" text-anchor="middle">MISO  GPIO5_IO12</text>
+
+    <!-- Motion GPIOs -->
+    <text x="190" y="432" class="h2" text-anchor="middle">Motion GPIO (1.8V)</text>
+    <rect x="155" y="444" width="155" height="22" class="boxb"/>
+    <text x="232" y="460" class="pin" text-anchor="middle">GPIO4_IO00 → STEP</text>
+    <rect x="155" y="468" width="155" height="22" class="boxb"/>
+    <text x="232" y="484" class="pin" text-anchor="middle">GPIO4_IO01 → DIR</text>
+    <rect x="155" y="492" width="155" height="22" class="boxb"/>
+    <text x="232" y="508" class="pin" text-anchor="middle">GPIO4_IO04 → DRV_ENN</text>
+    <rect x="155" y="516" width="155" height="22" class="boxb"/>
+    <text x="232" y="532" class="pin" text-anchor="middle">GPIO4_IO05 ← SG (DIAG)</text>
+
+    <!-- E-STOP -->
+    <text x="190" y="572" class="h2" text-anchor="middle">Safety</text>
+    <rect x="155" y="584" width="155" height="22" class="boxr"/>
+    <text x="232" y="600" class="pin" text-anchor="middle">GPIO4_IO07 ← E-STOP</text>
+
+    <!-- Pin breakouts (right edge dots) -->
+    <circle cx="320" cy="201" r="3" fill="#d00"/>   <!-- 3.3V -->
+    <circle cx="320" cy="229" r="3" fill="#d00"/>   <!-- 5V -->
+    <circle cx="320" cy="257" r="3" fill="#000"/>   <!-- GND -->
+    <circle cx="320" cy="319" r="3" fill="#06b"/>   <!-- CS -->
+    <circle cx="320" cy="343" r="3" fill="#06b"/>   <!-- SCK -->
+    <circle cx="320" cy="367" r="3" fill="#06b"/>   <!-- MOSI -->
+    <circle cx="320" cy="391" r="3" fill="#06b"/>   <!-- MISO -->
+    <circle cx="320" cy="455" r="3" fill="#c80"/>   <!-- STEP -->
+    <circle cx="320" cy="479" r="3" fill="#c80"/>   <!-- DIR -->
+    <circle cx="320" cy="503" r="3" fill="#80a"/>   <!-- DRV_ENN -->
+    <circle cx="320" cy="527" r="3" fill="#080"/>   <!-- SG -->
+    <circle cx="320" cy="595" r="3" fill="#d00"/>   <!-- E-STOP -->
+  </g>
+
+  <!-- ============ 2. TXS0108E #1 (SPI bus level shifter) ============ -->
+  <g id="txs1">
+    <rect x="430" y="280" width="160" height="170" class="boxy" rx="4"/>
+    <text x="510" y="304" class="h2" text-anchor="middle">TXS0108E #1</text>
+    <text x="510" y="320" class="small" text-anchor="middle">SPI bus 1.8V↔5V</text>
+    <line x1="510" y1="330" x2="510" y2="445" stroke="#aaa" stroke-dasharray="3 3"/>
+
+    <text x="450" y="350" class="pin">A1 ← CS</text>
+    <text x="450" y="370" class="pin">A2 ← SCK</text>
+    <text x="450" y="390" class="pin">A3 ← MOSI</text>
+    <text x="450" y="410" class="pin">A4 → MISO</text>
+    <text x="450" y="430" class="pin">VCCA 1.8V</text>
+
+    <text x="528" y="350" class="pin">B1 → CS</text>
+    <text x="528" y="370" class="pin">B2 → SCK</text>
+    <text x="528" y="390" class="pin">B3 → MOSI</text>
+    <text x="528" y="410" class="pin">B4 ← MISO</text>
+    <text x="528" y="430" class="pin">VCCB 5V</text>
+  </g>
+
+  <!-- ============ 3. TXS0108E #2 (motion + safety level shifter) ============ -->
+  <g id="txs2">
+    <rect x="430" y="470" width="160" height="170" class="boxy" rx="4"/>
+    <text x="510" y="494" class="h2" text-anchor="middle">TXS0108E #2</text>
+    <text x="510" y="510" class="small" text-anchor="middle">Motion 1.8V↔5V</text>
+    <line x1="510" y1="520" x2="510" y2="635" stroke="#aaa" stroke-dasharray="3 3"/>
+
+    <text x="450" y="540" class="pin">A1 ← STEP</text>
+    <text x="450" y="560" class="pin">A2 ← DIR</text>
+    <text x="450" y="580" class="pin">A3 ← ENN</text>
+    <text x="450" y="600" class="pin">A4 → SG</text>
+    <text x="450" y="620" class="pin">VCCA 1.8V</text>
+
+    <text x="528" y="540" class="pin">B1 → STEP</text>
+    <text x="528" y="560" class="pin">B2 → DIR</text>
+    <text x="528" y="580" class="pin">B3 → ENN</text>
+    <text x="528" y="600" class="pin">B4 ← SG</text>
+    <text x="528" y="620" class="pin">VCCB 5V</text>
+  </g>
+
+  <!-- ============ 4. DRI0035 (TMC260 shield) ============ -->
+  <g id="dri">
+    <rect x="700" y="170" width="280" height="510" class="boxg" rx="6"/>
+    <text x="840" y="196" class="h2" text-anchor="middle">DRI0035 — DFRobot TMC260</text>
+    <text x="840" y="214" class="small" text-anchor="middle">FEED axis | SpreadCycle | StallGuard2</text>
+    <rect x="780" y="240" width="120" height="100" class="box" rx="4"/>
+    <text x="840" y="256" class="small" text-anchor="middle">TMC260</text>
+
+    <!-- Left side pins (control, from TXS) -->
+    <text x="720" y="280" class="pin">CS</text>
+    <circle cx="700" cy="276" r="3" fill="#06b"/>
+    <text x="720" y="300" class="pin">SCK</text>
+    <circle cx="700" cy="296" r="3" fill="#06b"/>
+    <text x="720" y="320" class="pin">SDI (MOSI)</text>
+    <circle cx="700" cy="316" r="3" fill="#06b"/>
+    <text x="720" y="340" class="pin">SDO (MISO)</text>
+    <circle cx="700" cy="336" r="3" fill="#06b"/>
+
+    <text x="720" y="380" class="pin">STEP</text>
+    <circle cx="700" cy="376" r="3" fill="#c80"/>
+    <text x="720" y="400" class="pin">DIR</text>
+    <circle cx="700" cy="396" r="3" fill="#c80"/>
+    <text x="720" y="420" class="pin">EN (active-low)</text>
+    <circle cx="700" cy="416" r="3" fill="#80a"/>
+    <text x="720" y="440" class="pin">SG (DIAG)</text>
+    <circle cx="700" cy="436" r="3" fill="#080"/>
+
+    <text x="720" y="470" class="pin">VDD 5V</text>
+    <circle cx="700" cy="466" r="3" fill="#d00"/>
+    <text x="720" y="490" class="pin">GND</text>
+    <circle cx="700" cy="486" r="3" fill="#000"/>
+
+    <!-- Power section -->
+    <text x="720" y="540" class="pin">VMOT 12V</text>
+    <circle cx="700" cy="536" r="3" fill="#d00"/>
+    <text x="720" y="560" class="pin">GND (Vmot)</text>
+    <circle cx="700" cy="556" r="3" fill="#000"/>
+
+    <!-- Right side pins (motor coils) -->
+    <text x="960" y="280" class="pin" text-anchor="end">M1A (1A)</text>
+    <circle cx="980" cy="276" r="3" fill="#000"/>
+    <text x="960" y="305" class="pin" text-anchor="end">M1B (1B)</text>
+    <circle cx="980" cy="301" r="3" fill="#06b"/>
+    <text x="960" y="335" class="pin" text-anchor="end">M2A (2A)</text>
+    <circle cx="980" cy="331" r="3" fill="#080"/>
+    <text x="960" y="360" class="pin" text-anchor="end">M2B (2B)</text>
+    <circle cx="980" cy="356" r="3" fill="#d00"/>
+
+    <!-- Note on R_SENSE -->
+    <text x="840" y="615" class="note" text-anchor="middle">R_SENSE = 0.15Ω 가정 (보드 실측 필수)</text>
+    <text x="840" y="635" class="note" text-anchor="middle">IRUN=22 (≈1.06A RMS), IHOLD=8 (≈0.36A)</text>
+    <text x="840" y="655" class="note" text-anchor="middle">SPI Mode 3, 2 MHz, CS_HIGH (kernel default)</text>
+  </g>
+
+  <!-- ============ 5. STEPPER MOTOR ============ -->
+  <g id="motor">
+    <circle cx="1130" cy="280" r="65" class="motor" fill="#cccccc"/>
+    <text x="1130" y="220" class="h2" text-anchor="middle">17HE15-1504S</text>
+    <text x="1130" y="240" class="small" text-anchor="middle">NEMA 17 · 1.5A/Φ · 2.3Ω · 4mH</text>
+    <text x="1130" y="285" class="label" text-anchor="middle">Stepper</text>
+    <text x="1130" y="305" class="label" text-anchor="middle">42N·cm</text>
+    <line x1="1095" y1="280" x2="1075" y2="276" stroke="#000" stroke-width="2"/>
+    <line x1="1100" y1="295" x2="1075" y2="301" stroke="#06b" stroke-width="2"/>
+    <line x1="1100" y1="315" x2="1075" y2="331" stroke="#080" stroke-width="2"/>
+    <line x1="1095" y1="335" x2="1075" y2="356" stroke="#d00" stroke-width="2"/>
+    <text x="1175" y="370" class="small" text-anchor="middle">A+(BLK) A-(BLU)</text>
+    <text x="1175" y="385" class="small" text-anchor="middle">B+(GRN) B-(RED)</text>
+  </g>
+
+  <!-- ============ 6. LRS-35-12 PSU + Bulk Cap ============ -->
+  <g id="psu">
+    <rect x="60" y="780" width="260" height="100" class="boxr" rx="4"/>
+    <text x="190" y="804" class="h2" text-anchor="middle">LRS-35-12 PSU</text>
+    <text x="190" y="822" class="small" text-anchor="middle">12V / 3A / 36W (Mean Well)</text>
+    <text x="190" y="840" class="small" text-anchor="middle">110~150% OCP Hiccup mode</text>
+    <text x="100" y="868" class="pin">+12V</text>
+    <circle cx="80" cy="864" r="3" fill="#d00"/>
+    <text x="280" y="868" class="pin" text-anchor="end">GND</text>
+    <circle cx="300" cy="864" r="3" fill="#000"/>
+  </g>
+
+  <!-- Bulk capacitor -->
+  <g id="cap">
+    <rect x="370" y="780" width="120" height="100" class="box" rx="4"/>
+    <text x="430" y="804" class="h2" text-anchor="middle">Bulk Cap</text>
+    <text x="430" y="822" class="small" text-anchor="middle">1000 µF / 25V</text>
+    <text x="430" y="840" class="small" text-anchor="middle">(가속 transient 흡수)</text>
+    <line x1="395" y1="858" x2="395" y2="868" stroke="#000" stroke-width="2"/>
+    <line x1="385" y1="868" x2="405" y2="868" stroke="#000" stroke-width="3"/>
+    <line x1="465" y1="858" x2="465" y2="868" stroke="#000" stroke-width="2"/>
+    <line x1="450" y1="868" x2="480" y2="868" stroke="#000" stroke-width="3"/>
+    <text x="395" y="855" class="small" text-anchor="middle">+</text>
+    <text x="465" y="855" class="small" text-anchor="middle">−</text>
+  </g>
+
+  <!-- ============ 7. E-STOP button ============ -->
+  <g id="estop">
+    <rect x="540" y="780" width="120" height="100" class="boxr" rx="4"/>
+    <text x="600" y="804" class="h2" text-anchor="middle">E-STOP</text>
+    <text x="600" y="822" class="small" text-anchor="middle">N.C. push-button</text>
+    <text x="600" y="840" class="small" text-anchor="middle">10kΩ pull-up to 1.8V</text>
+    <text x="600" y="860" class="small" text-anchor="middle">→ GPIO4_IO07</text>
+    <circle cx="555" cy="868" r="3" fill="#d00"/>
+    <circle cx="645" cy="868" r="3" fill="#000"/>
+  </g>
+
+  <!-- ============ WIRES ============ -->
+  <!-- 5V from EVK to TXS VCCB (both) and DRI VDD -->
+  <path class="pwr" d="M 320 229 L 360 229 L 360 430 L 430 430"/>          <!-- EVK 5V -> TXS1 VCCB -->
+  <path class="pwr" d="M 360 430 L 360 620 L 430 620"/>                    <!-- 5V -> TXS2 VCCB -->
+  <path class="pwr" d="M 360 229 L 360 466 L 700 466"/>                    <!-- 5V -> DRI VDD (override route) -->
+
+  <!-- 1.8V from EVK 3.3V (note: actually need 1.8V; EVK 3.3V will be used via LDO if needed). For diagram clarity, label 1.8V -->
+  <path class="pwr" d="M 320 201 L 350 201 L 350 430 L 430 430" stroke="#a40" stroke-dasharray="2 2"/>
+  <text x="345" y="195" class="note">⚠ 1.8V rail 분기 필요</text>
+
+  <!-- GND bus -->
+  <path class="gnd" d="M 320 257 L 410 257 L 410 750 L 190 750 L 190 780"/>  <!-- EVK GND -> PSU GND -->
+  <path class="gnd" d="M 410 750 L 700 750 L 700 486"/>                      <!-- DRI GND -->
+  <path class="gnd" d="M 410 750 L 700 750 L 700 556"/>                      <!-- DRI Vmot GND -->
+  <path class="gnd" d="M 410 750 L 645 750 L 645 868"/>                      <!-- E-STOP GND -->
+  <path class="gnd" d="M 410 750 L 465 750 L 465 868"/>                      <!-- Cap - -->
+
+  <!-- 12V Vmot rail -->
+  <path class="pwr" d="M 80 864 L 80 770 L 395 770 L 395 868"/>          <!-- PSU+ -> cap+ -->
+  <path class="pwr" d="M 80 770 L 700 770 L 700 536"/>                   <!-- 12V -> DRI VMOT -->
+
+  <!-- SPI: EVK -> TXS1 A side -->
+  <path class="sig" d="M 320 319 C 380 319, 400 350, 430 350"/>          <!-- CS -->
+  <path class="sig" d="M 320 343 C 380 343, 400 370, 430 370"/>          <!-- SCK -->
+  <path class="sig" d="M 320 367 C 380 367, 400 390, 430 390"/>          <!-- MOSI -->
+  <path class="sig" d="M 320 391 C 380 391, 400 410, 430 410"/>          <!-- MISO -->
+
+  <!-- SPI: TXS1 B side -> DRI -->
+  <path class="sig" d="M 590 350 C 640 350, 670 280, 700 276"/>          <!-- CS -->
+  <path class="sig" d="M 590 370 C 640 370, 670 300, 700 296"/>          <!-- SCK -->
+  <path class="sig" d="M 590 390 C 640 390, 670 320, 700 316"/>          <!-- MOSI -->
+  <path class="sig" d="M 590 410 C 640 410, 670 340, 700 336"/>          <!-- MISO -->
+
+  <!-- Motion: EVK -> TXS2 A side -->
+  <path class="sigy" d="M 320 455 C 380 455, 400 540, 430 540"/>         <!-- STEP -->
+  <path class="sigy" d="M 320 479 C 380 479, 400 560, 430 560"/>         <!-- DIR -->
+  <path class="sigp" d="M 320 503 C 380 503, 400 580, 430 580"/>         <!-- DRV_ENN -->
+  <path class="siggn" d="M 320 527 C 380 527, 400 600, 430 600"/>        <!-- SG -->
+
+  <!-- Motion: TXS2 B side -> DRI -->
+  <path class="sigy" d="M 590 540 C 640 540, 670 380, 700 376"/>         <!-- STEP -->
+  <path class="sigy" d="M 590 560 C 640 560, 670 400, 700 396"/>         <!-- DIR -->
+  <path class="sigp" d="M 590 580 C 640 580, 670 420, 700 416"/>         <!-- ENN -->
+  <path class="siggn" d="M 590 600 C 640 600, 670 440, 700 436"/>        <!-- SG -->
+
+  <!-- E-STOP -->
+  <path class="sig" d="M 320 595 L 555 595 L 555 868" stroke="#d00"/>
+
+  <!-- Motor coil wires -->
+  <path class="motor" d="M 980 276 L 1075 276" stroke="#000"/>           <!-- BLK A+ -->
+  <path class="motor" d="M 980 301 L 1075 301" stroke="#06b"/>           <!-- BLU A- -->
+  <path class="motor" d="M 980 331 L 1075 331" stroke="#080"/>           <!-- GRN B+ -->
+  <path class="motor" d="M 980 356 L 1075 356" stroke="#d00"/>           <!-- RED B- -->
+
+  <!-- ============ LEGEND ============ -->
+  <g id="legend">
+    <rect x="700" y="780" width="290" height="100" class="box" rx="4"/>
+    <text x="845" y="804" class="h2" text-anchor="middle">Legend</text>
+
+    <line x1="720" y1="822" x2="755" y2="822" stroke="#d00" stroke-width="2.5"/>
+    <text x="765" y="826" class="small">+12V / +5V / +1.8V</text>
+
+    <line x1="720" y1="842" x2="755" y2="842" stroke="#000" stroke-width="2"/>
+    <text x="765" y="846" class="small">GND</text>
+
+    <line x1="870" y1="822" x2="905" y2="822" stroke="#06b" stroke-width="1.6"/>
+    <text x="912" y="826" class="small">SPI</text>
+
+    <line x1="870" y1="842" x2="905" y2="842" stroke="#c80" stroke-width="1.6"/>
+    <text x="912" y="846" class="small">STEP/DIR</text>
+
+    <line x1="870" y1="862" x2="905" y2="862" stroke="#080" stroke-width="1.6"/>
+    <text x="912" y="866" class="small">SG (DIAG)</text>
+
+    <line x1="720" y1="862" x2="755" y2="862" stroke="#80a" stroke-width="1.6"/>
+    <text x="765" y="866" class="small">DRV_ENN</text>
+  </g>
+
+</svg>
