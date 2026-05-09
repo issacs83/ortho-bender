@@ -71,6 +71,11 @@ class MotorService:
         import asyncio as _asyncio
         self._asyncio = _asyncio
         self._bench_jog_task: Optional[_asyncio.Task] = None
+        # Sticky E-STOP flag — stays True until enable_drivers/reset clears it,
+        # so the dashboard can show ESTOP instead of bouncing back to IDLE the
+        # moment the jog task finishes. Without this the bar would keep moving
+        # because _bench_status returned JOGGING while the cancel was in flight.
+        self._bench_estop_active: bool = False
         # Cache last TMC status so motor status can include it even between polls
         self._last_tmc: Optional[bytes] = None
 
@@ -243,11 +248,19 @@ class MotorService:
         axes.sort(key=lambda a: int(a.axis))
         # Reflect actual motion in the state field so the dashboard's
         # "State: IDLE/JOGGING" indicator matches what the bench is doing.
-        # A live _bench_jog_task means the SPI pulse loop is running.
+        # ESTOP is sticky and wins over JOGGING — once the operator hits
+        # E-STOP the dashboard must keep showing it until the condition
+        # is explicitly cleared by enable_drivers()/reset(), even though
+        # the cancelled jog task itself would let state fall back to IDLE.
         bench_jog_active = (
             self._bench_jog_task is not None and not self._bench_jog_task.done()
         )
-        state = MotionState.JOGGING if bench_jog_active else MotionState.IDLE
+        if self._bench_estop_active:
+            state = MotionState.ESTOP
+        elif bench_jog_active:
+            state = MotionState.JOGGING
+        else:
+            state = MotionState.IDLE
         return MotorStatusResponse(
             state=state,
             axes=axes,
@@ -382,9 +395,8 @@ class MotorService:
         Production: hardware E-STOP runs in parallel via M7 GPIO ISR + DRV_ENN.
         """
         if self.has_bench:
-            # Direct call into spidev backend's PWM/silence primitives.
-            # PWM off first (kills STEP), then silence all 3 chips so chopper
-            # outputs go inactive even if a pulse_step task is mid-flight.
+            # 1) Kill PWM + silence chips immediately. Coils dead first so the
+            #    motor is mechanically safe even if step 2 raises.
             try:
                 await self._spi_backend._pwm_disable()
             except Exception as exc:
@@ -394,7 +406,23 @@ class MotorService:
                     await self._spi_backend._silence_chip(cs)
                 except Exception as exc:
                     log.warning("E-STOP silence cs=%d failed: %s", cs, exc)
-            log.warning("E-STOP triggered on bench: all axes silenced")
+            # 2) Cancel any in-flight jog task. Without this the pulse_step_multi
+            #    loop keeps incrementing self._spi_backend.positions even though
+            #    the motor is electrically stopped, which makes the dashboard's
+            #    progress bar / position readout drift after E-STOP. The user
+            #    saw exactly this: motor stopped, UI kept counting.
+            if self._bench_jog_task is not None and not self._bench_jog_task.done():
+                self._bench_jog_task.cancel()
+                try:
+                    await self._bench_jog_task
+                except (self._asyncio.CancelledError, Exception):
+                    pass
+            self._bench_jog_task = None
+            # 3) Mark sticky ESTOP so _bench_status reports MotionState.ESTOP
+            #    until enable_drivers() / reset() acknowledges the operator
+            #    has cleared the condition.
+            self._bench_estop_active = True
+            log.warning("E-STOP triggered on bench: all axes silenced + jog task cancelled")
             return await self.get_status()
         await self._ipc.send_recv(MSG_MOTION_ESTOP)
         return await self.get_status()
@@ -405,7 +433,14 @@ class MotorService:
 
         Standard practice after a disconnect: the drivers will hold position
         again. The M7 handler is authoritative; this just dispatches the IPC.
+
+        Also clears the sticky bench E-STOP flag — re-enabling the drivers
+        is the operator's explicit acknowledgement that the E-STOP condition
+        has been resolved.
         """
+        if self.has_bench:
+            self._bench_estop_active = False
+            return await self.get_status()
         payload = build_drv_enable_payload(True, axis_mask)
         await self._ipc.send_recv(MSG_MOTION_SET_DRV_ENABLE, payload)
         return await self.get_status()
@@ -422,7 +457,14 @@ class MotorService:
         return await self.get_status()
 
     async def reset(self) -> MotorStatusResponse:
-        """Reset motor fault state and re-enable drivers."""
+        """Reset motor fault state and re-enable drivers.
+
+        Also clears the sticky bench E-STOP flag (same semantics as
+        enable_drivers — explicit operator acknowledgement).
+        """
+        if self.has_bench:
+            self._bench_estop_active = False
+            return await self.get_status()
         # TODO: add axis_mask payload if M7 firmware supports per-axis reset
         await self._ipc.send_recv(MSG_MOTION_RESET)
         return await self.get_status()
