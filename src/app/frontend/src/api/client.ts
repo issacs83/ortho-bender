@@ -155,10 +155,21 @@ export const motorApi = {
       body: JSON.stringify({ axis, direction, speed, distance }),
     }),
 
-  jogStart: (axis: number, direction: 1 | -1, speed: number): Promise<unknown> =>
+  jogStart: (
+    axis: number,
+    direction: 1 | -1,
+    speed: number,
+    opts: { continuous?: boolean } = {}
+  ): Promise<unknown> =>
     request("/api/motor/jog/start", {
       method: "POST",
-      body: JSON.stringify({ axis, direction, speed, distance: 0 }),
+      body: JSON.stringify({
+        axis,
+        direction,
+        speed,
+        distance: 0,
+        continuous: !!opts.continuous,
+      }),
     }),
 
   jogStop: (): Promise<unknown> =>

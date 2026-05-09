@@ -91,6 +91,13 @@ class MotorJogRequest(BaseModel):
     direction: int = Field(..., description="+1 for positive, -1 for negative")
     speed: float = Field(..., gt=0, description="Jog speed in mm/s or deg/s")
     distance: float = Field(0.0, ge=0, description="Distance limit (0 = continuous)")
+    continuous: bool = Field(
+        False,
+        description=(
+            "Bench-only. When True the jog runs for up to 60 s instead of "
+            "the default 5 s. Used by ◀◀/▶▶ single-click continuous mode."
+        ),
+    )
 
     @field_validator("direction")
     @classmethod

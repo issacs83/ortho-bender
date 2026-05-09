@@ -128,18 +128,20 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   }
 
   function startContinuousJog(axis: number, dir: 1 | -1) {
+    // Long-press jog: 5 s backend fallback, frontend stops on pointerup.
     motorApi.jogStart(axis, dir, jogSpeed).catch((e) => setError(String(e)));
     attachReleaseHandlers();
   }
+  function startSingleClickRun(axis: number, dir: 1 | -1) {
+    // Single-click continuous run: 60 s backend fallback, user stops with
+    // the row's STOP button. No window-release listener attached.
+    motorApi.jogStart(axis, dir, jogSpeed, { continuous: true })
+      .catch((e) => setError(String(e)));
+  }
   function stopContinuousJog() {
-    // Imperative stop (used as belt-and-suspenders by onMouseLeave etc).
-    // The window listener already handles release, but calling twice is
-    // safe — backend's jog_stop is idempotent.
     if (jogIntervalRef.current) { clearInterval(jogIntervalRef.current); jogIntervalRef.current = null; }
-    if (jogActiveRef.current) {
-      jogActiveRef.current = false;
-      motorApi.jogStop().catch(() => null);
-    }
+    jogActiveRef.current = false;
+    motorApi.jogStop().catch(() => null);
   }
 
   async function moveTo() {
@@ -199,32 +201,56 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
               <div style={{ flex: 1, height: 6, background: BG_PRIMARY, borderRadius: 3 }}>
                 <div style={{ height: '100%', width: `${Math.min(100, Math.abs(pos) / 200 * 100)}%`, background: AXIS_COLORS[axisId], borderRadius: 3 }} />
               </div>
+              {/* ◀◀  =  single-click continuous run (CCW) */}
               <button
                 disabled={!enabled}
-                onPointerDown={(e) => { if (enabled) { e.preventDefault(); press(-1)(); } }}
+                onClick={() => { if (enabled) startSingleClickRun(axisId, -1); }}
                 onContextMenu={(e) => e.preventDefault()}
-                style={{ ...jogBtnStyle, color: '#93c5fd' }}
+                title="한 번 클릭 → 반시계방향으로 계속 회전 (정지 버튼으로 중지)"
+                style={{ ...jogBtnStyle, color: '#a5b4fc', background: '#1e1b4b' }}
                 className="jog-btn"
               >◀◀</button>
+              {/* ◀  =  long-press jog (hold to rotate, release to stop) */}
               <button
                 disabled={!enabled}
                 onPointerDown={(e) => { if (enabled) { e.preventDefault(); press(-1)(); } }}
                 onContextMenu={(e) => e.preventDefault()}
+                title="누르고 있는 동안 반시계방향 회전"
                 style={jogBtnStyle}
                 className="jog-btn"
               >◀</button>
+              {/* STOP  =  immediate halt of any running jog/run on this bench */}
+              <button
+                disabled={!enabled}
+                onClick={() => { if (enabled) stopContinuousJog(); }}
+                title="즉시 정지"
+                style={{
+                  ...jogBtnStyle,
+                  color: '#fca5a5',
+                  background: '#7f1d1d',
+                  border: '1px solid #991b1b',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: 0.5,
+                }}
+                className="jog-btn"
+              >STOP</button>
+              {/* ▶  =  long-press jog */}
               <button
                 disabled={!enabled}
                 onPointerDown={(e) => { if (enabled) { e.preventDefault(); press(+1)(); } }}
                 onContextMenu={(e) => e.preventDefault()}
+                title="누르고 있는 동안 시계방향 회전"
                 style={jogBtnStyle}
                 className="jog-btn"
               >▶</button>
+              {/* ▶▶  =  single-click continuous run (CW) */}
               <button
                 disabled={!enabled}
-                onPointerDown={(e) => { if (enabled) { e.preventDefault(); press(+1)(); } }}
+                onClick={() => { if (enabled) startSingleClickRun(axisId, +1); }}
                 onContextMenu={(e) => e.preventDefault()}
-                style={{ ...jogBtnStyle, color: '#93c5fd' }}
+                title="한 번 클릭 → 시계방향으로 계속 회전 (정지 버튼으로 중지)"
+                style={{ ...jogBtnStyle, color: '#a5b4fc', background: '#1e1b4b' }}
                 className="jog-btn"
               >▶▶</button>
             </div>

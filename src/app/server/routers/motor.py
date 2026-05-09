@@ -94,13 +94,18 @@ async def motor_jog_start(
     body: MotorJogRequest,
     svc: MotorService = Depends(_motor_service),
 ) -> ApiResponse:
-    """Begin continuous bench jog (long-press start).
+    """Begin continuous bench jog.
 
-    The frontend should call this on mousedown/touchstart, then
-    POST /api/motor/jog/stop on mouseup/touchend/leave.
+    Two patterns supported:
+      - long-press (default, body.continuous=False): pointerdown → start,
+        pointerup → /jog/stop. 5 s safety fallback.
+      - single-click continuous (body.continuous=True): one click → run,
+        manual STOP button → /jog/stop. 60 s safety fallback.
     """
     try:
-        result = await svc.jog_start(body.axis, body.direction, body.speed)
+        result = await svc.jog_start(
+            body.axis, body.direction, body.speed, continuous=body.continuous
+        )
         return ok(result)
     except Exception as exc:
         log.error("Motor jog/start failed: %s", exc)

@@ -78,45 +78,57 @@ class MotorService:
     def has_bench(self) -> bool:
         return self._spi_backend is not None
 
-    async def jog_start(self, axis: int, direction: int, speed: float = 1000.0) -> dict:
-        """Begin continuous bench rotation (long-press jog).
+    async def jog_start(
+        self,
+        axis: int,
+        direction: int,
+        speed: float = 1000.0,
+        continuous: bool = False,
+    ) -> dict:
+        """Begin bench rotation.
 
-        Cancels any prior bench jog task and starts a long pulse_step in
-        the background. The frontend should call jog_stop() on mouseup.
-        Bench-only; in production the M7 handles continuous jog directly.
+        Two modes:
+          - continuous=False (default, used by the long-press ◀ / ▶
+            buttons): 5 s safety-fallback duration. Frontend is expected
+            to send jog_stop on pointerup; the 5 s cap protects against
+            dropped stop requests.
+          - continuous=True (used by single-click ◀◀ / ▶▶ buttons):
+            60 s duration. Stays on until the user presses the row's
+            STOP button (which calls jog_stop). 60 s caps unattended
+            runtime in case the user forgets to stop.
         """
         if not self.has_bench:
-            # Production: dispatch normal jog with large distance
             payload = build_jog_payload(axis, direction, speed, 0.0)
             await self._ipc.send_recv(MSG_MOTION_JOG, payload)
             return {"status": "jog_started", "bench": False}
 
-        # cancel any existing bench jog
         await self.jog_stop()
 
         cs = self._axis_to_cs.get(axis)
         if cs is None:
             raise ValueError(f"Axis {axis} is not present on the bench")
 
-        # Resolve freq same way as _bench_pulse
         if abs(speed) < 50:
             freq = int(abs(speed) * 200)
         else:
             freq = int(abs(speed))
         freq = max(200, min(freq, 4000))
-        # 5 s safety fallback: if frontend fails to send jog_stop (lost
-        # focus, dropped connection, browser closed) the bench self-stops
-        # within 5 s instead of running for 30 s. Long-presses longer
-        # than 5 s should re-trigger jog_start.
-        BENCH_JOG_MAX_S = 5
-        steps = freq * BENCH_JOG_MAX_S
+        max_duration_s = 60 if continuous else 5
+        steps = freq * max_duration_s
         dir_sign = 1 if direction >= 0 else -1
-        log.info("jog_start axis=%d cs=%d freq=%dHz dir=%+d (max %ds)",
-                 axis, cs, freq, dir_sign, BENCH_JOG_MAX_S)
+        log.info("jog_start axis=%d cs=%d freq=%dHz dir=%+d (max %ds, continuous=%s)",
+                 axis, cs, freq, dir_sign, max_duration_s, continuous)
         self._bench_jog_task = self._asyncio.create_task(
             self._spi_backend.pulse_step(cs, steps, freq, dir_sign)
         )
-        return {"status": "jog_started", "bench": True, "axis": axis, "freq_hz": freq}
+        return {
+            "status": "jog_started",
+            "bench": True,
+            "axis": axis,
+            "freq_hz": freq,
+            "continuous": continuous,
+            "max_duration_s": max_duration_s,
+        }
 
     async def jog_stop(self) -> dict:
         """Stop the current bench jog (long-press release).
