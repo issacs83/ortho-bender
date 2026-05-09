@@ -140,13 +140,14 @@ class MotorService:
         # Speed is in axis-native user units (mm/s for FEED/LIFT, deg/s for
         # BEND/ROTATE). The CalibrationService converts to step rate so an
         # operator entering "10 mm/s" feeds the wire at the calibrated rate
-        # regardless of motor microstepping or lead-screw spec. 4000 Hz is
-        # still the bench safety cap to keep older mechanicals safe.
+        # regardless of motor microstepping or lead-screw spec.
+        # Bench hard cap 8000 Hz = TMC260C-PA recommended max for 1/4-1/8
+        # microstep with 200 step/rev (≈ 2400 RPM at full step).
         cal = self._calibration
         steps_per_unit = cal.steps_per_unit(axis) if cal else 200.0
-        speed_clamped = min(abs(speed), cal.speed_limit(axis) if cal else 20.0)
+        speed_clamped = min(abs(speed), cal.speed_limit(axis) if cal else 40.0)
         freq = int(speed_clamped * steps_per_unit)
-        freq = max(200, min(freq, 4000))
+        freq = max(200, min(freq, 8000))
         max_duration_s = 60 if continuous else 5
         steps = freq * max_duration_s
         dir_sign = 1 if direction >= 0 else -1
@@ -214,12 +215,12 @@ class MotorService:
         cal = self._calibration
         steps_per_unit = cal.steps_per_unit(axis) if cal else 200.0
         dist_limit = cal.distance_limit(axis) if cal else 50.0
-        speed_lim = cal.speed_limit(axis) if cal else 20.0
+        speed_lim = cal.speed_limit(axis) if cal else 40.0
         clamped_distance = max(-dist_limit, min(dist_limit, distance))
         steps = max(1, int(abs(clamped_distance) * steps_per_unit))
         speed_clamped = min(abs(speed), speed_lim)
         freq = int(speed_clamped * steps_per_unit)
-        freq = max(200, min(freq, 4000))
+        freq = max(200, min(freq, 8000))
         # Cap duration to 10 s
         if steps / freq > 10.0:
             steps = freq * 10

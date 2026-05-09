@@ -374,10 +374,10 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
             label="Jog Speed"
             value={jogSpeed}
             min={1}
-            max={20}
+            max={40}
             step={0.5}
             unit="units/s"
-            help="Speed in axis-native units (FEED/LIFT = mm/s, BEND/ROTATE = deg/s). Axis Calibration (Settings) converts this to motor STEP rate. Effective max 20 because the bench caps STEP at 4000 Hz."
+            help="Speed in axis-native units (FEED/LIFT = mm/s, BEND/ROTATE = deg/s). Axis Calibration (Settings) converts this to motor STEP rate. Bench cap is 8000 Hz STEP rate (≈ 2400 RPM at 200 step/rev) — slider max 40 matches that cap with the default calibration."
             onChange={setJogSpeed}
             style={{ marginBottom: 12 }}
           />

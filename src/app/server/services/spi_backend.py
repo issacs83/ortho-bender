@@ -507,10 +507,13 @@ class SpidevMotorBackend(MotorBackend):
             # first STEP. The ramp is short (~250 ms) so quick taps still
             # feel responsive. pulse_step_multi has the same shape.
             await self._pwm_ensure_exported()
+            # Soft acceleration ramp 200 Hz → target. Cap raised to 8000 Hz
+            # (commit 2026-05-09), so we use a slightly longer ramp to stay
+            # ahead of the 2× larger jump without sacrificing tap response.
             START_HZ = 200
             if freq_hz > START_HZ:
-                ramp_steps = 8
-                ramp_total_s = 0.25
+                ramp_steps = 12
+                ramp_total_s = 0.36
                 for i in range(ramp_steps):
                     h = int(START_HZ + (freq_hz - START_HZ) * (i + 1) / ramp_steps)
                     await self._pwm_set_hz(h)

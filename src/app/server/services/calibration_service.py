@@ -49,10 +49,10 @@ DISTANCE_LIMIT: dict[int, float] = {
 # steps_per_unit this gives the freq cap. Default keeps backward-compat
 # with the prior 4000 Hz hard cap when steps_per_unit = 200.
 SPEED_LIMIT: dict[int, float] = {
-    0: 20.0,    # FEED  (with 200 step/mm  -> 4000 Hz)
-    1: 20.0,    # BEND  (with 200 step/deg -> 4000 Hz)
-    2: 20.0,    # ROTATE
-    3: 20.0,    # LIFT
+    0: 40.0,    # FEED  (with 200 step/mm  -> 8000 Hz, ~2400 RPM)
+    1: 40.0,    # BEND  (with 200 step/deg -> 8000 Hz)
+    2: 40.0,    # ROTATE
+    3: 40.0,    # LIFT
 }
 
 _STATE_FILE = "/var/lib/ortho-bender/axis_calibration.json"
