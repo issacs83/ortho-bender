@@ -84,8 +84,8 @@ async def lifespan(app: FastAPI):
     camera_svc: CameraService | None = None
     try:
         try:
-            from .services.camera_backends.auto_backend import AutoBackend  # type: ignore
-            camera_svc = CameraService(backend=AutoBackend())  # type: ignore[arg-type]
+            from .services.camera_backends.auto_backend import AutoCameraBackend  # type: ignore
+            camera_svc = CameraService(backend=AutoCameraBackend())  # type: ignore[arg-type]
         except (ImportError, TypeError):
             camera_svc = CameraService(mock=cfg.mock_mode)  # type: ignore[arg-type]
         await camera_svc.connect()

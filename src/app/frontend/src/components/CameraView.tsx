@@ -10,7 +10,7 @@ import { cameraApi, wsApi, type CameraStatus } from "../api/client";
 
 export function CameraView() {
   const [status, setStatus] = useState<CameraStatus | null>(null);
-  const [useWsFallback, setUseWsFallback] = useState(false);
+  const [useWsFallback, setUseWsFallback] = useState(true);
   const [wsFrame, setWsFrame] = useState<string | null>(null);
   const [exposure, setExposure] = useState(5000);
   const [gain, setGain] = useState(0);
