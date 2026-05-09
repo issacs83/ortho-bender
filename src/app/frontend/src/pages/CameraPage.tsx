@@ -93,14 +93,14 @@ function LiveCapture({ status }: { status: CameraStatus | null }) {
         {/* HUD - top-left */}
         {status && (
           <div style={{ position: 'absolute', top: 8, left: 8, background: 'rgba(0,0,0,0.6)', borderRadius: 4, padding: '4px 8px', fontSize: 11, color: TEXT_PRIMARY }}>
-            {status.width}×{status.height} &nbsp;|&nbsp; {status.fps?.toFixed(1) ?? '—'} fps &nbsp;|&nbsp; {status.format ?? '—'}
+            {status.current_roi ? `${status.current_roi.width}×${status.current_roi.height}` : '—'} &nbsp;|&nbsp; {status.current_fps?.toFixed(1) ?? '—'} fps &nbsp;|&nbsp; {status.current_pixel_format ?? '—'}
           </div>
         )}
 
         {/* HUD - top-right */}
         {status && (
           <div style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.6)', borderRadius: 4, padding: '4px 8px', fontSize: 11, color: TEXT_PRIMARY, textAlign: 'right' as const }}>
-            Exp: {status.exposure_us ?? '—'} μs &nbsp;|&nbsp; Gain: {status.gain_db?.toFixed(1) ?? '—'} dB
+            Exp: {status.current_exposure_us != null ? `${status.current_exposure_us.toFixed(0)} μs` : '—'} &nbsp;|&nbsp; Gain: {status.current_gain_db?.toFixed(1) ?? '—'} dB &nbsp;|&nbsp; {status.current_temperature_c?.toFixed(0) ?? '—'}°C
           </div>
         )}
 
@@ -136,7 +136,7 @@ function LiveCapture({ status }: { status: CameraStatus | null }) {
       {/* Status bar */}
       <div style={{ display: 'flex', gap: 14, fontSize: 12, color: TEXT_MUTED }}>
         <StatusBadge variant={status?.connected ? 'success' : 'error'} label={status?.connected ? 'Connected' : 'Disconnected'} />
-        <span>Backend: {status?.backend ?? 'VimbaX'}</span>
+        <span>{status?.device ? `${status.device.vendor} ${status.device.model}` : 'VimbaX'}</span>
         <span>Frames: {frameCount}</span>
       </div>
     </div>
@@ -148,9 +148,9 @@ function LiveCapture({ status }: { status: CameraStatus | null }) {
 // ---------------------------------------------------------------------------
 
 function Acquisition({ status, onApply }: { status: CameraStatus | null; onApply: () => void }) {
-  const [exposureUs, setExposureUs] = useState(status?.exposure_us ?? 5000);
+  const [exposureUs, setExposureUs] = useState(status?.current_exposure_us ?? 5000);
   const [exposureAuto, setExposureAuto] = useState(false);
-  const [gainDb, setGainDb] = useState(status?.gain_db ?? 0);
+  const [gainDb, setGainDb] = useState(status?.current_gain_db ?? 0);
   const [gainAuto, setGainAuto] = useState(false);
   const [trigger, setTrigger] = useState<'freerun' | 'software' | 'external'>('freerun');
   const [fpsEnabled, setFpsEnabled] = useState(false);
@@ -391,8 +391,8 @@ export function CameraPage() {
       }}>
         <ConnectionControl
           label="Camera"
-          connected={status?.power_state === 'on'}
-          connectedLabel={status?.backend ? `ON (${status.backend})` : 'ON'}
+          connected={status?.connected ?? false}
+          connectedLabel={status?.device ? `ON (${status.device.model})` : 'ON'}
           disconnectedLabel="OFF"
           onConnect={async () => { await cameraApi.connect(); await refreshStatus(); }}
           onDisconnect={async () => { await cameraApi.disconnect(); await refreshStatus(); }}

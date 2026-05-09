@@ -17,7 +17,11 @@ export function CameraView() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    cameraApi.status().then(setStatus).catch((e) => setError(String(e)));
+    cameraApi.status().then((s) => {
+      setStatus(s);
+      if (s.current_exposure_us != null) setExposure(Math.round(s.current_exposure_us));
+      if (s.current_gain_db != null) setGain(s.current_gain_db);
+    }).catch((e) => setError(String(e)));
   }, []);
 
   // WebSocket fallback for camera frames
@@ -64,16 +68,30 @@ export function CameraView() {
       {error && <div style={{ color: "#f87171", marginBottom: 8 }}>{error}</div>}
 
       {status && (
-        <div style={{ marginBottom: 8, fontSize: 11, color: "#64748b" }}>
-          <span style={{ color: "#94a3b8" }}>{status.backend ?? "N/A"}</span>
-          {" | "}
+        <div style={{ marginBottom: 8, fontSize: 11, color: "#64748b", display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <span style={{ color: "#94a3b8" }}>
+            {status.device ? `${status.device.vendor} ${status.device.model}` : "N/A"}
+          </span>
+          {status.device?.serial && <span>SN:{status.device.serial}</span>}
           <span style={{ color: status.connected ? "#4ade80" : "#f87171" }}>
             {status.connected ? "Connected" : "Disconnected"}
           </span>
-          {status.width && status.height && (
-            <span> | {status.width}×{status.height}</span>
+          {status.streaming && <span style={{ color: "#4ade80" }}>Streaming</span>}
+          {status.current_roi && (
+            <span>{status.current_roi.width}×{status.current_roi.height}</span>
           )}
-          {status.fps && <span> @ {status.fps.toFixed(1)} fps</span>}
+          {status.current_pixel_format && <span>{status.current_pixel_format}</span>}
+          {status.current_fps != null && <span>@ {status.current_fps.toFixed(1)} fps</span>}
+          {status.current_exposure_us != null && (
+            <span>exp {(status.current_exposure_us / 1000).toFixed(2)} ms</span>
+          )}
+          {status.current_gain_db != null && (
+            <span>gain {status.current_gain_db.toFixed(1)} dB</span>
+          )}
+          {status.current_temperature_c != null && (
+            <span>{status.current_temperature_c.toFixed(0)}°C</span>
+          )}
+          {status.current_trigger_mode && <span>trig:{status.current_trigger_mode}</span>}
         </div>
       )}
 

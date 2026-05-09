@@ -32,17 +32,31 @@ export interface MotorStatus {
   driver_enabled: boolean;
 }
 
+export interface CameraDeviceInfo {
+  model: string;
+  serial: string;
+  firmware: string;
+  vendor: string;
+}
+
+export interface CameraRoi {
+  width: number;
+  height: number;
+  offset_x: number;
+  offset_y: number;
+}
+
 export interface CameraStatus {
   connected: boolean;
-  device_id: string | null;
-  width: number | null;
-  height: number | null;
-  exposure_us: number | null;
-  gain_db: number | null;
-  format: string | null;
-  backend: string | null;
-  fps: number | null;
-  power_state: "on" | "standby" | "off";
+  streaming: boolean;
+  device: CameraDeviceInfo | null;
+  current_exposure_us: number | null;
+  current_gain_db: number | null;
+  current_temperature_c: number | null;
+  current_fps: number | null;
+  current_pixel_format: string | null;
+  current_roi: CameraRoi | null;
+  current_trigger_mode: string | null;
 }
 
 export interface BendingStatus {
