@@ -4,7 +4,8 @@
 
 import { useState } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
-import { BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, BG_PRIMARY } from '../constants';
+import { useSoftLimits, softLimitsDefault, type SoftLimits } from '../hooks/useSoftLimits';
+import { AXIS_NAMES, AXIS_UNITS, BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, BG_PRIMARY } from '../constants';
 import { StatusBadge } from '../components/ui/StatusBadge';
 
 type Role = 'Operator' | 'Engineer' | 'Admin';
@@ -40,6 +41,14 @@ export function SettingsPage() {
   const [notifFault, setNotifFault] = usePersistentState('settings.notifFault', true);
   const [notifWarning, setNotifWarning] = usePersistentState('settings.notifWarning', true);
   const [notifComplete, setNotifComplete] = usePersistentState('settings.notifComplete', false);
+  const [softLimits, setSoftLimits] = useSoftLimits();
+
+  function updateLimit(axisIdx: number, value: number) {
+    if (!Number.isFinite(value) || value <= 0) return;
+    const next = [...softLimits] as SoftLimits;
+    next[axisIdx] = value;
+    setSoftLimits(next);
+  }
 
   function handleSwitchRole() {
     if (pin.length < 4) {
@@ -124,6 +133,38 @@ export function SettingsPage() {
             </select>
           </div>
         </div>
+      </div>
+
+      {/* Motor Soft Limits */}
+      <div style={cardStyle}>
+        <h3 style={{ margin: '0 0 6px', fontSize: 14, color: TEXT_PRIMARY }}>Motor Soft Limits</h3>
+        <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 14 }}>
+          Position progress bar reference per axis. Bar turns amber at 80%, red beyond 100%.
+          Stored locally in this browser — does not change motor firmware limits.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
+          {AXIS_NAMES.map((name, i) => (
+            <div key={name}>
+              <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>
+                {name} ({AXIS_UNITS[i]})
+              </label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={softLimits[i]}
+                onChange={(e) => updateLimit(i, Number(e.target.value))}
+                style={inputStyle}
+              />
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={() => setSoftLimits(softLimitsDefault())}
+          style={{ marginTop: 14, background: 'transparent', color: TEXT_SECONDARY, border: `1px solid ${BORDER}`, borderRadius: 4, padding: '6px 12px', cursor: 'pointer', fontSize: 12 }}
+        >
+          Reset to defaults
+        </button>
       </div>
 
       {/* Notifications */}

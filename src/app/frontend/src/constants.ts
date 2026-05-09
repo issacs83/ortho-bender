@@ -36,6 +36,14 @@ export const AXIS_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#a78bfa'] as const
 export const AXIS_NAMES = ['FEED', 'BEND', 'ROTATE', 'LIFT'] as const;
 export const AXIS_UNITS = ['mm', '°', '°', '°'] as const;
 
+// Per-axis soft travel limits used for the position progress bar.
+// FEED  : wire feed length (mechanical spool / guide range, mm)
+// BEND  : bending die rotation (full revolution, deg)
+// ROTATE: wire rotation about its own axis (full revolution, deg)
+// LIFT  : lift/lower mechanism stroke (mm)
+// Bar shows: blue/normal until 80% of limit, amber 80–100%, red over.
+export const AXIS_SOFT_LIMITS = [600, 360, 360, 100] as const; // FEED, BEND, ROTATE, LIFT
+
 // ---------------------------------------------------------------------------
 // Motion state
 // ---------------------------------------------------------------------------

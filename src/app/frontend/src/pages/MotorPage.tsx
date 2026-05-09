@@ -11,6 +11,7 @@ import { StatusBadge } from '../components/ui/StatusBadge';
 import { useMotorWs } from '../hooks/useMotorWs';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { AXIS_COLORS, AXIS_NAMES, AXIS_UNITS, BG_PANEL, BG_PRIMARY, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, HISTORY_LEN } from '../constants';
+import { useSoftLimits } from '../hooks/useSoftLimits';
 
 type MotorSubTab = 'position' | 'driver' | 'stallguard' | 'diagnostics';
 
@@ -77,6 +78,7 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   const [targetAxis, setTargetAxis] = usePersistentState('motor.targetAxis', 0);
   const [targetPos, setTargetPos] = usePersistentState('motor.targetPos', 0);
   const [multiTarget, setMultiTarget] = usePersistentState<number[]>('motor.multiTarget', [0, 0, 0, 0]);
+  const [softLimits] = useSoftLimits();
   // Transient: modals + error
   const [showHomeModal, setShowHomeModal] = useState(false);
   const [showMoveAllModal, setShowMoveAllModal] = useState(false);
@@ -195,12 +197,29 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
               <div style={{ width: 70, fontSize: 13, color: AXIS_COLORS[axisId], fontWeight: 600 }}>
                 {AXIS_NAMES[axisId]}
               </div>
-              <span style={{ width: 80, fontSize: 12, color: enabled ? TEXT_PRIMARY : TEXT_MUTED, textAlign: 'center' as const }}>
-                {enabled ? `${pos.toFixed(3)} ${AXIS_UNITS[axisId]}` : 'offline'}
-              </span>
-              <div style={{ flex: 1, height: 6, background: BG_PRIMARY, borderRadius: 3 }}>
-                <div style={{ height: '100%', width: `${Math.min(100, Math.abs(pos) / 200 * 100)}%`, background: AXIS_COLORS[axisId], borderRadius: 3 }} />
-              </div>
+              {(() => {
+                const limit = softLimits[axisId];
+                const ratio = limit > 0 ? Math.abs(pos) / limit : 0;
+                const overTravel = ratio > 1;
+                const nearLimit = ratio >= 0.8 && !overTravel;
+                const barColor = overTravel ? '#ef4444' : nearLimit ? '#f59e0b' : AXIS_COLORS[axisId];
+                const textColor = overTravel ? '#fca5a5' : nearLimit ? '#fcd34d' : enabled ? TEXT_PRIMARY : TEXT_MUTED;
+                return (
+                  <>
+                    <span
+                      style={{ width: 110, fontSize: 12, color: textColor, textAlign: 'center' as const, fontFamily: 'monospace' }}
+                      title={enabled ? `Soft limit: ${limit} ${AXIS_UNITS[axisId]}` : ''}
+                    >
+                      {enabled
+                        ? `${pos.toFixed(2)} / ${limit} ${AXIS_UNITS[axisId]}${overTravel ? ' ⚠' : ''}`
+                        : 'offline'}
+                    </span>
+                    <div style={{ flex: 1, height: 6, background: BG_PRIMARY, borderRadius: 3, position: 'relative' as const }}>
+                      <div style={{ height: '100%', width: `${Math.min(100, ratio * 100)}%`, background: barColor, borderRadius: 3, transition: 'width 0.15s, background 0.15s' }} />
+                    </div>
+                  </>
+                );
+              })()}
               {/* ◀◀  =  single-click continuous run (CCW) */}
               <button
                 disabled={!enabled}
