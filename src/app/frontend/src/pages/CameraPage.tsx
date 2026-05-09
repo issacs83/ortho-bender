@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { cameraApi, type CameraStatus } from '../api/client';
+import { usePersistentState } from '../hooks/usePersistentState';
 import { ConnectionControl } from '../components/ui/ConnectionControl';
 import { SliderInput } from '../components/ui/SliderInput';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -40,9 +41,9 @@ function SubTabBar({ active, onChange }: { active: CameraSubTab; onChange: (t: C
 // ---------------------------------------------------------------------------
 
 function LiveCapture({ status }: { status: CameraStatus | null }) {
-  const [useWs, setUseWs] = useState(false);
-  const [zoom, setZoom] = useState(1);
-  const [showCrosshair, setShowCrosshair] = useState(false);
+  const [useWs, setUseWs] = usePersistentState('camera.useWs', false);
+  const [zoom, setZoom] = usePersistentState('camera.zoom', 1);
+  const [showCrosshair, setShowCrosshair] = usePersistentState('camera.showCrosshair', false);
   const [recording, setRecording] = useState(false);
   const [frameCount, setFrameCount] = useState(0);
   const wsFrame = useCameraWs(useWs);

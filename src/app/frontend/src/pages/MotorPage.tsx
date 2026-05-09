@@ -3,6 +3,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { usePersistentState } from '../hooks/usePersistentState';
 import { motorApi, diagApi, type MotorStatus, type AxisStatus, type DriverProbeResult } from '../api/client';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { SliderInput } from '../components/ui/SliderInput';
@@ -70,13 +71,15 @@ function SubTabBar({ active, onChange }: { active: MotorSubTab; onChange: (t: Mo
 // ---------------------------------------------------------------------------
 
 function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
-  const [jogSpeed, setJogSpeed] = useState(10);
-  const [stepSize, setStepSize] = useState(1);
-  const [targetAxis, setTargetAxis] = useState(0);
-  const [targetPos, setTargetPos] = useState(0);
+  // Persisted (survives reload): user-chosen jog parameters, target positions
+  const [jogSpeed, setJogSpeed] = usePersistentState('motor.jogSpeed', 10);
+  const [stepSize, setStepSize] = usePersistentState('motor.stepSize', 1);
+  const [targetAxis, setTargetAxis] = usePersistentState('motor.targetAxis', 0);
+  const [targetPos, setTargetPos] = usePersistentState('motor.targetPos', 0);
+  const [multiTarget, setMultiTarget] = usePersistentState<number[]>('motor.multiTarget', [0, 0, 0, 0]);
+  // Transient: modals + error
   const [showHomeModal, setShowHomeModal] = useState(false);
   const [showMoveAllModal, setShowMoveAllModal] = useState(false);
-  const [multiTarget, setMultiTarget] = useState([0, 0, 0, 0]);
   const [error, setError] = useState<string | null>(null);
   const jogIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -94,12 +97,49 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
     try { await motorApi.jog(axis, direction, jogSpeed, stepSize); } catch (e) { setError(String(e)); }
   }
 
+  // Long-press jog with reliable release: button DOM only registers the
+  // *start*. The release listener attaches to the WINDOW so a fast tap
+  // that leaves the button DOM still fires a stop. Also stops on tab
+  // blur (alt-tab / minimise) so the bench never runs unattended.
+  const jogActiveRef = useRef(false);
+
+  function attachReleaseHandlers() {
+    if (jogActiveRef.current) return;  // already attached
+    jogActiveRef.current = true;
+    const stop = () => {
+      if (!jogActiveRef.current) return;
+      jogActiveRef.current = false;
+      motorApi.jogStop().catch(() => null);
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+      window.removeEventListener('mouseup', stop);
+      window.removeEventListener('touchend', stop);
+      window.removeEventListener('touchcancel', stop);
+      window.removeEventListener('blur', stop);
+    };
+    // pointer is the modern unified event (mouse + touch + pen).
+    // mouse/touch fallbacks for older browsers + iOS quirks.
+    window.addEventListener('pointerup', stop, { once: true });
+    window.addEventListener('pointercancel', stop, { once: true });
+    window.addEventListener('mouseup', stop, { once: true });
+    window.addEventListener('touchend', stop, { once: true });
+    window.addEventListener('touchcancel', stop, { once: true });
+    window.addEventListener('blur', stop, { once: true });
+  }
+
   function startContinuousJog(axis: number, dir: 1 | -1) {
-    jogIntervalRef.current = setInterval(() => jog(axis, dir), 150);
+    motorApi.jogStart(axis, dir, jogSpeed).catch((e) => setError(String(e)));
+    attachReleaseHandlers();
   }
   function stopContinuousJog() {
+    // Imperative stop (used as belt-and-suspenders by onMouseLeave etc).
+    // The window listener already handles release, but calling twice is
+    // safe — backend's jog_stop is idempotent.
     if (jogIntervalRef.current) { clearInterval(jogIntervalRef.current); jogIntervalRef.current = null; }
-    motorApi.stop().catch(() => null);
+    if (jogActiveRef.current) {
+      jogActiveRef.current = false;
+      motorApi.jogStop().catch(() => null);
+    }
   }
 
   async function moveTo() {
@@ -119,32 +159,86 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
     <div>
       {error && <div style={{ color: '#ef4444', marginBottom: 12, fontSize: 13 }}>{error}</div>}
 
-      {/* Jog controls */}
+      {/* Jog controls — long-press supported on all directional buttons.
+          Disabled rows render greyed when an axis is not present in the
+          current motorStatus.axes (driver disconnected or axis_mask=0). */}
       <div style={cardStyle}>
         <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Axis Jog</h3>
-        {(motorStatus?.axes ?? []).map((ax: AxisStatus) => (
-          <div key={ax.axis} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, padding: '8px 0', borderBottom: `1px solid ${BORDER}` }}>
-            <div style={{ width: 70, fontSize: 13, color: AXIS_COLORS[ax.axis], fontWeight: 600 }}>
-              {AXIS_NAMES[ax.axis]}
+        {[0, 1, 2, 3].map((axisId) => {
+          const ax = (motorStatus?.axes ?? []).find((a) => a.axis === axisId);
+          const enabled = !!ax;
+          const pos = ax?.position ?? 0;
+          const jogBtnStyle = {
+            ...btnBase,
+            cursor: enabled ? 'pointer' : 'not-allowed',
+            opacity: enabled ? 1 : 0.35,
+            userSelect: 'none' as const,
+            WebkitUserSelect: 'none' as const,
+            WebkitTouchCallout: 'none' as const,
+            touchAction: 'manipulation' as const,
+            transition: 'transform 50ms ease, background 100ms',
+          };
+          // pointerdown handler; window listener handles release.
+          const press = (dir: 1 | -1) => () => { if (enabled) startContinuousJog(axisId, dir); };
+          return (
+            <div
+              key={axisId}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12,
+                padding: '8px 0', borderBottom: `1px solid ${BORDER}`,
+                opacity: enabled ? 1 : 0.5,
+                userSelect: 'none', WebkitUserSelect: 'none',
+              }}
+            >
+              <div style={{ width: 70, fontSize: 13, color: AXIS_COLORS[axisId], fontWeight: 600 }}>
+                {AXIS_NAMES[axisId]}
+              </div>
+              <span style={{ width: 80, fontSize: 12, color: enabled ? TEXT_PRIMARY : TEXT_MUTED, textAlign: 'center' as const }}>
+                {enabled ? `${pos.toFixed(3)} ${AXIS_UNITS[axisId]}` : 'offline'}
+              </span>
+              <div style={{ flex: 1, height: 6, background: BG_PRIMARY, borderRadius: 3 }}>
+                <div style={{ height: '100%', width: `${Math.min(100, Math.abs(pos) / 200 * 100)}%`, background: AXIS_COLORS[axisId], borderRadius: 3 }} />
+              </div>
+              <button
+                disabled={!enabled}
+                onPointerDown={(e) => { if (enabled) { e.preventDefault(); press(-1)(); } }}
+                onContextMenu={(e) => e.preventDefault()}
+                style={{ ...jogBtnStyle, color: '#93c5fd' }}
+                className="jog-btn"
+              >◀◀</button>
+              <button
+                disabled={!enabled}
+                onPointerDown={(e) => { if (enabled) { e.preventDefault(); press(-1)(); } }}
+                onContextMenu={(e) => e.preventDefault()}
+                style={jogBtnStyle}
+                className="jog-btn"
+              >◀</button>
+              <button
+                disabled={!enabled}
+                onPointerDown={(e) => { if (enabled) { e.preventDefault(); press(+1)(); } }}
+                onContextMenu={(e) => e.preventDefault()}
+                style={jogBtnStyle}
+                className="jog-btn"
+              >▶</button>
+              <button
+                disabled={!enabled}
+                onPointerDown={(e) => { if (enabled) { e.preventDefault(); press(+1)(); } }}
+                onContextMenu={(e) => e.preventDefault()}
+                style={{ ...jogBtnStyle, color: '#93c5fd' }}
+                className="jog-btn"
+              >▶▶</button>
             </div>
-            <span style={{ width: 80, fontSize: 12, color: TEXT_PRIMARY, textAlign: 'center' as const }}>
-              {ax.position.toFixed(3)} {AXIS_UNITS[ax.axis]}
-            </span>
-            <div style={{ flex: 1, height: 6, background: BG_PRIMARY, borderRadius: 3 }}>
-              <div style={{ height: '100%', width: `${Math.min(100, Math.abs(ax.position) / 200 * 100)}%`, background: AXIS_COLORS[ax.axis], borderRadius: 3 }} />
-            </div>
-            <button
-              onMouseDown={() => startContinuousJog(ax.axis, -1)} onMouseUp={stopContinuousJog} onMouseLeave={stopContinuousJog}
-              style={{ ...btnBase, color: '#93c5fd' }}
-            >◀◀</button>
-            <button onClick={() => jog(ax.axis, -1)} style={btnBase}>◀</button>
-            <button onClick={() => jog(ax.axis, +1)} style={btnBase}>▶</button>
-            <button
-              onMouseDown={() => startContinuousJog(ax.axis, +1)} onMouseUp={stopContinuousJog} onMouseLeave={stopContinuousJog}
-              style={{ ...btnBase, color: '#93c5fd' }}
-            >▶▶</button>
-          </div>
-        ))}
+          );
+        })}
+        {/* Inline style — pressed/active feedback via :active pseudo */}
+        <style>{`
+          .jog-btn:not(:disabled):active {
+            transform: translateY(1px) scale(0.96);
+            background: #2563eb !important;
+            color: #fff !important;
+          }
+          .jog-btn:disabled { color: #475569 !important; }
+        `}</style>
         {(!motorStatus || motorStatus.axes.length === 0) && (
           <div style={{ fontSize: 13, color: TEXT_MUTED, textAlign: 'center', padding: 16 }}>Waiting for motor status...</div>
         )}
@@ -211,14 +305,14 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
 // ---------------------------------------------------------------------------
 
 function DriverConfig() {
-  const [selectedAxis, setSelectedAxis] = useState(0);
-  const [irun, setIrun] = useState(20);
-  const [ihold, setIhold] = useState(10);
-  const [iholdDelay, setIholdDelay] = useState(6);
-  const [toff, setToff] = useState(5);
-  const [hstrt, setHstrt] = useState(4);
-  const [hend, setHend] = useState(0);
-  const [spreadCycle, setSpreadCycle] = useState(true);
+  const [selectedAxis, setSelectedAxis] = usePersistentState('driver.selectedAxis', 0);
+  const [irun, setIrun] = usePersistentState('driver.irun', 20);
+  const [ihold, setIhold] = usePersistentState('driver.ihold', 10);
+  const [iholdDelay, setIholdDelay] = usePersistentState('driver.iholdDelay', 6);
+  const [toff, setToff] = usePersistentState('driver.toff', 5);
+  const [hstrt, setHstrt] = usePersistentState('driver.hstrt', 4);
+  const [hend, setHend] = usePersistentState('driver.hend', 0);
+  const [spreadCycle, setSpreadCycle] = usePersistentState('driver.spreadCycle', true);
 
   const cardStyle = { background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 16, marginBottom: 16 };
   const applyBtn = { background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 600 };
@@ -277,7 +371,7 @@ function DriverConfig() {
 // ---------------------------------------------------------------------------
 
 function StallGuardTab({ motorStatus }: { motorStatus: MotorStatus | null }) {
-  const [sgThresholds, setSgThresholds] = useState([0, 0, 0, 0]);
+  const [sgThresholds, setSgThresholds] = usePersistentState<number[]>('stallguard.thresholds', [0, 0, 0, 0]);
   const [sgHistory, setSgHistory] = useState<ChartPoint[]>([]);
   const tRef = useRef(0);
 
@@ -423,7 +517,7 @@ function DiagnosticsTab({ motorStatus }: { motorStatus: MotorStatus | null }) {
 // ---------------------------------------------------------------------------
 
 export function MotorPage() {
-  const [subTab, setSubTab] = useState<MotorSubTab>('position');
+  const [subTab, setSubTab] = usePersistentState<MotorSubTab>('motor.subTab', 'position');
   const [staticMotor, setStaticMotor] = useState<MotorStatus | null>(null);
   const [probeResults, setProbeResults] = useState<DriverProbeResult[]>([]);
   const [probing, setProbing] = useState(false);

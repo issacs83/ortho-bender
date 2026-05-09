@@ -86,6 +86,41 @@ async def motor_jog(
 
 
 # ---------------------------------------------------------------------------
+# POST /api/motor/jog/start  +  POST /api/motor/jog/stop  (long-press jog)
+# ---------------------------------------------------------------------------
+
+@router.post("/jog/start", response_model=ApiResponse)
+async def motor_jog_start(
+    body: MotorJogRequest,
+    svc: MotorService = Depends(_motor_service),
+) -> ApiResponse:
+    """Begin continuous bench jog (long-press start).
+
+    The frontend should call this on mousedown/touchstart, then
+    POST /api/motor/jog/stop on mouseup/touchend/leave.
+    """
+    try:
+        result = await svc.jog_start(body.axis, body.direction, body.speed)
+        return ok(result)
+    except Exception as exc:
+        log.error("Motor jog/start failed: %s", exc)
+        return err(str(exc), "MOTOR_JOG_START_ERROR")
+
+
+@router.post("/jog/stop", response_model=ApiResponse)
+async def motor_jog_stop(
+    svc: MotorService = Depends(_motor_service),
+) -> ApiResponse:
+    """Stop the current bench jog (long-press release)."""
+    try:
+        result = await svc.jog_stop()
+        return ok(result)
+    except Exception as exc:
+        log.error("Motor jog/stop failed: %s", exc)
+        return err(str(exc), "MOTOR_JOG_STOP_ERROR")
+
+
+# ---------------------------------------------------------------------------
 # POST /api/motor/home
 # ---------------------------------------------------------------------------
 

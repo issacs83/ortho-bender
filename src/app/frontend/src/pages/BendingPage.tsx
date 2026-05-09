@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { bendingApi, motorApi, cameraApi, type BcodeStep, type BendingStatus, type SystemStatus } from '../api/client';
 import { systemApi } from '../api/client';
+import { usePersistentState } from '../hooks/usePersistentState';
 import { StepIndicator } from '../components/bending/StepIndicator';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -126,9 +127,9 @@ function PreflightModal({ sysStatus, steps, material, onStart, onCancel }: Prefl
 // ---------------------------------------------------------------------------
 
 export function BendingPage() {
-  const [wizardStep, setWizardStep] = useState(0);
-  const [materialId, setMaterialId] = useState(0);
-  const [diameterMm, setDiameterMm] = useState(0.457);
+  const [wizardStep, setWizardStep] = usePersistentState('bending.wizardStep', 0);
+  const [materialId, setMaterialId] = usePersistentState('bending.materialId', 0);
+  const [diameterMm, setDiameterMm] = usePersistentState('bending.diameterMm', 0.457);
   const [rows, setRows] = useState<BcodeRow[]>([{ id: 1, L_mm: 10, beta_deg: 0, theta_deg: 0 }]);
   const [nextId, setNextId] = useState(2);
   const [showPreflight, setShowPreflight] = useState(false);

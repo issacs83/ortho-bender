@@ -3,6 +3,7 @@
  */
 
 import { useState } from 'react';
+import { usePersistentState } from '../hooks/usePersistentState';
 import { BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, BG_PRIMARY } from '../constants';
 import { StatusBadge } from '../components/ui/StatusBadge';
 
@@ -30,15 +31,15 @@ const ROLE_INFO: Record<Role, { desc: string; access: string[] }> = {
 };
 
 export function SettingsPage() {
-  const [currentRole, setCurrentRole] = useState<Role>('Engineer');
+  const [currentRole, setCurrentRole] = usePersistentState<Role>('settings.currentRole', 'Engineer');
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState<string | null>(null);
   const [targetRole, setTargetRole] = useState<Role>('Operator');
-  const [theme, setTheme] = useState('Dark');
-  const [language, setLanguage] = useState('English');
-  const [notifFault, setNotifFault] = useState(true);
-  const [notifWarning, setNotifWarning] = useState(true);
-  const [notifComplete, setNotifComplete] = useState(false);
+  const [theme, setTheme] = usePersistentState('settings.theme', 'Dark');
+  const [language, setLanguage] = usePersistentState('settings.language', 'English');
+  const [notifFault, setNotifFault] = usePersistentState('settings.notifFault', true);
+  const [notifWarning, setNotifWarning] = usePersistentState('settings.notifWarning', true);
+  const [notifComplete, setNotifComplete] = usePersistentState('settings.notifComplete', false);
 
   function handleSwitchRole() {
     if (pin.length < 4) {

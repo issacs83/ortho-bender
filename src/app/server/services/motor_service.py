@@ -67,12 +67,79 @@ class MotorService:
             int(AxisId.FEED):   2,
             int(AxisId.ROTATE): None,
         }
+        # Long-press jog: a single bench async task at a time
+        import asyncio as _asyncio
+        self._asyncio = _asyncio
+        self._bench_jog_task: Optional[_asyncio.Task] = None
         # Cache last TMC status so motor status can include it even between polls
         self._last_tmc: Optional[bytes] = None
 
     @property
     def has_bench(self) -> bool:
         return self._spi_backend is not None
+
+    async def jog_start(self, axis: int, direction: int, speed: float = 1000.0) -> dict:
+        """Begin continuous bench rotation (long-press jog).
+
+        Cancels any prior bench jog task and starts a long pulse_step in
+        the background. The frontend should call jog_stop() on mouseup.
+        Bench-only; in production the M7 handles continuous jog directly.
+        """
+        if not self.has_bench:
+            # Production: dispatch normal jog with large distance
+            payload = build_jog_payload(axis, direction, speed, 0.0)
+            await self._ipc.send_recv(MSG_MOTION_JOG, payload)
+            return {"status": "jog_started", "bench": False}
+
+        # cancel any existing bench jog
+        await self.jog_stop()
+
+        cs = self._axis_to_cs.get(axis)
+        if cs is None:
+            raise ValueError(f"Axis {axis} is not present on the bench")
+
+        # Resolve freq same way as _bench_pulse
+        if abs(speed) < 50:
+            freq = int(abs(speed) * 200)
+        else:
+            freq = int(abs(speed))
+        freq = max(200, min(freq, 4000))
+        # 5 s safety fallback: if frontend fails to send jog_stop (lost
+        # focus, dropped connection, browser closed) the bench self-stops
+        # within 5 s instead of running for 30 s. Long-presses longer
+        # than 5 s should re-trigger jog_start.
+        BENCH_JOG_MAX_S = 5
+        steps = freq * BENCH_JOG_MAX_S
+        dir_sign = 1 if direction >= 0 else -1
+        log.info("jog_start axis=%d cs=%d freq=%dHz dir=%+d (max %ds)",
+                 axis, cs, freq, dir_sign, BENCH_JOG_MAX_S)
+        self._bench_jog_task = self._asyncio.create_task(
+            self._spi_backend.pulse_step(cs, steps, freq, dir_sign)
+        )
+        return {"status": "jog_started", "bench": True, "axis": axis, "freq_hz": freq}
+
+    async def jog_stop(self) -> dict:
+        """Stop the current bench jog (long-press release).
+
+        Cancels the background pulse_step task. Its finally block disables
+        PWM and silences the active chip. Belt-and-suspenders: also call
+        backend pwm_disable to ensure outputs are clean. We do NOT silence
+        every chip here (only the running one is touched by pulse_step's
+        finally) to minimise deadtime between rapid taps.
+        """
+        if self._bench_jog_task is not None and not self._bench_jog_task.done():
+            self._bench_jog_task.cancel()
+            try:
+                await self._bench_jog_task
+            except (self._asyncio.CancelledError, Exception):
+                pass
+        self._bench_jog_task = None
+        if self.has_bench:
+            try:
+                await self._spi_backend._pwm_disable()
+            except Exception:
+                pass
+        return {"status": "jog_stopped"}
 
     async def _bench_pulse(
         self,
@@ -82,18 +149,39 @@ class MotorService:
     ) -> None:
         """Translate move/jog (distance, speed) into a bench pulse_step call.
 
-        Conservative mapping (distance/speed are unit-agnostic on bench):
-          1 unit distance = 200 microsteps  (matches single full revolution
-                                             at 200 step/rev, or 5 mm lead)
-          1 unit speed    = 200 Hz step rate
-        Hz hard-clamped to [200, 8000] by the backend.
+        Conservative mapping (units are application-defined on bench):
+          1 unit distance = 200 microsteps   (~1 full rev at 200 step/rev)
+          1 unit speed    = 1 Hz step rate   (frontend usually sends large
+                                              values like 1000, treated as Hz)
+        Safety clamps:
+          - distance |abs| ≤ 50 units (≤ 10 000 microsteps)
+          - freq         ≤ 4000 Hz (single-axis bench safe)
+          - duration     ≤ 10 s
         """
         cs = self._axis_to_cs.get(axis)
         if cs is None:
             raise ValueError(f"Axis {axis} is not present on the bench")
-        steps = max(1, int(abs(distance) * 200))
-        freq  = max(200, min(int(abs(speed) * 200), 8000))
+
+        # ---- Safety clamps for frontend-supplied values ----
+        # frontend may send large numbers (speed=1000 etc.); treat speed
+        # directly as Hz with safe upper bound.
+        clamped_distance = max(-50.0, min(50.0, distance))
+        steps = max(1, int(abs(clamped_distance) * 200))
+        # If frontend sends speed in a "natural" range (1..50), multiply;
+        # if already large (>=200), treat as Hz directly.
+        if abs(speed) < 50:
+            freq = int(abs(speed) * 200)
+        else:
+            freq = int(abs(speed))
+        freq = max(200, min(freq, 4000))
+        # Cap duration to 10 s
+        if steps / freq > 10.0:
+            steps = freq * 10
         direction = 1 if distance >= 0 else -1
+        log.info(
+            "bench jog axis=%d cs=%d steps=%d freq=%dHz dir=%+d (req dist=%.3f speed=%.3f)",
+            axis, cs, steps, freq, direction, distance, speed,
+        )
         await self._spi_backend.pulse_step(cs, steps, freq, direction)
 
     # ------------------------------------------------------------------
@@ -101,9 +189,54 @@ class MotorService:
     # ------------------------------------------------------------------
 
     async def get_status(self) -> MotorStatusResponse:
-        """Query current motor position, velocity, and state from M7."""
+        """Query current motor position, velocity, and state.
+
+        Bench mode: synthesize status from SpidevMotorBackend.positions
+        (real microstep counts driven via pulse_step). Skips IPC entirely.
+        Production: query M7 via IPC.
+        """
+        if self.has_bench:
+            return self._bench_status()
         resp = await self._ipc.send_recv(MSG_STATUS_MOTION)
         return self._parse_motion_status(resp.payload)
+
+    def _bench_status(self) -> MotorStatusResponse:
+        """Build MotorStatusResponse from spidev backend's tracked positions.
+
+        Spidev cs (0/1/2) = LIFT/BEND/FEED. Map back to AxisId:
+          cs=0 → AxisId.LIFT (3)
+          cs=1 → AxisId.BEND (1)
+          cs=2 → AxisId.FEED (0)
+        AxisId.ROTATE (2) is not on the bench (skipped).
+        """
+        bench_pos = getattr(self._spi_backend, "positions", {})
+        # cs → AxisId int
+        cs_to_axis = {0: int(AxisId.LIFT), 1: int(AxisId.BEND), 2: int(AxisId.FEED)}
+        axes = []
+        axis_mask = 0
+        for cs, axis_int in cs_to_axis.items():
+            pos_steps = bench_pos.get(cs, 0)
+            # Convert microsteps back to display units (inverse of _bench_pulse: 200 step = 1 unit)
+            pos_units = pos_steps / 200.0
+            axes.append(AxisStatus(
+                axis=AxisId(axis_int),
+                position=pos_units,
+                velocity=0.0,
+                drv_status=0,
+                sg_result=0,
+                cs_actual=19,  # CS=19 hardcoded safety value
+            ))
+            axis_mask |= (1 << axis_int)
+        # Sort by axis id (consistent with frontend ordering 0..3)
+        axes.sort(key=lambda a: int(a.axis))
+        return MotorStatusResponse(
+            state=MotionState.IDLE,
+            axes=axes,
+            current_step=0,
+            total_steps=0,
+            axis_mask=axis_mask,
+            driver_enabled=True,
+        )
 
     def _parse_motion_status(self, payload: bytes) -> MotorStatusResponse:
         if len(payload) < _MOTION_STATUS_SIZE:
@@ -223,12 +356,27 @@ class MotorService:
         return await self.get_status()
 
     async def estop(self) -> MotorStatusResponse:
-        """
-        Software E-STOP — immediate halt via IPC.
+        """Software E-STOP — immediate halt.
 
-        Note: hardware E-STOP path is parallel (M7 GPIO ISR + DRV_ENN).
-        This call is the SW path only.
+        Bench: disable PWM and silence all chips synchronously, regardless
+        of which axis (if any) is currently running. Critical safety path.
+        Production: hardware E-STOP runs in parallel via M7 GPIO ISR + DRV_ENN.
         """
+        if self.has_bench:
+            # Direct call into spidev backend's PWM/silence primitives.
+            # PWM off first (kills STEP), then silence all 3 chips so chopper
+            # outputs go inactive even if a pulse_step task is mid-flight.
+            try:
+                await self._spi_backend._pwm_disable()
+            except Exception as exc:
+                log.warning("E-STOP PWM disable failed: %s", exc)
+            for cs in (0, 1, 2):
+                try:
+                    await self._spi_backend._silence_chip(cs)
+                except Exception as exc:
+                    log.warning("E-STOP silence cs=%d failed: %s", cs, exc)
+            log.warning("E-STOP triggered on bench: all axes silenced")
+            return await self.get_status()
         await self._ipc.send_recv(MSG_MOTION_ESTOP)
         return await self.get_status()
 
