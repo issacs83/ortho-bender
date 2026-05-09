@@ -158,6 +158,15 @@ async def lifespan(app: FastAPI):
     app.state.diag_service = diag_svc
     log.info("PsuService active: %s (cs_cap=%d)", psu_svc.psu.label, psu_svc.cs_cap)
 
+    # Per-axis steps/unit calibration so jog/move convert mm/deg → step rate
+    # using the actual mechanical ratios. Defaults match the legacy "200
+    # microsteps = 1 unit" behaviour but are overridable from Settings.
+    from .services.calibration_service import CalibrationService
+    cal_svc = CalibrationService()
+    motor_svc.set_calibration(cal_svc)
+    app.state.calibration_service = cal_svc
+    log.info("CalibrationService active: %s", cal_svc.all()["steps_per_unit"])
+
     # Probe motor drivers at startup — identify which chips are connected
     driver_probe = await diag_svc.probe_drivers()
     app.state.driver_probe = {r.driver: r.model_dump() for r in driver_probe}

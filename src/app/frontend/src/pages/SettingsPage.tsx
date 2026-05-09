@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { useSoftLimits, softLimitsDefault, type SoftLimits } from '../hooks/useSoftLimits';
 import { usePsuConfig } from '../hooks/usePsuConfig';
+import { useAxisCalibration, AXIS_PHYSICAL_UNIT } from '../hooks/useAxisCalibration';
 import { AXIS_NAMES, AXIS_UNITS, BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, BG_PRIMARY, PSU_PRESETS, SAFETY_CS_MAX } from '../constants';
 import { StatusBadge } from '../components/ui/StatusBadge';
 
@@ -44,6 +45,7 @@ export function SettingsPage() {
   const [notifComplete, setNotifComplete] = usePersistentState('settings.notifComplete', false);
   const [softLimits, setSoftLimits] = useSoftLimits();
   const { psu, psuId, setPsuId, override, setOverride, effectiveCsMax } = usePsuConfig();
+  const { cal, setStepsPerUnit } = useAxisCalibration();
 
   function updateLimit(axisIdx: number, value: number) {
     if (!Number.isFinite(value) || value <= 0) return;
@@ -174,6 +176,34 @@ export function SettingsPage() {
           Active PSU: <strong style={{ color: TEXT_PRIMARY }}>{psu.label}</strong>
           &nbsp;·&nbsp; Effective CS cap: <strong style={{ color: '#fcd34d' }}>{effectiveCsMax}</strong>
           &nbsp;·&nbsp; Hardware max: {SAFETY_CS_MAX}
+        </div>
+      </div>
+
+      {/* Axis Calibration */}
+      <div style={cardStyle}>
+        <h3 style={{ margin: '0 0 6px', fontSize: 14, color: TEXT_PRIMARY }}>Axis Calibration</h3>
+        <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 14 }}>
+          Steps per user unit for each axis. Drives the conversion from "Jog Speed" /
+          "Step Size" (mm or deg) to motor STEP rate. Defaults assume 200 microsteps =
+          1 motor revolution. Adjust to match your wire-bender mechanicals
+          (lead screws, gear ratios) — value is persisted on the board.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+          {AXIS_NAMES.map((n, i) => (
+            <div key={n}>
+              <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>
+                {n} <span style={{ color: TEXT_SECONDARY }}>(step / {AXIS_PHYSICAL_UNIT[i]})</span>
+              </label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={cal.steps_per_unit[i]}
+                onChange={(e) => setStepsPerUnit(i, Number(e.target.value))}
+                style={inputStyle}
+              />
+            </div>
+          ))}
         </div>
       </div>
 

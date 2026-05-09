@@ -77,12 +77,19 @@ class MotorService:
         # moment the jog task finishes. Without this the bar would keep moving
         # because _bench_status returned JOGGING while the cancel was in flight.
         self._bench_estop_active: bool = False
+        # Per-axis steps/unit calibration. Late-injected via set_calibration()
+        # so main.py can wire it after MotorService construction.
+        self._calibration = None  # type: ignore[assignment]
         # Cache last TMC status so motor status can include it even between polls
         self._last_tmc: Optional[bytes] = None
 
     @property
     def has_bench(self) -> bool:
         return self._spi_backend is not None
+
+    def set_calibration(self, cal) -> None:
+        """Inject the CalibrationService used for axis steps/unit conversion."""
+        self._calibration = cal
 
     def _ensure_not_estop(self, action: str) -> None:
         """HARD GATE — refuse motion commands while bench E-STOP is latched.
@@ -130,14 +137,15 @@ class MotorService:
         if cs is None:
             raise ValueError(f"Axis {axis} is not present on the bench")
 
-        # Speed is the user-facing rate (mm/s or deg/s). 200 microsteps == 1
-        # unit (200 step/rev typical). Without this monotonic mapping, the
-        # old `if abs(speed)<50: ×200 else: ×1` produced a 20× cliff at
-        # speed=50 — speed=49 → 4000 Hz, speed=50 → 200 Hz — which made
-        # high-inertia axes (FEED) appear "broken" at certain slider
-        # positions while LIFT/BEND coped with the small range. 4000 Hz is
-        # the bench safety cap regardless.
-        freq = int(abs(speed) * 200)
+        # Speed is in axis-native user units (mm/s for FEED/LIFT, deg/s for
+        # BEND/ROTATE). The CalibrationService converts to step rate so an
+        # operator entering "10 mm/s" feeds the wire at the calibrated rate
+        # regardless of motor microstepping or lead-screw spec. 4000 Hz is
+        # still the bench safety cap to keep older mechanicals safe.
+        cal = self._calibration
+        steps_per_unit = cal.steps_per_unit(axis) if cal else 200.0
+        speed_clamped = min(abs(speed), cal.speed_limit(axis) if cal else 20.0)
+        freq = int(speed_clamped * steps_per_unit)
         freq = max(200, min(freq, 4000))
         max_duration_s = 60 if continuous else 5
         steps = freq * max_duration_s
@@ -203,11 +211,14 @@ class MotorService:
         # ---- Safety clamps for frontend-supplied values ----
         # frontend may send large numbers (speed=1000 etc.); treat speed
         # directly as Hz with safe upper bound.
-        clamped_distance = max(-50.0, min(50.0, distance))
-        steps = max(1, int(abs(clamped_distance) * 200))
-        # Same monotonic mapping as jog_start — see the note there for
-        # why the old <50 / >=50 split was a regression.
-        freq = int(abs(speed) * 200)
+        cal = self._calibration
+        steps_per_unit = cal.steps_per_unit(axis) if cal else 200.0
+        dist_limit = cal.distance_limit(axis) if cal else 50.0
+        speed_lim = cal.speed_limit(axis) if cal else 20.0
+        clamped_distance = max(-dist_limit, min(dist_limit, distance))
+        steps = max(1, int(abs(clamped_distance) * steps_per_unit))
+        speed_clamped = min(abs(speed), speed_lim)
+        freq = int(speed_clamped * steps_per_unit)
         freq = max(200, min(freq, 4000))
         # Cap duration to 10 s
         if steps / freq > 10.0:

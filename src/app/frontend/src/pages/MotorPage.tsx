@@ -13,6 +13,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceL
 import { AXIS_COLORS, AXIS_NAMES, AXIS_UNITS, BG_PANEL, BG_PRIMARY, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, HISTORY_LEN, SAFETY_CS_MAX, SAFETY_TOFF_MIN, SAFETY_TOFF_MAX } from '../constants';
 import { useSoftLimits } from '../hooks/useSoftLimits';
 import { usePsuConfig } from '../hooks/usePsuConfig';
+import { useAxisCalibration, AXIS_PHYSICAL_UNIT } from '../hooks/useAxisCalibration';
 import { useToast } from '../components/ui/ToastSystem';
 import { SignalLed } from '../components/ui/SignalLed';
 
@@ -365,8 +366,31 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, marginBottom: 16 }}>
         <div style={cardStyle}>
-          <SliderInput label="Jog Speed" value={jogSpeed} min={1} max={100} unit="mm/s" onChange={setJogSpeed} style={{ marginBottom: 12 }} />
-          <SliderInput label="Step Size" value={stepSize} min={0.1} max={50} step={0.1} unit="mm" onChange={setStepSize} />
+          {/* Slider applies to whichever axis the operator jogs next, so
+              the unit is axis-native: mm/s for FEED/LIFT, deg/s for
+              BEND/ROTATE. We label it generically and let the per-axis
+              calibration in Settings translate units → step rate. */}
+          <SliderInput
+            label="Jog Speed"
+            value={jogSpeed}
+            min={1}
+            max={20}
+            step={0.5}
+            unit="units/s"
+            help="Speed in axis-native units (FEED/LIFT = mm/s, BEND/ROTATE = deg/s). Axis Calibration (Settings) converts this to motor STEP rate. Effective max 20 because the bench caps STEP at 4000 Hz."
+            onChange={setJogSpeed}
+            style={{ marginBottom: 12 }}
+          />
+          <SliderInput
+            label="Step Size"
+            value={stepSize}
+            min={0.1}
+            max={50}
+            step={0.1}
+            unit="units"
+            help="Single jog distance in axis-native units (mm for FEED/LIFT, deg for BEND/ROTATE). Per-axis safety cap (mm: 100, deg: 360) is enforced by the backend."
+            onChange={setStepSize}
+          />
         </div>
         <div style={cardStyle}>
           <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Move To Position</h3>

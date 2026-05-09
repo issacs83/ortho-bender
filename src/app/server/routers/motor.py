@@ -32,6 +32,44 @@ def _motor_service(request: Request) -> MotorService:
     return request.app.state.motor_service
 
 
+def _calibration_service(request: Request):
+    return getattr(request.app.state, "calibration_service", None)
+
+
+from pydantic import BaseModel as _BaseModel
+
+
+class CalibrationUpdate(_BaseModel):
+    axis: int
+    steps_per_unit: float
+
+
+# ---------------------------------------------------------------------------
+# GET /api/motor/calibration  +  POST /api/motor/calibration
+# ---------------------------------------------------------------------------
+
+@router.get("/calibration", response_model=ApiResponse)
+async def get_calibration(svc=Depends(_calibration_service)) -> ApiResponse:
+    """Return the active axis steps_per_unit map + per-axis caps."""
+    if svc is None:
+        return err("calibration not available", "NO_BENCH")
+    return ok(svc.all())
+
+
+@router.post("/calibration", response_model=ApiResponse)
+async def update_calibration(
+    body: CalibrationUpdate, svc=Depends(_calibration_service)
+) -> ApiResponse:
+    """Set steps_per_unit for one axis."""
+    if svc is None:
+        return err("calibration not available", "NO_BENCH")
+    try:
+        svc.update(body.axis, body.steps_per_unit)
+        return ok(svc.all())
+    except ValueError as exc:
+        return err(str(exc), "INVALID_CALIBRATION")
+
+
 # ---------------------------------------------------------------------------
 # GET /api/motor/status
 # ---------------------------------------------------------------------------
