@@ -20,11 +20,12 @@ import { SimulationPage }  from './pages/SimulationPage';
 import { SettingsPage }    from './pages/SettingsPage';
 import { DiagnosticsPage } from './pages/DiagnosticsPage';
 import { DocumentationPage } from './pages/DocumentationPage';
-import { systemApi, type SystemStatus } from './api/client';
+import { systemApi, motorApi, type SystemStatus } from './api/client';
 import { wsApi } from './api/client';
 import type { ConnStatus } from './components/ui/ConnectionIcon';
 import type { SystemEvent } from './hooks/useSystemWs';
-import { BG_PRIMARY } from './constants';
+import { useBoardRebootDetector } from './hooks/useBoardRebootDetector';
+import { BG_PRIMARY, BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_MUTED } from './constants';
 
 export type Page = 'connection' | 'dashboard' | 'bending' | 'motor' | 'camera' | 'simulation' | 'settings' | 'diagnostics' | 'docs';
 
@@ -34,6 +35,14 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [sysStatus, setSysStatus] = useState<SystemStatus | null>(null);
+  const { rebootDetected, dismiss: dismissReboot } = useBoardRebootDetector();
+  const [homing, setHoming] = useState(false);
+
+  async function runHomingFromPrompt() {
+    try { setHoming(true); await motorApi.home(0); dismissReboot(); }
+    catch (e) { alert(`Homing failed: ${e}`); }
+    finally { setHoming(false); }
+  }
 
   // Responsive detection
   useEffect(() => {
@@ -144,6 +153,37 @@ export default function App() {
       `}</style>
 
       <div style={{ background: BG_PRIMARY, minHeight: '100vh', color: '#f1f5f9' }}>
+        {rebootDetected && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+          >
+            <div style={{ background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 24, maxWidth: 460, color: TEXT_PRIMARY }}>
+              <h3 style={{ margin: '0 0 10px', color: '#fcd34d', fontSize: 16 }}>⚠ Board restart detected</h3>
+              <p style={{ margin: '0 0 8px', fontSize: 13, lineHeight: 1.5 }}>
+                The controller has rebooted since this dashboard last polled it.
+                Stored motor positions have been cleared because they may no
+                longer match the physical machine.
+              </p>
+              <p style={{ margin: '0 0 18px', fontSize: 12, color: TEXT_MUTED }}>
+                Run homing before any motion command, or acknowledge if you
+                will home from the bench shortly.
+              </p>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                <button
+                  onClick={dismissReboot}
+                  style={{ background: 'transparent', border: `1px solid ${BORDER}`, color: TEXT_MUTED, borderRadius: 4, padding: '8px 16px', cursor: 'pointer', fontSize: 13 }}
+                >Acknowledge</button>
+                <button
+                  onClick={runHomingFromPrompt}
+                  disabled={homing}
+                  style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '8px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: homing ? 0.6 : 1 }}
+                >{homing ? 'Homing…' : 'Run Homing'}</button>
+              </div>
+            </div>
+          </div>
+        )}
         {/* Fixed header */}
         <Header
           onToggleSidebar={() => isMobile ? setSidebarOpen((o) => !o) : setSidebarCollapsed((c) => !c)}

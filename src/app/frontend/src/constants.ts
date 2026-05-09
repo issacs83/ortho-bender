@@ -36,6 +36,40 @@ export const AXIS_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#a78bfa'] as const
 export const AXIS_NAMES = ['FEED', 'BEND', 'ROTATE', 'LIFT'] as const;
 export const AXIS_UNITS = ['mm', '°', '°', '°'] as const;
 
+// ---------------------------------------------------------------------------
+// Motor driver hardware-safety limits (TMC260C-PA)
+// ---------------------------------------------------------------------------
+// HARD GATE — these mirror SAFETY_CS_MAX / SAFETY_TOFF_MAX in
+// server/services/tmc260c_driver.py. Two boards burned 2026-05-08 with
+// CS=31 + TOFF=15. Frontend MUST NOT permit values above these.
+export const SAFETY_CS_MAX   = 19;     // SGCSCONF current scale
+export const SAFETY_TOFF_MAX = 8;      // CHOPCONF off-time
+export const SAFETY_TOFF_MIN = 1;      // 0 disables the chopper entirely
+
+// CHOPCONF=0x99548 verified safe by the bench. Any direct register write
+// to CHOPCONF must keep TOFF<=SAFETY_TOFF_MAX; use the helper below.
+export const CHOPCONF_FROZEN_DEFAULT = 0x99548;
+
+// ---------------------------------------------------------------------------
+// Power Supply presets
+// ---------------------------------------------------------------------------
+// Empirically derived from TMC260C-PA at sense=0.15Ω, VSENSE=1, VMot=12V:
+// CS=19 ≈ 0.93A peak coil = ~0.66A RMS = ~7-8 W per coil under load.
+// With three axes active concurrently we want headroom; the default 12V/5A
+// supply (60W) leaves enough margin for CS=19. Lower-rated supplies must
+// reduce the cap.
+export interface PsuPreset { id: string; label: string; volts: number; amps: number; csCap: number; }
+export const PSU_PRESETS: PsuPreset[] = [
+  { id: '12v2.0a', label: '12 V / 2.0 A (24 W)', volts: 12, amps: 2.0, csCap: 12 },
+  { id: '12v2.9a', label: '12 V / 2.9 A (35 W)', volts: 12, amps: 2.9, csCap: 14 },
+  { id: '12v5.0a', label: '12 V / 5.0 A (60 W)', volts: 12, amps: 5.0, csCap: 17 },
+  { id: '12v8.0a', label: '12 V / 8.0 A (96 W)', volts: 12, amps: 8.0, csCap: 19 },
+  { id: '24v3.0a', label: '24 V / 3.0 A (72 W)', volts: 24, amps: 3.0, csCap: 19 },
+];
+// 12 V / 2.9 A (35 W) brick is the bench default — matches the actual
+// hardware so IRUN/IHOLD caps come up correct on first load.
+export const PSU_DEFAULT_ID = '12v2.9a';
+
 // Per-axis soft travel limits used for the position progress bar.
 // FEED  : wire feed length (mechanical spool / guide range, mm)
 // BEND  : bending die rotation (full revolution, deg)

@@ -5,7 +5,8 @@
 import { useState } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { useSoftLimits, softLimitsDefault, type SoftLimits } from '../hooks/useSoftLimits';
-import { AXIS_NAMES, AXIS_UNITS, BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, BG_PRIMARY } from '../constants';
+import { usePsuConfig } from '../hooks/usePsuConfig';
+import { AXIS_NAMES, AXIS_UNITS, BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, BG_PRIMARY, PSU_PRESETS, SAFETY_CS_MAX } from '../constants';
 import { StatusBadge } from '../components/ui/StatusBadge';
 
 type Role = 'Operator' | 'Engineer' | 'Admin';
@@ -42,6 +43,7 @@ export function SettingsPage() {
   const [notifWarning, setNotifWarning] = usePersistentState('settings.notifWarning', true);
   const [notifComplete, setNotifComplete] = usePersistentState('settings.notifComplete', false);
   const [softLimits, setSoftLimits] = useSoftLimits();
+  const { psu, psuId, setPsuId, override, setOverride, effectiveCsMax } = usePsuConfig();
 
   function updateLimit(axisIdx: number, value: number) {
     if (!Number.isFinite(value) || value <= 0) return;
@@ -132,6 +134,46 @@ export function SettingsPage() {
               {['English', 'Korean', 'Japanese'].map((l) => <option key={l}>{l}</option>)}
             </select>
           </div>
+        </div>
+      </div>
+
+      {/* Power Supply + Driver safety cap */}
+      <div style={cardStyle}>
+        <h3 style={{ margin: '0 0 6px', fontSize: 14, color: TEXT_PRIMARY }}>Power Supply</h3>
+        <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 14 }}>
+          Selecting the actual benchtop PSU caps IRUN/IHOLD on the Driver Config tab so the
+          driver cannot be set above what the supply can sustain. Hardware safety max is
+          CS = <strong style={{ color: '#fcd34d' }}>{SAFETY_CS_MAX}</strong> (boards burned 2026-05-08 with CS=31).
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 12 }}>
+          <div>
+            <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>PSU preset</label>
+            <select value={psuId} onChange={(e) => setPsuId(e.target.value)} style={selectStyle}>
+              {PSU_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label} → CS≤{p.csCap}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>
+              Manual CS cap override <span style={{ color: TEXT_MUTED }}>(0 = use preset)</span>
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={SAFETY_CS_MAX}
+              value={override}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (!Number.isFinite(v)) return;
+                setOverride(Math.min(SAFETY_CS_MAX, Math.max(0, v)));
+              }}
+              style={inputStyle}
+            />
+          </div>
+        </div>
+        <div style={{ padding: 10, background: BG_PRIMARY, borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 12, color: TEXT_SECONDARY }}>
+          Active PSU: <strong style={{ color: TEXT_PRIMARY }}>{psu.label}</strong>
+          &nbsp;·&nbsp; Effective CS cap: <strong style={{ color: '#fcd34d' }}>{effectiveCsMax}</strong>
+          &nbsp;·&nbsp; Hardware max: {SAFETY_CS_MAX}
         </div>
       </div>
 

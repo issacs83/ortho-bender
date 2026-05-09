@@ -241,8 +241,15 @@ class MotorService:
             axis_mask |= (1 << axis_int)
         # Sort by axis id (consistent with frontend ordering 0..3)
         axes.sort(key=lambda a: int(a.axis))
+        # Reflect actual motion in the state field so the dashboard's
+        # "State: IDLE/JOGGING" indicator matches what the bench is doing.
+        # A live _bench_jog_task means the SPI pulse loop is running.
+        bench_jog_active = (
+            self._bench_jog_task is not None and not self._bench_jog_task.done()
+        )
+        state = MotionState.JOGGING if bench_jog_active else MotionState.IDLE
         return MotorStatusResponse(
-            state=MotionState.IDLE,
+            state=state,
             axes=axes,
             current_step=0,
             total_steps=0,

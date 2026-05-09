@@ -148,7 +148,15 @@ async def lifespan(app: FastAPI):
     else:
         diag_backend = MockMotorBackend()
     diag_svc = DiagService(diag_backend)
+    # PSU preset is persisted on disk and consulted by DiagService when a
+    # raw register write touches SGCSCONF — so the operator's choice in
+    # Settings caps the driver current even if the frontend is bypassed.
+    from .services.psu_service import PsuService
+    psu_svc = PsuService()
+    diag_svc.set_psu_service(psu_svc)
+    app.state.psu_service = psu_svc
     app.state.diag_service = diag_svc
+    log.info("PsuService active: %s (cs_cap=%d)", psu_svc.psu.label, psu_svc.cs_cap)
 
     # Probe motor drivers at startup — identify which chips are connected
     driver_probe = await diag_svc.probe_drivers()

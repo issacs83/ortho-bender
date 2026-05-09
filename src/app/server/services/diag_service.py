@@ -21,8 +21,66 @@ from ..models.diag_schemas import (
     DriverProbeResult,
     SpiTestResult,
 )
-from .tmc260c_driver import Tmc260cDriver
+from .tmc260c_driver import (
+    Tmc260cDriver,
+    SAFETY_CS_MAX,
+    SAFETY_TOFF_MAX,
+    REG_CHOPCONF,
+    REG_SGCSCONF,
+)
 from .tmc5072_driver import Tmc5072Driver
+
+
+class UnsafeRegisterWrite(ValueError):
+    """Raised when a /diag/register POST tries to set a known-dangerous value.
+
+    HARD GATE — see safety_motor_register_limits.md. The 2026-05-08 incident
+    burned two boards because CS=31 + TOFF=15 was applied via raw SPI. The
+    diagnostic UI must not be a back-door around the safety limits enforced
+    by Tmc260cDriver.set_current()/set_chopconf().
+    """
+
+
+def _validate_tmc260c_write(addr: int, value: int, psu_cs_cap: int = SAFETY_CS_MAX) -> None:
+    """Reject writes that would put the TMC260C-PA outside the safe envelope.
+
+    Two layers of protection:
+      1. SAFETY_CS_MAX / SAFETY_TOFF_MAX — absolute hardware limits, never
+         exceeded under any condition (boards burned 2026-05-08).
+      2. psu_cs_cap — per-PSU cap from PsuService. A 2 A brick can't
+         sustain three coils at CS=19, so the active preset narrows the
+         allowed CS down even though the chip itself would tolerate it.
+
+    Affected registers:
+      - CHOPCONF (0x04): TOFF (bits[3:0]) must be <= SAFETY_TOFF_MAX (8).
+      - SGCSCONF (0x06): CS  (bits[4:0]) must be <= effective_cs_cap.
+    Other registers (DRVCTRL, SMARTEN, DRVCONF) are allowed through —
+    they don't directly drive coil current/dissipation.
+    """
+    if addr == REG_CHOPCONF:
+        toff = value & 0x0F
+        if toff > SAFETY_TOFF_MAX:
+            raise UnsafeRegisterWrite(
+                f"CHOPCONF TOFF={toff} exceeds safety limit {SAFETY_TOFF_MAX}. "
+                f"2026-05-08 incident burned boards with TOFF>8."
+            )
+    elif addr == REG_SGCSCONF:
+        cs = value & 0x1F
+        # Hardware cap first — CS>19 burns the driver regardless of PSU.
+        if cs > SAFETY_CS_MAX:
+            raise UnsafeRegisterWrite(
+                f"SGCSCONF CS={cs} exceeds safety limit {SAFETY_CS_MAX}. "
+                f"2026-05-08 incident burned boards with CS>19."
+            )
+        # PSU-level cap — driver tolerant but supply not. Do this only
+        # after the absolute check so the error message is the most
+        # serious applicable one.
+        effective = min(SAFETY_CS_MAX, psu_cs_cap)
+        if cs > effective:
+            raise UnsafeRegisterWrite(
+                f"SGCSCONF CS={cs} exceeds PSU-derived cap {effective}. "
+                f"Lift the cap by selecting a higher-rated supply in Settings."
+            )
 
 if TYPE_CHECKING:
     from .motor_backend import MotorBackend
@@ -31,7 +89,14 @@ log = logging.getLogger(__name__)
 
 
 class DiagService:
-    """Diagnostic service for low-level TMC driver access."""
+    """Diagnostic service for low-level TMC driver access.
+
+    Optionally consults a PsuService instance so register writes are
+    validated against the operator-selected supply rating in addition to
+    the absolute SAFETY_CS_MAX. The dependency is injected after
+    construction (set_psu_service) to avoid an import cycle with main.py.
+    """
+    _psu_service = None  # late-injected via set_psu_service()
 
     def __init__(self, backend: MotorBackend) -> None:
         self._backend = backend
@@ -41,6 +106,10 @@ class DiagService:
         self._tmc260c_2 = Tmc260cDriver(backend, cs=2)  # FEED
         # TMC5072 retained for future production board (uses cs=3 if present)
         self._tmc5072 = Tmc5072Driver(backend, cs=3)
+
+    def set_psu_service(self, psu_service) -> None:
+        """Wire in the PsuService so register writes can consult it."""
+        self._psu_service = psu_service
 
     def _get_driver(self, driver_id: str) -> Tmc260cDriver | Tmc5072Driver:
         drivers: dict[str, Tmc260cDriver | Tmc5072Driver] = {
@@ -112,9 +181,18 @@ class DiagService:
     async def write_register(
         self, driver_id: str, addr: int, value: int
     ) -> DiagRegisterResponse:
-        """Write a value to a single register."""
+        """Write a value to a single register.
+
+        HARD GATE: TMC260C CHOPCONF/SGCSCONF writes are validated against
+        SAFETY_CS_MAX / SAFETY_TOFF_MAX before reaching SPI. Diagnostic UI
+        must never become a path to apply unsafe coil current.
+        """
         drv = self._get_driver(driver_id)
         if isinstance(drv, Tmc260cDriver):
+            psu_cap = SAFETY_CS_MAX
+            if self._psu_service is not None:
+                psu_cap = self._psu_service.cs_cap
+            _validate_tmc260c_write(addr, value, psu_cap)
             resp = await drv.write_register(addr, value)
         else:
             await drv.write_register(addr, value)

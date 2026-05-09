@@ -276,7 +276,24 @@ export const systemApi = {
       method: "POST",
       body: JSON.stringify({ confirm: true }),
     }),
+
+  getPsu: (): Promise<{ active: PsuPresetInfo; presets: PsuPresetInfo[] }> =>
+    request("/api/system/psu"),
+
+  setPsu: (psu_id: string): Promise<{ active: PsuPresetInfo }> =>
+    request("/api/system/psu", {
+      method: "POST",
+      body: JSON.stringify({ psu_id }),
+    }),
 };
+
+export interface PsuPresetInfo {
+  id: string;
+  label: string;
+  volts: number;
+  amps: number;
+  cs_cap: number;
+}
 
 // ---------------------------------------------------------------------------
 // Diagnostics API

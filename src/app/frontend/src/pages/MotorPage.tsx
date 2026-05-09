@@ -10,8 +10,9 @@ import { SliderInput } from '../components/ui/SliderInput';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { useMotorWs } from '../hooks/useMotorWs';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { AXIS_COLORS, AXIS_NAMES, AXIS_UNITS, BG_PANEL, BG_PRIMARY, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, HISTORY_LEN } from '../constants';
+import { AXIS_COLORS, AXIS_NAMES, AXIS_UNITS, BG_PANEL, BG_PRIMARY, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, HISTORY_LEN, SAFETY_CS_MAX, SAFETY_TOFF_MIN, SAFETY_TOFF_MAX } from '../constants';
 import { useSoftLimits } from '../hooks/useSoftLimits';
+import { usePsuConfig } from '../hooks/usePsuConfig';
 
 type MotorSubTab = 'position' | 'driver' | 'stallguard' | 'diagnostics';
 
@@ -350,11 +351,19 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
 // ---------------------------------------------------------------------------
 
 function DriverConfig() {
+  const { psu, effectiveCsMax } = usePsuConfig();
   const [selectedAxis, setSelectedAxis] = usePersistentState('driver.selectedAxis', 0);
-  const [irun, setIrun] = usePersistentState('driver.irun', 20);
-  const [ihold, setIhold] = usePersistentState('driver.ihold', 10);
+  // IRUN/IHOLD persisted values are clamped to the effective cap on every
+  // render — if the user lowers the PSU rating after saving a higher CS,
+  // we transparently reduce the apparent value rather than driving the
+  // motor with a previously-saved unsafe number.
+  const [irunRaw,  setIrun ] = usePersistentState('driver.irun',  Math.min(15, effectiveCsMax));
+  const [iholdRaw, setIhold] = usePersistentState('driver.ihold', Math.min(8,  effectiveCsMax));
+  const irun  = Math.min(irunRaw,  effectiveCsMax);
+  const ihold = Math.min(iholdRaw, effectiveCsMax);
   const [iholdDelay, setIholdDelay] = usePersistentState('driver.iholdDelay', 6);
-  const [toff, setToff] = usePersistentState('driver.toff', 5);
+  const [toffRaw, setToff] = usePersistentState('driver.toff', Math.min(5, SAFETY_TOFF_MAX));
+  const toff = Math.max(SAFETY_TOFF_MIN, Math.min(toffRaw, SAFETY_TOFF_MAX));
   const [hstrt, setHstrt] = usePersistentState('driver.hstrt', 4);
   const [hend, setHend] = usePersistentState('driver.hend', 0);
   const [spreadCycle, setSpreadCycle] = usePersistentState('driver.spreadCycle', true);
@@ -378,9 +387,12 @@ function DriverConfig() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
         <div style={cardStyle}>
           <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Current Settings</h3>
-          <SliderInput label={`IRUN (${irunToMa(irun)} mA)`} value={irun} min={0} max={31} onChange={setIrun} style={{ marginBottom: 12 }} />
-          <SliderInput label={`IHOLD (${irunToMa(ihold)} mA)`} value={ihold} min={0} max={31} onChange={setIhold} style={{ marginBottom: 12 }} />
+          <SliderInput label={`IRUN (${irunToMa(irun)} mA)`} value={irun} min={0} max={effectiveCsMax} onChange={setIrun} style={{ marginBottom: 12 }} />
+          <SliderInput label={`IHOLD (${irunToMa(ihold)} mA)`} value={ihold} min={0} max={effectiveCsMax} onChange={setIhold} style={{ marginBottom: 12 }} />
           <SliderInput label="IHOLDDELAY" value={iholdDelay} min={0} max={15} onChange={setIholdDelay} />
+          <div style={{ marginTop: 10, padding: '6px 8px', background: '#0f172a', border: '1px solid #1e3a5f', borderRadius: 4, fontSize: 11, color: TEXT_MUTED }}>
+            <span style={{ color: '#fcd34d' }}>⚠ Safety cap:</span> IRUN/IHOLD ≤ <strong style={{ color: '#fcd34d' }}>{effectiveCsMax}</strong> (PSU: {psu.label}, hardware max {SAFETY_CS_MAX}). Values above cap will burn the driver.
+          </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
             <button style={applyBtn}>Apply</button>
             <button style={readBtn}>Read Back</button>
@@ -389,9 +401,12 @@ function DriverConfig() {
 
         <div style={cardStyle}>
           <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Chopper Settings</h3>
-          <SliderInput label="TOFF" value={toff} min={1} max={15} onChange={setToff} style={{ marginBottom: 12 }} />
+          <SliderInput label="TOFF" value={toff} min={SAFETY_TOFF_MIN} max={SAFETY_TOFF_MAX} onChange={setToff} style={{ marginBottom: 12 }} />
           <SliderInput label="HSTRT" value={hstrt} min={0} max={7} onChange={setHstrt} style={{ marginBottom: 12 }} />
           <SliderInput label="HEND" value={hend} min={-3} max={12} onChange={setHend} style={{ marginBottom: 12 }} />
+          <div style={{ marginTop: 4, padding: '6px 8px', background: '#0f172a', border: '1px solid #1e3a5f', borderRadius: 4, fontSize: 11, color: TEXT_MUTED, marginBottom: 8 }}>
+            <span style={{ color: '#fcd34d' }}>⚠ Safety cap:</span> TOFF ≤ <strong style={{ color: '#fcd34d' }}>{SAFETY_TOFF_MAX}</strong>. Values above thermally damage the FETs (boards burned 2026-05-08 with TOFF=15).
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
             <span style={{ fontSize: 12, color: TEXT_MUTED }}>Mode:</span>
             <button
@@ -587,14 +602,36 @@ export function MotorPage() {
 
   return (
     <div style={{ padding: 'clamp(12px, 3vw, 20px)', maxWidth: 1100, margin: '0 auto' }}>
-      <h2 style={{ margin: '0 0 4px', color: TEXT_PRIMARY, fontSize: 18 }}>Motor Control</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 4px' }}>
+        <h2 style={{ margin: 0, color: TEXT_PRIMARY, fontSize: 18 }}>Motor Control</h2>
+        <button
+          onClick={() => {
+            if (!confirm('Reset cached motor settings (jog speed, step size, targets, IRUN/IHOLD, SG thresholds)?\n\nThis only clears the dashboard’s local cache; physical motor positions are not affected.')) return;
+            const prefix = 'ortho-bender:';
+            ['motor.jogSpeed','motor.stepSize','motor.targetAxis','motor.targetPos','motor.multiTarget',
+             'driver.selectedAxis','driver.irun','driver.ihold','driver.iholdDelay',
+             'driver.toff','driver.hstrt','driver.hend','driver.spreadCycle',
+             'stallguard.thresholds']
+              .forEach((k) => localStorage.removeItem(prefix + k));
+            window.location.reload();
+          }}
+          style={{ background: 'transparent', border: `1px solid ${BORDER}`, color: TEXT_MUTED, borderRadius: 4, padding: '4px 12px', cursor: 'pointer', fontSize: 12 }}
+          title="Clear cached jog/driver/SG settings stored in this browser"
+        >Reset cache</button>
+      </div>
       <div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 14 }}>
-        State: <strong style={{ color: TEXT_PRIMARY }}>
-          {motorStatus ? (['IDLE','HOMING','RUNNING','JOGGING','STOPPING','FAULT','ESTOP'][motorStatus.state] ?? '?') : '—'}
-        </strong>
-        &nbsp;|&nbsp; Step: <strong style={{ color: TEXT_PRIMARY }}>
-          {motorStatus ? `${motorStatus.current_step} / ${motorStatus.total_steps}` : '—'}
-        </strong>
+        <span title="Motion state: IDLE = no motion, JOGGING = jog running, RUNNING = sequence executing, HOMING = StallGuard2 homing, STOPPING = decelerating, FAULT/ESTOP = error.">
+          State: <strong style={{ color: TEXT_PRIMARY }}>
+            {motorStatus ? (['IDLE','HOMING','RUNNING','JOGGING','STOPPING','FAULT','ESTOP'][motorStatus.state] ?? '?') : '—'}
+          </strong>
+        </span>
+        &nbsp;|&nbsp;
+        <span title="B-code bending sequence progress: current step / total steps. 0/0 means no bending sequence is active — jog/move operations do not increment this.">
+          Step: <strong style={{ color: TEXT_PRIMARY }}>
+            {motorStatus ? `${motorStatus.current_step} / ${motorStatus.total_steps}` : '—'}
+          </strong>
+          <span style={{ color: TEXT_MUTED, marginLeft: 6, fontSize: 11 }}>(B-code only)</span>
+        </span>
       </div>
 
       {/* Driver Connection + Power Control */}
