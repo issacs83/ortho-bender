@@ -219,7 +219,7 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
             <div
               key={axisId}
               style={{
-                display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12,
+                display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12,
                 padding: '8px 0', borderBottom: `1px solid ${BORDER}`,
                 opacity: enabled ? 1 : 0.5,
                 userSelect: 'none', WebkitUserSelect: 'none',
@@ -229,7 +229,7 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                   Operators asked for the 12V/EN/SG/DIR/STEP indicators to
                   sit directly under the axis label so each row reads
                   top-to-bottom as a single block. */}
-              <div style={{ width: 170, display: 'flex', flexDirection: 'column' as const, gap: 4 }}>
+              <div style={{ width: 124, display: 'flex', flexDirection: 'column' as const, gap: 4 }}>
                 <div style={{ fontSize: 13, color: AXIS_COLORS[axisId], fontWeight: 600 }}>
                   {AXIS_NAMES[axisId]}
                 </div>
@@ -240,7 +240,7 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                   const dirGlyph = sig.dir > 0 ? '▶' : sig.dir < 0 ? '◀' : '';
                   const dirTone  = sig.dir > 0 ? 'blue' : sig.dir < 0 ? 'pink' : 'off';
                   return (
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                    <div style={{ display: 'flex', gap: 4, alignItems: 'flex-start' }}>
                       <SignalLed label="12V"  tone={sig.vmot ? 'green' : 'red'} title="VMot 12 V (chip responsive on SPI)" />
                       <SignalLed label="EN"   tone={sig.en   ? 'green' : 'off'} title="Driver chopper enabled (init done, not silenced)" />
                       <SignalLed label="SG"   tone={sgEffective ? 'red' : 'off'} title={sig.en ? 'StallGuard2: stall detected' : 'StallGuard masked while EN=off (silenced chip always reads SG=1)'} />
