@@ -14,6 +14,14 @@ Register address tags occupy bits [19:17]:
 Reference: TMC260C-PA Datasheet Rev 1.04, mirrors src/firmware/source/drivers/tmc260c.h
 
 IEC 62304 SW Class: B
+
+# 🚨 HARD SAFETY LIMITS — DO NOT VIOLATE
+Register defaults below are the *verified working* values from the
+2026-05-08 motor test bench. Earlier defaults (CS=20, CHOPCONF=0x101D5)
+caused 1/2층 board burn during a sweep test (CS=31 + TOFF=15).
+
+NEVER raise CS above 19. NEVER set TOFF above 8.
+See: src/dev/safety_motor_register_limits.md
 """
 
 from __future__ import annotations
@@ -31,11 +39,29 @@ REG_SMARTEN  = 0x05
 REG_SGCSCONF = 0x06
 REG_DRVCONF  = 0x07
 
-# Default register values (mirrors tmc260c.h defaults)
-CHOPCONF_DEFAULT = 0x101D5  # SpreadCycle, TOFF=5, HSTRT=4, HEND=1, TBL=2
-SMARTEN_DEFAULT  = 0xA0000  # coolStep disabled
-SGCSCONF_DEFAULT = 0xD0014  # CS=20, SGT=0, SFILT=1
-DRVCONF_DEFAULT  = 0xE0050  # RDSEL=SG, VSENSE=1
+# ===== HARD SAFETY LIMITS (cannot be overridden) =====
+SAFETY_CS_MAX   = 19   # Burned boards 2026-05-08 with CS=31
+SAFETY_TOFF_MAX = 8    # TOFF>8 thermal damage
+
+# ===== Verified working register defaults (2026-05-08) =====
+# CHOPCONF=0x99548: TBL=2, HEND=10, HSTRT=4, TOFF=8 (verified safe)
+CHOPCONF_DEFAULT = 0x99548
+# SMARTEN=0xA0000: CoolStep OFF
+SMARTEN_DEFAULT  = 0xA0000
+# SGCSCONF=0xD3F13: CS=19 (~0.6-0.9A RMS), SGT=+63, SFILT=1
+SGCSCONF_DEFAULT = 0xD3F13
+# DRVCONF=0xEF050: SLPH=11, SLPL=11, VSENSE=1, RDSEL=01 (SG_VALUE readback)
+DRVCONF_DEFAULT  = 0xEF050
+
+# Static safety verification (fails at import if defaults are unsafe)
+assert (SGCSCONF_DEFAULT & 0x1F) <= SAFETY_CS_MAX, (
+    f"SGCSCONF_DEFAULT CS={SGCSCONF_DEFAULT & 0x1F} exceeds safety limit "
+    f"{SAFETY_CS_MAX}. See safety_motor_register_limits.md"
+)
+assert (CHOPCONF_DEFAULT & 0xF) <= SAFETY_TOFF_MAX, (
+    f"CHOPCONF_DEFAULT TOFF={CHOPCONF_DEFAULT & 0xF} exceeds safety limit "
+    f"{SAFETY_TOFF_MAX}"
+)
 
 # Response bit masks
 RESP_SG_BIT   = 1 << 0
@@ -144,9 +170,16 @@ class Tmc260cDriver:
             return False, ""
 
     async def set_current(self, scale: int) -> None:
-        """Set motor current scale (0-31)."""
-        if not 0 <= scale <= 31:
-            raise ValueError(f"Current scale must be 0-31, got {scale}")
+        """Set motor current scale (0-19, hardcoded safety limit).
+
+        The chip allows CS=0..31, but values above 19 caused board burn
+        2026-05-08. This method refuses any value above SAFETY_CS_MAX.
+        """
+        if not 0 <= scale <= SAFETY_CS_MAX:
+            raise ValueError(
+                f"Current scale must be 0-{SAFETY_CS_MAX} (hardcoded safety). "
+                f"Got {scale}. See safety_motor_register_limits.md"
+            )
         value = (SGCSCONF_DEFAULT & 0x1FFE0) | (scale & 0x1F)
         await self.write_register(REG_SGCSCONF, value)
 

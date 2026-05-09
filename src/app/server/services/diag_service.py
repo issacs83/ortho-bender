@@ -35,14 +35,18 @@ class DiagService:
 
     def __init__(self, backend: MotorBackend) -> None:
         self._backend = backend
-        self._tmc260c_0 = Tmc260cDriver(backend, cs=0)
-        self._tmc260c_1 = Tmc260cDriver(backend, cs=1)
-        self._tmc5072 = Tmc5072Driver(backend, cs=2)
+        # 3-axis bench mapping: cs=0/1/2 → LIFT/BEND/FEED (verified 2026-05-08)
+        self._tmc260c_0 = Tmc260cDriver(backend, cs=0)  # LIFT
+        self._tmc260c_1 = Tmc260cDriver(backend, cs=1)  # BEND
+        self._tmc260c_2 = Tmc260cDriver(backend, cs=2)  # FEED
+        # TMC5072 retained for future production board (uses cs=3 if present)
+        self._tmc5072 = Tmc5072Driver(backend, cs=3)
 
     def _get_driver(self, driver_id: str) -> Tmc260cDriver | Tmc5072Driver:
         drivers: dict[str, Tmc260cDriver | Tmc5072Driver] = {
             "tmc260c_0": self._tmc260c_0,
             "tmc260c_1": self._tmc260c_1,
+            "tmc260c_2": self._tmc260c_2,
             "tmc5072": self._tmc5072,
         }
         if driver_id not in drivers:
@@ -61,6 +65,7 @@ class DiagService:
         for did, drv in (
             (DriverId.TMC260C_0, self._tmc260c_0),
             (DriverId.TMC260C_1, self._tmc260c_1),
+            (DriverId.TMC260C_2, self._tmc260c_2),
             (DriverId.TMC5072, self._tmc5072),
         ):
             connected, chip = await drv.probe()
@@ -73,7 +78,7 @@ class DiagService:
     async def spi_test(self) -> list[SpiTestResult]:
         """Test SPI connectivity with all drivers."""
         results: list[SpiTestResult] = []
-        for did in (DriverId.TMC260C_0, DriverId.TMC260C_1, DriverId.TMC5072):
+        for did in (DriverId.TMC260C_0, DriverId.TMC260C_1, DriverId.TMC260C_2, DriverId.TMC5072):
             t0 = time.monotonic()
             try:
                 drv = self._get_driver(did)
@@ -136,8 +141,12 @@ class DiagService:
         """
         results = {}
 
-        # TMC260C drivers — full status with SG2, fault bits
-        for did, drv in (("tmc260c_0", self._tmc260c_0), ("tmc260c_1", self._tmc260c_1)):
+        # TMC260C drivers (3-axis bench: LIFT/BEND/FEED) — full status with SG2, fault bits
+        for did, drv in (
+            ("tmc260c_0", self._tmc260c_0),  # LIFT
+            ("tmc260c_1", self._tmc260c_1),  # BEND
+            ("tmc260c_2", self._tmc260c_2),  # FEED
+        ):
             try:
                 status = await drv.read_status()
                 results[did] = {
@@ -191,5 +200,5 @@ class DiagService:
             backend=mode,
             spi_device=spi_device,
             spi_speed_hz=spi_speed,
-            drivers=[DriverId.TMC260C_0, DriverId.TMC260C_1, DriverId.TMC5072],
+            drivers=[DriverId.TMC260C_0, DriverId.TMC260C_1, DriverId.TMC260C_2, DriverId.TMC5072],
         )

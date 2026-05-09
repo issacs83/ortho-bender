@@ -83,17 +83,19 @@ async def lifespan(app: FastAPI):
     app.state.motor_service  = motor_svc
     app.state.camera_service = camera_svc
 
-    # Diagnostic backend — select via OB_MOTOR_BACKEND env var
+    # Diagnostic backend — select via OB_MOTOR_BACKEND env var.
+    # Verified bench mapping (2026-05-08): cs=0→LIFT, cs=1→BEND, cs=2→FEED.
     if cfg.motor_backend == "spidev":
         from .services.spi_backend import SpidevMotorBackend
         diag_backend = SpidevMotorBackend(
             spi_device=cfg.spi_device,
             spi_speed_hz=cfg.spi_speed_hz,
-            gpio_cs1=cfg.gpio_cs1,
-            gpio_cs2=cfg.gpio_cs2,
-            gpio_feed_step=cfg.gpio_feed_step,
-            gpio_bend_step=cfg.gpio_bend_step,
+            gpio_lift_cs=cfg.gpio_lift_cs,
+            gpio_bend_cs=cfg.gpio_bend_cs,
+            gpio_feed_cs=cfg.gpio_feed_cs,
             gpio_dir=cfg.gpio_dir,
+            pwm_step_path=cfg.pwm_step_path,
+            pwm_step_export=cfg.pwm_step_export,
         )
         await diag_backend.open()
     else:
