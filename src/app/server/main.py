@@ -75,10 +75,53 @@ async def lifespan(app: FastAPI):
         await ipc.connect()
     app.state.ipc_client = ipc
 
-    # Services — camera always uses real hardware when mock_mode=false
+    # Services — camera always uses real hardware when mock_mode=false.
+    # Camera_service interface evolved (mock=bool → backend=CameraBackend).
+    # Try the new backend-injection signature first; fall back to legacy
+    # mock=bool, and finally degrade to None if both fail (motor-only mode).
+    # MotorService spidev injection happens later, after diag_backend init.
     motor_svc  = MotorService(ipc)
-    camera_svc = CameraService(mock=cfg.mock_mode)
-    await camera_svc.connect()
+    camera_svc: CameraService | None = None
+    try:
+        try:
+            from .services.camera_backends.auto_backend import AutoBackend  # type: ignore
+            camera_svc = CameraService(backend=AutoBackend())  # type: ignore[arg-type]
+        except (ImportError, TypeError):
+            camera_svc = CameraService(mock=cfg.mock_mode)  # type: ignore[arg-type]
+        await camera_svc.connect()
+    except Exception as exc:
+        log.warning("Camera init failed: %s — continuing without camera", exc)
+        camera_svc = None
+
+    # Null-camera fallback so routes that depend on camera.get_status() etc.
+    # don't 500 when the camera failed to init (e.g. running on bench
+    # without Allied Vision device).
+    if camera_svc is None:
+        class _NullCameraService:
+            _connected = False
+            _width = 0
+            _height = 0
+            is_connected = False
+            backend_name = "null"
+            device_id: str | None = None
+            def get_status(self):
+                return {
+                    "connected": False, "backend": "mock", "device_id": None,
+                    "width": 0, "height": 0, "fps": 0,
+                }
+            async def capture_jpeg(self, **_kwargs):
+                return None
+            async def disconnect(self):
+                pass
+            def __getattr__(self, name):
+                # Permissive fallback for any other attribute access.
+                # Non-callable -> None/False; callable -> async no-op.
+                async def _async_noop(*_a, **_k): return None
+                if name.startswith("is_") or name.startswith("has_"):
+                    return False
+                return _async_noop
+        camera_svc = _NullCameraService()  # type: ignore[assignment]
+        log.info("Using NullCameraService fallback (no camera attached)")
 
     app.state.motor_service  = motor_svc
     app.state.camera_service = camera_svc
@@ -98,6 +141,10 @@ async def lifespan(app: FastAPI):
             pwm_step_export=cfg.pwm_step_export,
         )
         await diag_backend.open()
+        # Wire spidev backend into MotorService so REST move/jog drive the
+        # bench directly (instead of dispatching IPC to a non-existent M7).
+        motor_svc._spi_backend = diag_backend
+        log.info("MotorService bench mode enabled via SpidevMotorBackend")
     else:
         diag_backend = MockMotorBackend()
     diag_svc = DiagService(diag_backend)
@@ -120,14 +167,16 @@ async def lifespan(app: FastAPI):
             return None
 
     async def _camera_provider():
+        if camera_svc is None:
+            return None
         try:
             jpeg = await camera_svc.capture_jpeg(quality=cfg.camera_jpeg_quality)
             if not jpeg:
                 return None
             return {
                 "jpeg":   jpeg,
-                "width":  camera_svc._width or 0,
-                "height": camera_svc._height or 0,
+                "width":  getattr(camera_svc, "_width", 0) or 0,
+                "height": getattr(camera_svc, "_height", 0) or 0,
             }
         except Exception:
             return None
@@ -136,7 +185,7 @@ async def lifespan(app: FastAPI):
         try:
             return {
                 "ipc_connected":    ipc.connected,
-                "camera_connected": camera_svc._connected,
+                "camera_connected": (camera_svc is not None and getattr(camera_svc, "_connected", False)),
                 "driver_probe":     app.state.driver_probe,
             }
         except Exception:
@@ -163,7 +212,11 @@ async def lifespan(app: FastAPI):
     # Shutdown
     log.info("Shutting down Ortho-Bender SDK...")
     await ws_manager.stop()
-    await camera_svc.disconnect()
+    if camera_svc is not None:
+        try:
+            await camera_svc.disconnect()
+        except Exception:
+            pass
     await ipc.disconnect()
     log.info("Shutdown complete")
 

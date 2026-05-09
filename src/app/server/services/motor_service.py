@@ -52,10 +52,49 @@ class MotorService:
     All methods are async and safe to call from FastAPI route handlers.
     """
 
-    def __init__(self, ipc: IpcClient) -> None:
+    def __init__(self, ipc: IpcClient, spidev_backend=None) -> None:
         self._ipc = ipc
+        # Optional spidev backend — when M7 IPC is in mock mode and a
+        # SpidevMotorBackend is provided, motor commands run on the real
+        # Veyron 1×2A bench instead of dispatching IPC commands to a
+        # non-existent M7. Allows the FastAPI server to drive motors
+        # directly on the EVK test bench.
+        self._spi_backend = spidev_backend
+        # Axis ID → spidev cs (cs=0 LIFT, 1 BEND, 2 FEED). ROTATE not on bench.
+        self._axis_to_cs = {
+            int(AxisId.LIFT):   0,
+            int(AxisId.BEND):   1,
+            int(AxisId.FEED):   2,
+            int(AxisId.ROTATE): None,
+        }
         # Cache last TMC status so motor status can include it even between polls
         self._last_tmc: Optional[bytes] = None
+
+    @property
+    def has_bench(self) -> bool:
+        return self._spi_backend is not None
+
+    async def _bench_pulse(
+        self,
+        axis: int,
+        distance: float,
+        speed: float,
+    ) -> None:
+        """Translate move/jog (distance, speed) into a bench pulse_step call.
+
+        Conservative mapping (distance/speed are unit-agnostic on bench):
+          1 unit distance = 200 microsteps  (matches single full revolution
+                                             at 200 step/rev, or 5 mm lead)
+          1 unit speed    = 200 Hz step rate
+        Hz hard-clamped to [200, 8000] by the backend.
+        """
+        cs = self._axis_to_cs.get(axis)
+        if cs is None:
+            raise ValueError(f"Axis {axis} is not present on the bench")
+        steps = max(1, int(abs(distance) * 200))
+        freq  = max(200, min(int(abs(speed) * 200), 8000))
+        direction = 1 if distance >= 0 else -1
+        await self._spi_backend.pulse_step(cs, steps, freq, direction)
 
     # ------------------------------------------------------------------
     # Status
@@ -123,10 +162,14 @@ class MotorService:
         """
         Move a single axis by the given distance at the given speed.
 
-        Internally translates to a single-step B-code sequence so the M7
-        trajectory manager handles acceleration/deceleration uniformly.
+        - Bench mode (spidev backend): direct pulse_step on Veyron board.
+        - Production (M7 IPC): single-step B-code → M7 trajectory manager.
         """
-        # Map axis → B-code fields
+        if self.has_bench:
+            await self._bench_pulse(axis, distance, speed)
+            return await self.get_status()
+
+        # IPC path (M7 production)
         L_mm    = distance if axis == AxisId.FEED else 0.0
         beta    = distance if axis == AxisId.ROTATE else 0.0
         theta   = distance if axis == AxisId.BEND else 0.0
@@ -142,19 +185,40 @@ class MotorService:
     async def jog(
         self, axis: int, direction: int, speed: float, distance: float = 0.0
     ) -> MotorStatusResponse:
-        """Jog an axis continuously or for a fixed distance."""
+        """Jog an axis continuously or for a fixed distance.
+
+        Bench mode: jog defaults to 1-revolution (200 steps) when distance=0,
+        sign matches `direction` argument. Production: dispatches MSG_MOTION_JOG.
+        """
+        if self.has_bench:
+            d = distance if distance != 0.0 else 1.0
+            d *= (1 if direction >= 0 else -1)
+            await self._bench_pulse(axis, d, speed if speed > 0 else 10.0)
+            return await self.get_status()
+
         payload = build_jog_payload(axis, direction, speed, distance)
         await self._ipc.send_recv(MSG_MOTION_JOG, payload)
         return await self.get_status()
 
     async def home(self, axis_mask: int = 0) -> MotorStatusResponse:
-        """Execute homing sequence for the specified axes."""
+        """Execute homing sequence for the specified axes.
+
+        Bench mode: no homing switches — returns status only (no movement).
+        """
+        if self.has_bench:
+            log.info("home() ignored on bench (no homing switches)")
+            return await self.get_status()
         payload = build_home_payload(axis_mask)
         await self._ipc.send_recv(MSG_MOTION_HOME, payload)
         return await self.get_status()
 
     async def stop(self) -> MotorStatusResponse:
-        """Controlled deceleration stop."""
+        """Controlled deceleration stop.
+
+        Bench mode: backend's pulse_step finalize handles silence + PWM disable.
+        """
+        if self.has_bench:
+            return await self.get_status()
         await self._ipc.send_recv(MSG_MOTION_STOP)
         return await self.get_status()
 
