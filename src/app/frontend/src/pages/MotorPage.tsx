@@ -13,6 +13,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceL
 import { AXIS_COLORS, AXIS_NAMES, AXIS_UNITS, BG_PANEL, BG_PRIMARY, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, HISTORY_LEN, SAFETY_CS_MAX, SAFETY_TOFF_MIN, SAFETY_TOFF_MAX } from '../constants';
 import { useSoftLimits } from '../hooks/useSoftLimits';
 import { usePsuConfig } from '../hooks/usePsuConfig';
+import { useToast } from '../components/ui/ToastSystem';
 
 type MotorSubTab = 'position' | 'driver' | 'stallguard' | 'diagnostics';
 
@@ -352,18 +353,54 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
 
 function DriverConfig() {
   const { psu, effectiveCsMax } = usePsuConfig();
+  const toast = useToast();
   const [selectedAxis, setSelectedAxis] = usePersistentState('driver.selectedAxis', 0);
   // IRUN/IHOLD persisted values are clamped to the effective cap on every
   // render — if the user lowers the PSU rating after saving a higher CS,
   // we transparently reduce the apparent value rather than driving the
-  // motor with a previously-saved unsafe number.
-  const [irunRaw,  setIrun ] = usePersistentState('driver.irun',  Math.min(15, effectiveCsMax));
-  const [iholdRaw, setIhold] = usePersistentState('driver.ihold', Math.min(8,  effectiveCsMax));
+  // motor with a previously-saved unsafe number. We surface a one-shot
+  // toast the first time the auto-clamp engages so the operator sees it.
+  const [irunRaw,  setIrunRaw ] = usePersistentState('driver.irun',  Math.min(15, effectiveCsMax));
+  const [iholdRaw, setIholdRaw] = usePersistentState('driver.ihold', Math.min(8,  effectiveCsMax));
   const irun  = Math.min(irunRaw,  effectiveCsMax);
   const ihold = Math.min(iholdRaw, effectiveCsMax);
+  const clampNoticeRef = useRef(false);
+  useEffect(() => {
+    if (clampNoticeRef.current) return;
+    const messages: string[] = [];
+    if (irunRaw  > effectiveCsMax) messages.push(`IRUN ${irunRaw} → ${irun}`);
+    if (iholdRaw > effectiveCsMax) messages.push(`IHOLD ${iholdRaw} → ${ihold}`);
+    if (messages.length > 0) {
+      clampNoticeRef.current = true;
+      toast.warn(`Driver Config auto-clamped by PSU ${psu.label}:\n${messages.join('\n')}`, 7000);
+    }
+  }, [irunRaw, iholdRaw, effectiveCsMax, irun, ihold, psu.label, toast]);
+  function setIrun(v: number) {
+    if (v > effectiveCsMax) {
+      toast.warn(`IRUN ${v} clamped to ${effectiveCsMax} (PSU cap ${psu.label}).`);
+      v = effectiveCsMax;
+    }
+    setIrunRaw(v);
+  }
+  function setIhold(v: number) {
+    if (v > effectiveCsMax) {
+      toast.warn(`IHOLD ${v} clamped to ${effectiveCsMax} (PSU cap ${psu.label}).`);
+      v = effectiveCsMax;
+    }
+    setIholdRaw(v);
+  }
   const [iholdDelay, setIholdDelay] = usePersistentState('driver.iholdDelay', 6);
-  const [toffRaw, setToff] = usePersistentState('driver.toff', Math.min(5, SAFETY_TOFF_MAX));
+  const [toffRaw, setToffRaw] = usePersistentState('driver.toff', Math.min(5, SAFETY_TOFF_MAX));
   const toff = Math.max(SAFETY_TOFF_MIN, Math.min(toffRaw, SAFETY_TOFF_MAX));
+  function setToff(v: number) {
+    if (v > SAFETY_TOFF_MAX) {
+      toast.error(`TOFF ${v} blocked: hardware safety limit ${SAFETY_TOFF_MAX}. Boards burned 2026-05-08 with TOFF=15.`);
+      v = SAFETY_TOFF_MAX;
+    } else if (v < SAFETY_TOFF_MIN) {
+      v = SAFETY_TOFF_MIN;
+    }
+    setToffRaw(v);
+  }
   const [hstrt, setHstrt] = usePersistentState('driver.hstrt', 4);
   const [hend, setHend] = usePersistentState('driver.hend', 0);
   const [spreadCycle, setSpreadCycle] = usePersistentState('driver.spreadCycle', true);
@@ -387,9 +424,23 @@ function DriverConfig() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
         <div style={cardStyle}>
           <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Current Settings</h3>
-          <SliderInput label={`IRUN (${irunToMa(irun)} mA)`} value={irun} min={0} max={effectiveCsMax} onChange={setIrun} style={{ marginBottom: 12 }} />
-          <SliderInput label={`IHOLD (${irunToMa(ihold)} mA)`} value={ihold} min={0} max={effectiveCsMax} onChange={setIhold} style={{ marginBottom: 12 }} />
-          <SliderInput label="IHOLDDELAY" value={iholdDelay} min={0} max={15} onChange={setIholdDelay} />
+          <SliderInput
+            label={`IRUN (${irunToMa(irun)} mA)`}
+            value={irun} min={0} max={effectiveCsMax} onChange={setIrun}
+            help={`Run current scale (CS, 0-${effectiveCsMax}). Active coil current while motor is moving. Higher = more torque + heat. Capped by selected PSU (${psu.label}); hardware absolute max ${SAFETY_CS_MAX}.`}
+            style={{ marginBottom: 12 }}
+          />
+          <SliderInput
+            label={`IHOLD (${irunToMa(ihold)} mA)`}
+            value={ihold} min={0} max={effectiveCsMax} onChange={setIhold}
+            help={`Hold current scale. Coil current while motor is idle (holding torque). Lower than IRUN to reduce heat. Capped by PSU.`}
+            style={{ marginBottom: 12 }}
+          />
+          <SliderInput
+            label="IHOLDDELAY"
+            value={iholdDelay} min={0} max={15} onChange={setIholdDelay}
+            help="Time the driver waits after motion stops before stepping the current down from IRUN to IHOLD. Higher = smoother, lower = faster cool-down. Range 0-15."
+          />
           <div style={{ marginTop: 10, padding: '6px 8px', background: '#0f172a', border: '1px solid #1e3a5f', borderRadius: 4, fontSize: 11, color: TEXT_MUTED }}>
             <span style={{ color: '#fcd34d' }}>⚠ Safety cap:</span> IRUN/IHOLD ≤ <strong style={{ color: '#fcd34d' }}>{effectiveCsMax}</strong> (PSU: {psu.label}, hardware max {SAFETY_CS_MAX}). Values above cap will burn the driver.
           </div>
@@ -401,9 +452,24 @@ function DriverConfig() {
 
         <div style={cardStyle}>
           <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Chopper Settings</h3>
-          <SliderInput label="TOFF" value={toff} min={SAFETY_TOFF_MIN} max={SAFETY_TOFF_MAX} onChange={setToff} style={{ marginBottom: 12 }} />
-          <SliderInput label="HSTRT" value={hstrt} min={0} max={7} onChange={setHstrt} style={{ marginBottom: 12 }} />
-          <SliderInput label="HEND" value={hend} min={-3} max={12} onChange={setHend} style={{ marginBottom: 12 }} />
+          <SliderInput
+            label="TOFF"
+            value={toff} min={SAFETY_TOFF_MIN} max={SAFETY_TOFF_MAX} onChange={setToff}
+            help={`Chopper off-time (${SAFETY_TOFF_MIN}-${SAFETY_TOFF_MAX}). Sets minimum interval between current-decay phases. Max ${SAFETY_TOFF_MAX} is a HARD safety cap — boards burned 2026-05-08 with TOFF=15.`}
+            style={{ marginBottom: 12 }}
+          />
+          <SliderInput
+            label="HSTRT"
+            value={hstrt} min={0} max={7} onChange={setHstrt}
+            help="Hysteresis start (0-7). Where the driver begins ramping current at the start of each chopper cycle. Tune for low audible noise."
+            style={{ marginBottom: 12 }}
+          />
+          <SliderInput
+            label="HEND"
+            value={hend} min={-3} max={12} onChange={setHend}
+            help="Hysteresis end (-3..+12). End-of-decay current target. Combined with HSTRT controls chopper waveform smoothness."
+            style={{ marginBottom: 12 }}
+          />
           <div style={{ marginTop: 4, padding: '6px 8px', background: '#0f172a', border: '1px solid #1e3a5f', borderRadius: 4, fontSize: 11, color: TEXT_MUTED, marginBottom: 8 }}>
             <span style={{ color: '#fcd34d' }}>⚠ Safety cap:</span> TOFF ≤ <strong style={{ color: '#fcd34d' }}>{SAFETY_TOFF_MAX}</strong>. Values above thermally damage the FETs (boards burned 2026-05-08 with TOFF=15).
           </div>

@@ -12,15 +12,31 @@ interface SliderInputProps {
   max: number;
   step?: number;
   unit?: string;
+  /** Hover help text shown next to the label as ⓘ. Use plain text. */
+  help?: string;
   onChange: (value: number) => void;
   style?: CSSProperties;
 }
 
-export function SliderInput({ label, value, min, max, step = 1, unit, onChange, style }: SliderInputProps) {
+export function SliderInput({ label, value, min, max, step = 1, unit, help, onChange, style }: SliderInputProps) {
   return (
     <div style={{ ...style }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-        <label style={{ fontSize: 12, color: TEXT_SECONDARY }}>{label}</label>
+        <label style={{ fontSize: 12, color: TEXT_SECONDARY, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          {label}
+          {help && (
+            <span
+              title={help}
+              aria-label={help}
+              style={{
+                cursor: 'help', fontSize: 10, color: TEXT_SECONDARY,
+                border: `1px solid ${BORDER}`, borderRadius: '50%',
+                width: 13, height: 13, display: 'inline-flex',
+                alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+              }}
+            >ⓘ</span>
+          )}
+        </label>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <input
             type="number"

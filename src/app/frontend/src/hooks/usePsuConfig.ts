@@ -16,6 +16,7 @@ import {
   type PsuPreset,
 } from '../constants';
 import { systemApi } from '../api/client';
+import { useToast } from '../components/ui/ToastSystem';
 import { usePersistentState } from './usePersistentState';
 
 const PSU_KEY        = 'settings.psuId';
@@ -32,8 +33,9 @@ const LEGACY_ID_MAP: Record<string, string> = {
 };
 
 export function usePsuConfig() {
+  const toast = useToast();
   const [psuId, setPsuIdRaw] = usePersistentState(PSU_KEY, PSU_DEFAULT_ID);
-  const [override, setOverride] = usePersistentState(CS_OVERRIDE_KEY, 0);
+  const [override, setOverrideRaw] = usePersistentState(CS_OVERRIDE_KEY, 0);
   const resolvedId = LEGACY_ID_MAP[psuId] ?? psuId;
   const psu =
     PSU_PRESETS.find((p) => p.id === resolvedId) ??
@@ -62,12 +64,47 @@ export function usePsuConfig() {
   }, []);
 
   function setPsuId(next: string) {
+    const prev = psu;
+    const nextPsu = PSU_PRESETS.find((p) => p.id === next);
     setPsuIdRaw(next);
     if (next === lastPushedRef.current) return;
     lastPushedRef.current = next;
+    if (nextPsu && nextPsu.id !== prev.id) {
+      const newCap = computeEffectiveCsMax(nextPsu, override);
+      const oldCap = computeEffectiveCsMax(prev, override);
+      if (newCap < oldCap) {
+        toast.warn(
+          `PSU set to ${nextPsu.label}.\n` +
+          `IRUN/IHOLD cap reduced ${oldCap} → ${newCap}. ` +
+          `Existing driver settings above ${newCap} are auto-clamped.`,
+          7000,
+        );
+      } else if (newCap > oldCap) {
+        toast.info(`PSU set to ${nextPsu.label}. CS cap raised ${oldCap} → ${newCap}.`, 5000);
+      }
+    }
     systemApi.setPsu(next).catch(() => {
-      // local cap still applies; backend will catch up on next change
+      toast.error(
+        'Failed to sync PSU selection to backend. Local UI cap still applies, ' +
+        'but the diagnostic register-write guard may use the previous value.'
+      );
     });
+  }
+
+  function setOverride(next: number) {
+    let val = Math.round(next);
+    if (!Number.isFinite(val) || val < 0) val = 0;
+    if (val > SAFETY_CS_MAX) {
+      toast.warn(
+        `Manual CS override ${val} clamped to hardware safety max ${SAFETY_CS_MAX}. ` +
+        `Boards burned 2026-05-08 with CS=31.`
+      );
+      val = SAFETY_CS_MAX;
+    }
+    if (val !== override && val > 0 && val < psu.csCap) {
+      toast.info(`Manual CS override ${val} is below PSU cap ${psu.csCap} — using ${val}.`);
+    }
+    setOverrideRaw(val);
   }
 
   return { psu, psuId: psu.id, setPsuId, override, setOverride, effectiveCsMax };

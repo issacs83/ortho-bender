@@ -25,6 +25,7 @@ import { wsApi } from './api/client';
 import type { ConnStatus } from './components/ui/ConnectionIcon';
 import type { SystemEvent } from './hooks/useSystemWs';
 import { useBoardRebootDetector } from './hooks/useBoardRebootDetector';
+import { ToastProvider } from './components/ui/ToastSystem';
 import { BG_PRIMARY, BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_MUTED } from './constants';
 
 export type Page = 'connection' | 'dashboard' | 'bending' | 'motor' | 'camera' | 'simulation' | 'settings' | 'diagnostics' | 'docs';
@@ -126,7 +127,7 @@ export default function App() {
   }
 
   return (
-    <>
+    <ToastProvider>
       {/* Global styles */}
       <style>{`
         * { box-sizing: border-box; }
@@ -234,6 +235,6 @@ export default function App() {
           </div>
         </div>
       </div>
-    </>
+    </ToastProvider>
   );
 }
