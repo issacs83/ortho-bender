@@ -293,22 +293,43 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                 style={jogBtnStyle}
                 className="jog-btn"
               >◀</button>
-              {/* STOP  =  immediate halt of any running jog/run on this bench */}
-              <button
-                disabled={!enabled}
-                onClick={() => { if (enabled) stopContinuousJog(); }}
-                title="즉시 정지"
-                style={{
-                  ...jogBtnStyle,
-                  color: '#fca5a5',
-                  background: '#7f1d1d',
-                  border: '1px solid #991b1b',
-                  fontSize: 11,
-                  fontWeight: 700,
-                  letterSpacing: 0.5,
-                }}
-                className="jog-btn"
-              >STOP</button>
+              {/* STOP  =  halt the jog ON THIS AXIS. Bench shares PWM4 across
+                  all three chips so only one axis can run at a time, but the
+                  per-row STOP button must still feel local: pressing BEND's
+                  STOP while FEED is the jogging axis previously cancelled
+                  FEED, which surprised the operator. We now enable each row's
+                  STOP only when this axis is the active jog target (signals.
+                  step === true). The other rows' STOP buttons are visibly
+                  disabled so the operator immediately sees which one to use. */}
+              {(() => {
+                const isThisAxisJogging = ax?.signals?.step === true;
+                const stopEnabled = enabled && isThisAxisJogging;
+                return (
+                  <button
+                    disabled={!stopEnabled}
+                    onClick={() => { if (stopEnabled) stopContinuousJog(); }}
+                    title={isThisAxisJogging
+                      ? `Stop ${AXIS_NAMES[axisId]} jog`
+                      : `Only the active jog axis can be stopped here. ${
+                          motorStatus?.axes?.find((a) => a.signals?.step)
+                            ? `${AXIS_NAMES[motorStatus.axes.find((a) => a.signals?.step)!.axis]} is currently jogging.`
+                            : 'No axis is jogging.'
+                        }`}
+                    style={{
+                      ...jogBtnStyle,
+                      color: stopEnabled ? '#fca5a5' : '#64748b',
+                      background: stopEnabled ? '#7f1d1d' : '#1e293b',
+                      border: `1px solid ${stopEnabled ? '#991b1b' : BORDER}`,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      letterSpacing: 0.5,
+                      opacity: stopEnabled ? 1 : 0.5,
+                      cursor: stopEnabled ? 'pointer' : 'not-allowed',
+                    }}
+                    className="jog-btn"
+                  >STOP</button>
+                );
+              })()}
               {/* ▶  =  long-press jog */}
               <button
                 disabled={!enabled}
