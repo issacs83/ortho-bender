@@ -1,0 +1,42 @@
+#!/bin/bash
+# motor_test — stack layer motor test launcher
+# Usage: motor_test {1|2|3} [duration_sec=5] [hz=4000]
+#
+# Stack layer mapping (verified 2026-05-08):
+#   1 = LIFT (gpio5_07, ECSPI1_MOSI alt5)
+#   2 = BEND (gpio3_22, SAI5_RXD1 alt5)
+#   3 = FEED (gpio5_13, ECSPI2_SS0)
+#
+# SAFETY LIMITS (hardcoded, cannot override):
+#   CS=19 max, TOFF=8 max, CHOPCONF=0x99548 frozen
+
+LAYER="$1"
+DURATION="${2:-5.0}"
+HZ="${3:-4000}"
+
+case "$LAYER" in
+    1|LIFT|lift) CHIP=LIFT ;;
+    2|BEND|bend) CHIP=BEND ;;
+    3|FEED|feed) CHIP=FEED ;;
+    0|all|ALL)
+        # 3-axis simultaneous mode
+        # default duration=5, hz=2000 (conservative for 3-axis PSU load)
+        DUR_ALL="${2:-5.0}"
+        HZ_ALL="${3:-2000}"
+        exec python3 /usr/local/lib/motor_test_all_safe.py "$DUR_ALL" "$HZ_ALL"
+        ;;
+    *)
+        echo "Usage: motor_test {1|2|3|all} [duration_sec] [hz]"
+        echo "  1   = LIFT (default 5s @ 4kHz)"
+        echo "  2   = BEND (default 5s @ 4kHz)"
+        echo "  3   = FEED (default 5s @ 4kHz)"
+        echo "  all = 3-axis simultaneous (default 5s @ 2kHz, hz_max=4000)"
+        echo "Examples:"
+        echo "  motor_test 1            # LIFT 5s @ 4kHz"
+        echo "  motor_test all          # 3-axis 5s @ 2kHz"
+        echo "  motor_test all 10 3000  # 3-axis 10s @ 3kHz"
+        exit 1
+        ;;
+esac
+
+exec python3 /usr/local/lib/motor_test_safe.py "$CHIP" "$DURATION" "$HZ"
