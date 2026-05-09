@@ -130,10 +130,14 @@ class MotorService:
         if cs is None:
             raise ValueError(f"Axis {axis} is not present on the bench")
 
-        if abs(speed) < 50:
-            freq = int(abs(speed) * 200)
-        else:
-            freq = int(abs(speed))
+        # Speed is the user-facing rate (mm/s or deg/s). 200 microsteps == 1
+        # unit (200 step/rev typical). Without this monotonic mapping, the
+        # old `if abs(speed)<50: ×200 else: ×1` produced a 20× cliff at
+        # speed=50 — speed=49 → 4000 Hz, speed=50 → 200 Hz — which made
+        # high-inertia axes (FEED) appear "broken" at certain slider
+        # positions while LIFT/BEND coped with the small range. 4000 Hz is
+        # the bench safety cap regardless.
+        freq = int(abs(speed) * 200)
         freq = max(200, min(freq, 4000))
         max_duration_s = 60 if continuous else 5
         steps = freq * max_duration_s
@@ -201,12 +205,9 @@ class MotorService:
         # directly as Hz with safe upper bound.
         clamped_distance = max(-50.0, min(50.0, distance))
         steps = max(1, int(abs(clamped_distance) * 200))
-        # If frontend sends speed in a "natural" range (1..50), multiply;
-        # if already large (>=200), treat as Hz directly.
-        if abs(speed) < 50:
-            freq = int(abs(speed) * 200)
-        else:
-            freq = int(abs(speed))
+        # Same monotonic mapping as jog_start — see the note there for
+        # why the old <50 / >=50 split was a regression.
+        freq = int(abs(speed) * 200)
         freq = max(200, min(freq, 4000))
         # Cap duration to 10 s
         if steps / freq > 10.0:

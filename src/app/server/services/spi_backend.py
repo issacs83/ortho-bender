@@ -501,9 +501,22 @@ class SpidevMotorBackend(MotorBackend):
                 log.error("axis %d fault before run: 0x%05X — aborting", axis, status)
                 raise RuntimeError(f"axis {axis} fault detected (0x{status:05X})")
 
-            # PWM4 setup — STEP signal goes live now
+            # PWM4 setup — STEP signal goes live now.
+            # Soft acceleration ramp from 200 Hz up to the target freq so
+            # high-inertia axes (FEED via lead screw) don't stall on the
+            # first STEP. The ramp is short (~250 ms) so quick taps still
+            # feel responsive. pulse_step_multi has the same shape.
             await self._pwm_ensure_exported()
-            await self._pwm_set_hz(freq_hz)
+            START_HZ = 200
+            if freq_hz > START_HZ:
+                ramp_steps = 8
+                ramp_total_s = 0.25
+                for i in range(ramp_steps):
+                    h = int(START_HZ + (freq_hz - START_HZ) * (i + 1) / ramp_steps)
+                    await self._pwm_set_hz(h)
+                    await asyncio.sleep(ramp_total_s / ramp_steps)
+            else:
+                await self._pwm_set_hz(freq_hz)
             t0 = time.monotonic()
 
             # Run + fault/stall monitoring with 100 ms polling.
