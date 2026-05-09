@@ -68,6 +68,13 @@ _REENABLE_CYCLES = 5            # fast chopper re-enable on subsequent jogs:
                                 # CHOPCONF + SGCSCONF only (~15 ms total).
 _SILENCE_CYCLES = 5             # chopper-off cycles between jogs.
 
+# Bench convention: ▶ button (direction=+1) must rotate the motor
+# clockwise (forward), ◀ button (direction=-1) counter-clockwise.
+# The Veyron board's DIR input is wired such that DIR=LOW is CW and
+# DIR=HIGH is CCW for our motor mounting, so we drive DIR=LOW when
+# the requested direction is positive (+).
+_DIR_INVERT = True
+
 # Static safety verification (also done in tmc260c_driver, double-check here)
 assert (SGCSCONF_DEFAULT & 0x1F) <= SAFETY_CS_MAX, "SGCSCONF CS exceeds safety"
 assert (CHOPCONF_DEFAULT & 0xF) <= SAFETY_TOFF_MAX, "CHOPCONF TOFF exceeds safety"
@@ -378,7 +385,7 @@ class SpidevMotorBackend(MotorBackend):
             duration_s = 30.0
             count = int(duration_s * freq_hz)
 
-        self._gpio_set('dir', direction > 0)
+        self._gpio_set('dir', (direction > 0) != _DIR_INVERT)
         await asyncio.sleep(_DIR_SETUP_S)
 
         # Sequential init each axis
@@ -461,7 +468,7 @@ class SpidevMotorBackend(MotorBackend):
             # All init/PWM setup INSIDE the try so a cancellation during
             # init still triggers the finally block (silence + position
             # snapshot). This makes the 750 ms init phase cancellable.
-            self._gpio_set('dir', direction > 0)
+            self._gpio_set('dir', (direction > 0) != _DIR_INVERT)
             await asyncio.sleep(_DIR_SETUP_S)
             await self._init_chip(axis)
 
