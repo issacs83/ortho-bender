@@ -85,15 +85,17 @@ async def get_system_status(
     active_alarms = 0
     motion_state = MotionState.IDLE
 
-    if ipc_ok:
+    bench_mode = bool(getattr(motor, "has_bench", False))
+
+    # On the bench there is no M7 — skip the heartbeat round-trip entirely
+    # (the mock IPC would just return IDLE / wdt_ok=0 and waste the 0.5 s
+    # timeout when the OS is busy). Production keeps the M7 path.
+    if ipc_ok and not bench_mode:
         try:
             resp = await asyncio.wait_for(
                 ipc.send_recv(MSG_STATUS_HEARTBEAT), timeout=0.5
             )
             # Heartbeat payload: uptime_ms(4B) state(1B) alarms(2B) wdt_ok(1B) axis_mask(1B)
-            # IPC `state` is authoritative on production hardware; on the bench
-            # the mock IPC always reports IDLE, so we override below with the
-            # MotorService's bench-aware state (handles sticky ESTOP).
             import struct
             if len(resp.payload) >= 9:
                 _, state, alarms, wdt_ok, _ = struct.unpack_from("<IBHBB", resp.payload)
@@ -102,13 +104,15 @@ async def get_system_status(
                 motion_state = MotionState(state)
         except Exception as exc:
             log.debug("Heartbeat poll failed: %s", exc)
+    elif bench_mode:
+        # No M7 on the bench — heartbeat reads as healthy, link is whatever
+        # the mock IPC reports, alarms come from the bench fault service
+        # (none right now). Motion state is filled in below from MotorService.
+        m7_hb_ok = True
 
     # On the bench MotorService owns the real state (including the sticky
-    # _bench_estop_active flag). Without this the dashboard would never see
-    # ESTOP because the mock IPC heartbeat always returns IDLE — operator
-    # would press E-STOP, motor would stop, but the EStopButton would not
-    # flip to "RESET E-STOP" and there'd be no way to clear the flag.
-    if getattr(motor, "has_bench", False):
+    # _bench_estop_active flag) — see _bench_status().
+    if bench_mode:
         try:
             bench_ms = await motor.get_status()
             motion_state = bench_ms.state

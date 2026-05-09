@@ -168,11 +168,22 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
       {/* Jog controls — long-press supported on all directional buttons.
           Disabled rows render greyed when an axis is not present in the
           current motorStatus.axes (driver disconnected or axis_mask=0). */}
+      {motorStatus?.state === 6 && (
+        <div style={{
+          background: '#7f1d1d', border: '1px solid #ef4444', borderRadius: 6,
+          padding: '10px 14px', marginBottom: 14, color: '#fca5a5', fontSize: 13,
+          display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <span style={{ fontWeight: 700 }}>⛔ E-STOP active.</span>
+          <span>All motion commands are blocked. Press <strong>RESET E-STOP</strong> in the header to clear.</span>
+        </div>
+      )}
       <div style={cardStyle}>
         <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Axis Jog</h3>
         {[0, 1, 2, 3].map((axisId) => {
           const ax = (motorStatus?.axes ?? []).find((a) => a.axis === axisId);
-          const enabled = !!ax;
+          const estopActive = motorStatus?.state === 6;
+          const enabled = !!ax && !estopActive;
           const pos = ax?.position ?? 0;
           const jogBtnStyle = {
             ...btnBase,
@@ -310,12 +321,33 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
 
       {/* Actions */}
       <div style={{ ...cardStyle, display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
-        <button onClick={() => setShowHomeModal(true)} style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '8px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Home All</button>
-        {AXIS_NAMES.map((n, i) => (
-          <button key={i} onClick={() => motorApi.home(1 << i)} style={{ ...btnBase, fontSize: 12 }}>Home {n}</button>
-        ))}
-        <button onClick={() => motorApi.stop()} style={{ ...btnBase, background: '#78350f', color: '#fcd34d' }}>Stop</button>
-        <button onClick={() => motorApi.reset()} style={btnBase}>Reset Fault</button>
+        {(() => {
+          const estopBlocked = motorStatus?.state === 6;
+          const motionBtn = (extra: object) => ({
+            ...extra,
+            opacity: estopBlocked ? 0.4 : 1,
+            cursor: estopBlocked ? 'not-allowed' as const : 'pointer' as const,
+          });
+          return (
+            <>
+              <button
+                onClick={() => { if (!estopBlocked) setShowHomeModal(true); }}
+                disabled={estopBlocked}
+                style={motionBtn({ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '8px 14px', fontSize: 13, fontWeight: 600 })}
+              >Home All</button>
+              {AXIS_NAMES.map((n, i) => (
+                <button
+                  key={i}
+                  onClick={() => { if (!estopBlocked) motorApi.home(1 << i); }}
+                  disabled={estopBlocked}
+                  style={motionBtn({ ...btnBase, fontSize: 12 })}
+                >Home {n}</button>
+              ))}
+              <button onClick={() => motorApi.stop()} style={{ ...btnBase, background: '#78350f', color: '#fcd34d' }}>Stop</button>
+              <button onClick={() => motorApi.reset()} style={btnBase}>Reset Fault</button>
+            </>
+          );
+        })()}
       </div>
 
       {/* Position history chart */}

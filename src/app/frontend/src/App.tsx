@@ -132,6 +132,16 @@ export default function App() {
       <style>{`
         * { box-sizing: border-box; }
         body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        /* Global button press feedback. Inline-styled buttons opt out by
+           setting transform inline. The :not([disabled]) guard keeps
+           disabled buttons static so the operator can see they're inert. */
+        button:not([disabled]):active {
+          transform: scale(0.96);
+          transition: transform 60ms ease-out, filter 60ms ease-out;
+          filter: brightness(0.85);
+        }
+        button:not([disabled]) { transition: transform 120ms ease, filter 120ms ease; }
+        button[disabled] { cursor: not-allowed !important; }
         @keyframes spin {
           from { transform: rotate(0deg); }
           to   { transform: rotate(360deg); }

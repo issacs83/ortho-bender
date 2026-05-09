@@ -62,10 +62,14 @@ export function Header({
         </span>
       </div>
 
-      {/* Center: motion state + connection icons */}
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, minWidth: 0, overflow: 'hidden' }}>
-        <MotionStatePill stateNum={motionStateNum} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 1, overflow: 'hidden' }}>
+      {/* Center: motion state + connection icons.
+          flex-shrink:0 on the pill prevents it from being overlapped by the
+          adjacent icon row at narrow widths (the ESTOP pill is must-see). */}
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, minWidth: 0, overflow: 'hidden' }}>
+        <div style={{ flexShrink: 0 }}>
+          <MotionStatePill stateNum={motionStateNum} />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 1, overflow: 'hidden', minWidth: 0 }}>
           <ConnectionIcon label="SYS"  status={bdStatus} />
           <ConnectionIcon label="LINK" status={ipcStatus} />
           <ConnectionIcon label={motorModel ?? 'MTR'} status={motorStatus} detail={motorDetail} />

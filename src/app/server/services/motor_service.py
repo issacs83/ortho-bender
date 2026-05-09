@@ -83,6 +83,21 @@ class MotorService:
     def has_bench(self) -> bool:
         return self._spi_backend is not None
 
+    def _ensure_not_estop(self, action: str) -> None:
+        """HARD GATE — refuse motion commands while bench E-STOP is latched.
+
+        2026-05-09 incident: jog buttons stayed active in the dashboard while
+        the ESTOP indicator was set, and the operator was able to drive the
+        motor with a single press. The backend is the last line of defence —
+        even with frontend disable in place, any direct API call must hit
+        this and be rejected until enable_drivers()/reset() clears the flag.
+        """
+        if self._bench_estop_active:
+            raise RuntimeError(
+                f"E-STOP active — refusing {action}. Press RESET E-STOP "
+                f"(or POST /api/motor/reset) before issuing motion commands."
+            )
+
     async def jog_start(
         self,
         axis: int,
@@ -102,6 +117,7 @@ class MotorService:
             STOP button (which calls jog_stop). 60 s caps unattended
             runtime in case the user forgets to stop.
         """
+        self._ensure_not_estop("jog_start")
         if not self.has_bench:
             payload = build_jog_payload(axis, direction, speed, 0.0)
             await self._ipc.send_recv(MSG_MOTION_JOG, payload)
@@ -330,6 +346,7 @@ class MotorService:
         - Bench mode (spidev backend): direct pulse_step on Veyron board.
         - Production (M7 IPC): single-step B-code → M7 trajectory manager.
         """
+        self._ensure_not_estop("move")
         if self.has_bench:
             await self._bench_pulse(axis, distance, speed)
             return await self.get_status()
@@ -355,6 +372,7 @@ class MotorService:
         Bench mode: jog defaults to 1-revolution (200 steps) when distance=0,
         sign matches `direction` argument. Production: dispatches MSG_MOTION_JOG.
         """
+        self._ensure_not_estop("jog")
         if self.has_bench:
             d = distance if distance != 0.0 else 1.0
             d *= (1 if direction >= 0 else -1)
@@ -370,6 +388,7 @@ class MotorService:
 
         Bench mode: no homing switches — returns status only (no movement).
         """
+        self._ensure_not_estop("home")
         if self.has_bench:
             log.info("home() ignored on bench (no homing switches)")
             return await self.get_status()
@@ -436,10 +455,21 @@ class MotorService:
 
         Also clears the sticky bench E-STOP flag — re-enabling the drivers
         is the operator's explicit acknowledgement that the E-STOP condition
-        has been resolved.
+        has been resolved. The bench path also re-runs _init_chip on every
+        cs so the chopper is back ON; without that step the SG LED stays
+        on (chip silenced -> no coil current -> StallGuard2 sees stall).
         """
         if self.has_bench:
             self._bench_estop_active = False
+            for cs in (0, 1, 2):
+                try:
+                    # Force a full re-init: silence_chip preserves _initialized
+                    # which would normally take the fast re-enable path. We
+                    # want the full sequence to be safe after E-STOP.
+                    self._spi_backend._initialized[cs] = False
+                    await self._spi_backend._init_chip(cs)
+                except Exception as exc:
+                    log.warning("enable_drivers re-init cs=%d failed: %s", cs, exc)
             return await self.get_status()
         payload = build_drv_enable_payload(True, axis_mask)
         await self._ipc.send_recv(MSG_MOTION_SET_DRV_ENABLE, payload)
@@ -459,11 +489,18 @@ class MotorService:
     async def reset(self) -> MotorStatusResponse:
         """Reset motor fault state and re-enable drivers.
 
-        Also clears the sticky bench E-STOP flag (same semantics as
-        enable_drivers — explicit operator acknowledgement).
+        Bench: clears the sticky E-STOP flag AND re-initialises every chip
+        so the chopper outputs are restored (SG LED clears) on the same
+        operator action that flips RESET E-STOP back to E-STOP.
         """
         if self.has_bench:
             self._bench_estop_active = False
+            for cs in (0, 1, 2):
+                try:
+                    self._spi_backend._initialized[cs] = False
+                    await self._spi_backend._init_chip(cs)
+                except Exception as exc:
+                    log.warning("reset re-init cs=%d failed: %s", cs, exc)
             return await self.get_status()
         # TODO: add axis_mask payload if M7 firmware supports per-axis reset
         await self._ipc.send_recv(MSG_MOTION_RESET)
