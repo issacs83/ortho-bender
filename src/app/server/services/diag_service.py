@@ -129,6 +129,10 @@ class DiagService:
 
         Reads identification registers via SPI to determine which drivers
         are physically connected and what chip type they are.
+
+        Side effect: also primes the bench backend's _chip_responsive map
+        so the dashboard 12 V LED reflects the boot-time probe instead
+        of waiting for the operator's first jog.
         """
         results: list[DriverProbeResult] = []
         for did, drv in (
@@ -142,6 +146,11 @@ class DiagService:
                 driver=did, connected=connected, chip=chip,
             ))
             log.info("Driver probe %s: %s (%s)", did, "OK" if connected else "NOT FOUND", chip or "—")
+            # Seed _chip_responsive on the bench backend (cs 0/1/2 only).
+            cs_map = {DriverId.TMC260C_0: 0, DriverId.TMC260C_1: 1, DriverId.TMC260C_2: 2}
+            cs = cs_map.get(did)
+            if cs is not None and hasattr(self._backend, "_chip_responsive"):
+                self._backend._chip_responsive[cs] = bool(connected)
         return results
 
     async def spi_test(self) -> list[SpiTestResult]:

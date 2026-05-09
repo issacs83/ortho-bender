@@ -148,6 +148,22 @@ class SpidevMotorBackend(MotorBackend):
         self.positions: dict[int, int] = {0: 0, 1: 0, 2: 0, 3: 0}
         self._initialized: dict[int, bool] = {0: False, 1: False, 2: False}
 
+        # Lightweight signal tracking — surfaced via get_axis_signals() so
+        # the Motor Control jog rows can show 12V/EN/SG/DIR/STEP LEDs.
+        # `_chip_active` is the current chopper state (init→True, silence→False)
+        # `_chip_responsive` is whether the chip answered SPI on probe (proxy
+        #   for "VMot 12 V is up" — SPI returns 0xFF/0x00 with no power).
+        # `_last_sg` is the latest StallGuard bit observed per cs.
+        # `_last_dir` is the last value driven on the shared DIR line (+1/-1).
+        # `_pwm_active` reflects the PWM4 enable state.
+        # `_active_axis` is the cs the jog/move task is currently targeting.
+        self._chip_active: dict[int, bool] = {0: False, 1: False, 2: False}
+        self._chip_responsive: dict[int, bool] = {0: False, 1: False, 2: False}
+        self._last_sg: dict[int, bool] = {0: False, 1: False, 2: False}
+        self._last_dir: int = 0   # 0 = unknown / not driven yet
+        self._pwm_active: bool = False
+        self._active_axis: Optional[int] = None
+
         # Single SPI bus → serialise all transfers to prevent concurrent
         # /api/motor/status reads from racing the running pulse_step task
         # (which would corrupt CS toggling and cause empty HTTP responses).
@@ -306,6 +322,12 @@ class SpidevMotorBackend(MotorBackend):
         self._gpio_requests[chip_path].set_value(
             offset, Value.ACTIVE if high else Value.INACTIVE
         )
+        # Track DIR for the LED row. The actual logical direction is the
+        # raw pin value XORed with _DIR_INVERT — see pulse_step() which
+        # applies the same XOR before driving the line.
+        if name == 'dir':
+            logical_pos = (high != _DIR_INVERT)
+            self._last_dir = +1 if logical_pos else -1
 
     def _gpio_get(self, name: str) -> bool:
         from gpiod.line import Value
@@ -468,6 +490,7 @@ class SpidevMotorBackend(MotorBackend):
             # All init/PWM setup INSIDE the try so a cancellation during
             # init still triggers the finally block (silence + position
             # snapshot). This makes the 750 ms init phase cancellable.
+            self._active_axis = axis
             self._gpio_set('dir', (direction > 0) != _DIR_INVERT)
             await asyncio.sleep(_DIR_SETUP_S)
             await self._init_chip(axis)
@@ -528,6 +551,38 @@ class SpidevMotorBackend(MotorBackend):
                 self.positions[axis] = pos_before + (steps_actual * direction)
             # Persist updated positions so a server restart resumes here
             self._save_state()
+            # Clear active_axis after this jog/move ends so the STEP LED
+            # only highlights an axis while its motion is in flight.
+            if self._active_axis == axis:
+                self._active_axis = None
+
+    # -------------------------------------------------------------------
+    # Signal helpers (LED row on the dashboard)
+    # -------------------------------------------------------------------
+    def get_axis_signals(self, cs: int) -> dict:
+        """Return a snapshot of the five LED signals for one cs.
+
+        - vmot:  chip last responded on SPI → VMot 12 V is up.
+        - en:    chopper currently ON for this cs (init done, not silenced).
+        - sg:    StallGuard bit at last DRV_STATUS read for this cs.
+                 Note: while a chip is silenced (no coil current) SG reads as
+                 1 because StallGuard interprets zero current as a stall.
+                 The frontend can mask this by checking `en`.
+        - dir:   +1 / -1 — last logical direction driven on the shared DIR
+                 line. 0 means "never driven yet". Only meaningful for the
+                 axis that PWM is currently targeting.
+        - step:  PWM4 enabled AND this cs is the active axis. STEP signal
+                 reaches every chip in parallel, but only the chopper-on
+                 (en=1) chip responds — so we tag step=1 only on the cs
+                 that is the current target.
+        """
+        return {
+            "vmot": bool(self._chip_responsive.get(cs, False)),
+            "en":   bool(self._chip_active.get(cs, False)),
+            "sg":   bool(self._last_sg.get(cs, False)),
+            "dir":  int(self._last_dir),
+            "step": bool(self._pwm_active and self._active_axis == cs),
+        }
 
     # -------------------------------------------------------------------
     # Internal: TMC260C init / silence / status
@@ -550,6 +605,8 @@ class SpidevMotorBackend(MotorBackend):
             for _ in range(_REENABLE_CYCLES):
                 await self.spi_transfer(cs, tx_chop)
                 await self.spi_transfer(cs, tx_sgcs)
+            self._chip_active[cs] = True
+            self._chip_responsive[cs] = True
             return
 
         # Full one-time init for a never-touched chip
@@ -563,6 +620,8 @@ class SpidevMotorBackend(MotorBackend):
                 ])
                 await self.spi_transfer(cs, tx)
         self._initialized[cs] = True
+        self._chip_active[cs] = True
+        self._chip_responsive[cs] = True
         log.info("axis cs=%d full init done (one-time)", cs)
 
     async def _silence_chip(self, cs: int) -> None:
@@ -586,6 +645,10 @@ class SpidevMotorBackend(MotorBackend):
         # NOTE: do NOT clear self._initialized — chip's CHOPCONF/SMARTEN/
         # DRVCONF/DRVCTRL are still in their initialized values. The next
         # _init_chip() takes the fast re-enable path.
+        # Mark chopper-off for the LED row; chip is still considered
+        # responsive (we just talked to it).
+        self._chip_active[cs] = False
+        self._chip_responsive[cs] = True
 
     async def _read_status(self, cs: int) -> int:
         """Read 20-bit status by sending DRVCONF (RDSEL=01 → SG_VAL)."""
@@ -594,7 +657,12 @@ class SpidevMotorBackend(MotorBackend):
             (datagram >> 16) & 0xFF, (datagram >> 8) & 0xFF, datagram & 0xFF,
         ])
         rx = await self.spi_transfer(cs, tx)
-        return ((rx[0] << 16) | (rx[1] << 8) | rx[2]) & 0xFFFFF
+        status = ((rx[0] << 16) | (rx[1] << 8) | rx[2]) & 0xFFFFF
+        # Cache SG bit + responsiveness for the LED row. SPI lines float
+        # to 0xFF when VMot is dead, so a 0xFFFFF read means "no power".
+        self._chip_responsive[cs] = (status != 0xFFFFF and status != 0)
+        self._last_sg[cs] = bool(status & 0x01)
+        return status
 
     @staticmethod
     def _has_fault(status: int) -> bool:
@@ -640,6 +708,7 @@ class SpidevMotorBackend(MotorBackend):
             with open(f"{self._pwm_path}/period",     'w') as f: f.write(f"{period}\n")
             with open(f"{self._pwm_path}/duty_cycle", 'w') as f: f.write(f"{duty}\n")
             with open(f"{self._pwm_path}/enable",     'w') as f: f.write('1\n')
+            self._pwm_active = True
         except Exception as exc:
             log.error("PWM set %d Hz failed: %s", hz, exc)
             raise
@@ -650,3 +719,4 @@ class SpidevMotorBackend(MotorBackend):
                 f.write('0\n')
         except Exception:
             pass
+        self._pwm_active = False

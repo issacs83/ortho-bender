@@ -14,6 +14,7 @@ import { AXIS_COLORS, AXIS_NAMES, AXIS_UNITS, BG_PANEL, BG_PRIMARY, BORDER, TEXT
 import { useSoftLimits } from '../hooks/useSoftLimits';
 import { usePsuConfig } from '../hooks/usePsuConfig';
 import { useToast } from '../components/ui/ToastSystem';
+import { SignalLed } from '../components/ui/SignalLed';
 
 type MotorSubTab = 'position' | 'driver' | 'stallguard' | 'diagnostics';
 
@@ -248,6 +249,30 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                       <div style={{ height: '100%', width: `${Math.min(100, ratio * 100)}%`, background: barColor, borderRadius: 3, transition: 'width 0.15s, background 0.15s' }} />
                     </div>
                   </>
+                );
+              })()}
+              {/* Signal LED row: 12V / EN / SG / DIR / STEP. Mirrors the
+                  physical LEDs on the Veyron board so the operator can
+                  cross-reference what the dashboard sees. */}
+              {(() => {
+                const sig = ax?.signals;
+                if (!sig) {
+                  return <span style={{ width: 170 }} />; // keep column width when offline
+                }
+                // SG is meaningless while the chopper is OFF (silenced chip
+                // always reports SG=1). Mask it so the operator only sees
+                // the LED light up on real stalls.
+                const sgEffective = sig.sg && sig.en;
+                const dirGlyph = sig.dir > 0 ? '▶' : sig.dir < 0 ? '◀' : '';
+                const dirTone  = sig.dir > 0 ? 'blue' : sig.dir < 0 ? 'pink' : 'off';
+                return (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start', minWidth: 170 }}>
+                    <SignalLed label="12V"  tone={sig.vmot ? 'green' : 'red'} title="VMot 12 V (chip responsive on SPI)" />
+                    <SignalLed label="EN"   tone={sig.en   ? 'green' : 'off'} title="Driver chopper enabled (init done, not silenced)" />
+                    <SignalLed label="SG"   tone={sgEffective ? 'red' : 'off'} title={sig.en ? 'StallGuard2: stall detected' : 'StallGuard masked while EN=off (silenced chip always reads SG=1)'} />
+                    <SignalLed label="DIR"  tone={dirTone} glyph={dirGlyph} title={`Direction line: ${sig.dir > 0 ? 'CW (+)' : sig.dir < 0 ? 'CCW (-)' : 'never driven'}`} />
+                    <SignalLed label="STEP" tone={sig.step ? 'amber' : 'off'} blink={sig.step} title={sig.step ? 'PWM4 STEP active on this axis' : 'PWM idle / targeting another axis'} />
+                  </div>
                 );
               })()}
               {/* ◀◀  =  single-click continuous run (CCW) */}

@@ -14,6 +14,14 @@ const BASE_URL = import.meta.env.VITE_API_BASE ?? "";
 export type MotionState =
   | "IDLE" | "HOMING" | "RUNNING" | "JOGGING" | "STOPPING" | "FAULT" | "ESTOP";
 
+export interface AxisSignals {
+  vmot: boolean;   // VMot 12 V is up (chip responds on SPI)
+  en:   boolean;   // chopper ON (driver enabled for this axis)
+  sg:   boolean;   // StallGuard bit at last status read
+  dir:  number;    // +1 / -1, 0 = never driven yet
+  step: boolean;   // PWM enabled AND this axis is the active target
+}
+
 export interface AxisStatus {
   axis: number;
   position: number;
@@ -21,6 +29,7 @@ export interface AxisStatus {
   drv_status: number;
   sg_result: number;
   cs_actual: number;
+  signals?: AxisSignals | null;
 }
 
 export interface MotorStatus {

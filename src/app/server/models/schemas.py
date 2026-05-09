@@ -125,6 +125,15 @@ class MotorResetRequest(BaseModel):
     )
 
 
+class AxisSignals(BaseModel):
+    """Five-LED dashboard row: 12V / EN / SG / DIR / STEP."""
+    vmot: bool          # chip is responding on SPI -> VMot 12 V is up
+    en:   bool          # chopper currently ON for this axis
+    sg:   bool          # StallGuard bit at last DRV_STATUS read
+    dir:  int           # +1 / -1 (logical), 0 = never driven
+    step: bool          # PWM4 enabled AND this axis is the active target
+
+
 class AxisStatus(BaseModel):
     axis: AxisId
     position: float     # mm or degrees
@@ -132,6 +141,7 @@ class AxisStatus(BaseModel):
     drv_status: int     # TMC5160 DRV_STATUS raw value
     sg_result: int      # StallGuard2 result
     cs_actual: int      # Actual motor current (0-31)
+    signals: Optional[AxisSignals] = None   # bench-mode hardware LEDs
 
 
 class MotorStatusResponse(BaseModel):

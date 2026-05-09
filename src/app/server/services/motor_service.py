@@ -14,6 +14,7 @@ import logging
 from typing import Optional
 
 from ..models.schemas import (
+    AxisSignals,
     AxisId,
     AxisStatus,
     MotionState,
@@ -247,17 +248,20 @@ class MotorService:
         cs_to_axis = {0: int(AxisId.LIFT), 1: int(AxisId.BEND), 2: int(AxisId.FEED)}
         axes = []
         axis_mask = 0
+        signals_fn = getattr(self._spi_backend, "get_axis_signals", None)
         for cs, axis_int in cs_to_axis.items():
             pos_steps = bench_pos.get(cs, 0)
             # Convert microsteps back to display units (inverse of _bench_pulse: 200 step = 1 unit)
             pos_units = pos_steps / 200.0
+            sig_dict = signals_fn(cs) if callable(signals_fn) else None
             axes.append(AxisStatus(
                 axis=AxisId(axis_int),
                 position=pos_units,
                 velocity=0.0,
                 drv_status=0,
-                sg_result=0,
+                sg_result=int(bool(sig_dict.get("sg"))) if sig_dict else 0,
                 cs_actual=19,  # CS=19 hardcoded safety value
+                signals=AxisSignals(**sig_dict) if sig_dict else None,
             ))
             axis_mask |= (1 << axis_int)
         # Sort by axis id (consistent with frontend ordering 0..3)
