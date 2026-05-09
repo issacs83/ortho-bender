@@ -97,7 +97,21 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
     setHistory((prev) => [...prev.slice(-(HISTORY_LEN - 1)), pt]);
   }, [motorStatus]);
 
+  // Auto-clear stale error banners the moment the bench leaves ESTOP.
+  // Without this the operator sees a "RESET first" error after they have
+  // already reset, with no obvious way to dismiss it short of reload.
+  const prevStateRef = useRef<number | null>(null);
+  useEffect(() => {
+    const cur = motorStatus?.state;
+    const prev = prevStateRef.current;
+    if (prev === 6 && cur !== undefined && cur !== 6) {
+      setError(null);
+    }
+    prevStateRef.current = cur ?? null;
+  }, [motorStatus?.state]);
+
   async function jog(axis: number, direction: 1 | -1) {
+    setError(null);
     try { await motorApi.jog(axis, direction, jogSpeed, stepSize); } catch (e) { setError(String(e)); }
   }
 
@@ -133,12 +147,14 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
 
   function startContinuousJog(axis: number, dir: 1 | -1) {
     // Long-press jog: 5 s backend fallback, frontend stops on pointerup.
+    setError(null);
     motorApi.jogStart(axis, dir, jogSpeed).catch((e) => setError(String(e)));
     attachReleaseHandlers();
   }
   function startSingleClickRun(axis: number, dir: 1 | -1) {
     // Single-click continuous run: 60 s backend fallback, user stops with
     // the row's STOP button. No window-release listener attached.
+    setError(null);
     motorApi.jogStart(axis, dir, jogSpeed, { continuous: true })
       .catch((e) => setError(String(e)));
   }
@@ -149,6 +165,7 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   }
 
   async function moveTo() {
+    setError(null);
     try { await motorApi.move(targetAxis, targetPos, jogSpeed); } catch (e) { setError(String(e)); }
   }
   async function moveAll() {

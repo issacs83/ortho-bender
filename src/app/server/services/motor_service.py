@@ -455,21 +455,20 @@ class MotorService:
 
         Also clears the sticky bench E-STOP flag — re-enabling the drivers
         is the operator's explicit acknowledgement that the E-STOP condition
-        has been resolved. The bench path also re-runs _init_chip on every
-        cs so the chopper is back ON; without that step the SG LED stays
-        on (chip silenced -> no coil current -> StallGuard2 sees stall).
+        has been resolved.
+
+        IMPORTANT — DO NOT _init_chip every cs here. PWM4 is shared across
+        all three TMC260C-PA chips: the silence state on non-target axes is
+        what stops them from stepping along with the target. A previous
+        version of this method ran _init_chip on cs=0/1/2 to clear the SG
+        LED, but that put every chopper into the ON state, so the next jog
+        drove all three motors in parallel (2026-05-09 incident). The chips
+        stay silenced after E-STOP; the next jog_start re-inits only its
+        own axis. SG LED on the silenced axes is the expected indication
+        that they are inactive — it clears the moment that axis is jogged.
         """
         if self.has_bench:
             self._bench_estop_active = False
-            for cs in (0, 1, 2):
-                try:
-                    # Force a full re-init: silence_chip preserves _initialized
-                    # which would normally take the fast re-enable path. We
-                    # want the full sequence to be safe after E-STOP.
-                    self._spi_backend._initialized[cs] = False
-                    await self._spi_backend._init_chip(cs)
-                except Exception as exc:
-                    log.warning("enable_drivers re-init cs=%d failed: %s", cs, exc)
             return await self.get_status()
         payload = build_drv_enable_payload(True, axis_mask)
         await self._ipc.send_recv(MSG_MOTION_SET_DRV_ENABLE, payload)
@@ -487,20 +486,15 @@ class MotorService:
         return await self.get_status()
 
     async def reset(self) -> MotorStatusResponse:
-        """Reset motor fault state and re-enable drivers.
+        """Reset motor fault state and clear bench E-STOP latch.
 
-        Bench: clears the sticky E-STOP flag AND re-initialises every chip
-        so the chopper outputs are restored (SG LED clears) on the same
-        operator action that flips RESET E-STOP back to E-STOP.
+        Same constraint as enable_drivers: do NOT _init_chip every cs here
+        — that would chopper-ON all three chips and the next jog would
+        drive all axes (PWM is shared). Chips stay silenced; next jog_start
+        re-inits only the target axis.
         """
         if self.has_bench:
             self._bench_estop_active = False
-            for cs in (0, 1, 2):
-                try:
-                    self._spi_backend._initialized[cs] = False
-                    await self._spi_backend._init_chip(cs)
-                except Exception as exc:
-                    log.warning("reset re-init cs=%d failed: %s", cs, exc)
             return await self.get_status()
         # TODO: add axis_mask payload if M7 firmware supports per-axis reset
         await self._ipc.send_recv(MSG_MOTION_RESET)
