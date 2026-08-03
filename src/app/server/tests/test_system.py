@@ -34,10 +34,14 @@ async def test_system_status_has_required_fields(client):
 
 
 async def test_system_status_camera_connected_in_mock(client):
-    """Camera should be connected in mock mode."""
+    """Mock camera must NOT report as connected hardware.
+
+    A mock backend intentionally reports camera_connected=False so the
+    UI never shows a hardware-OK badge for a simulated camera.
+    """
     resp = await client.get("/api/system/status")
     data = resp.json()["data"]
-    assert data["camera_connected"] is True
+    assert data["camera_connected"] is False
 
 
 async def test_system_status_ipc_connected_in_mock(client):

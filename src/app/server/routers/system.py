@@ -246,11 +246,18 @@ async def get_psu(svc: PsuService = Depends(_psu_service)) -> ApiResponse:
 @router.post("/psu", response_model=ApiResponse)
 async def set_psu(
     body: PsuSelectRequest,
+    request: Request,
     svc: PsuService = Depends(_psu_service),
 ) -> ApiResponse:
     """Persist a new PSU preset selection (used by /diag/register guard)."""
     try:
         active = svc.set_psu(body.psu_id)
+        # Keep the bench backend's init-time current cap in lock-step so
+        # the next jog writes a SGCSCONF the new supply can actually feed.
+        diag_svc = getattr(request.app.state, "diag_service", None)
+        backend = getattr(diag_svc, "_backend", None) if diag_svc else None
+        if backend is not None and hasattr(backend, "apply_current_cap"):
+            backend.apply_current_cap(active.cs_cap)
         return ok({"active": _psu_to_dict(active)})
     except ValueError as exc:
         return err(str(exc), "INVALID_PSU_ID")
