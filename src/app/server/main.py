@@ -156,6 +156,10 @@ async def lifespan(app: FastAPI):
     diag_svc.set_psu_service(psu_svc)
     app.state.psu_service = psu_svc
     app.state.diag_service = diag_svc
+    # Propagate the PSU cap into the bench backend so _init_chip writes a
+    # supply-appropriate SGCSCONF (not the unconditional CS=19 default).
+    if hasattr(diag_backend, "apply_current_cap"):
+        diag_backend.apply_current_cap(psu_svc.cs_cap)
     log.info("PsuService active: %s (cs_cap=%d)", psu_svc.psu.label, psu_svc.cs_cap)
 
     # Per-axis steps/unit calibration so jog/move convert mm/deg → step rate

@@ -9,6 +9,8 @@ IEC 62304 SW Class: B
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -154,8 +156,14 @@ async def test_bending_status_after_execute(fresh_client):
         "material": 0,
         "wire_diameter_mm": 0.457,
     })
-    resp = await fresh_client.get("/api/bending/status")
-    data = resp.json()["data"]
-    # After mock execute completes synchronously, current_step == total_steps
-    assert data["current_step"] == data["total_steps"]
+    # Execute dispatches a background task; poll /status until the mock
+    # sequence (~0.3 s per step) completes.
+    data = {"running": True}
+    for _ in range(100):  # up to ~5 s
+        resp = await fresh_client.get("/api/bending/status")
+        data = resp.json()["data"]
+        if not data["running"]:
+            break
+        await asyncio.sleep(0.05)
     assert data["running"] is False
+    assert data["current_step"] == data["total_steps"]

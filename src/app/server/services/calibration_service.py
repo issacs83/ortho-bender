@@ -7,9 +7,13 @@ Each axis has a `steps_per_unit` value:
   ROTATE step/deg  — wire rotation gear ratio × 360 / steps_per_rev
   LIFT   step/mm   — lift mechanism lead screw mm/rev / steps_per_rev
 
-Until the wire-bender mechanicals are connected the bench default is 200
-steps/unit (1 unit = one motor revolution at 200 microsteps/rev). The
-operator can override per-axis from the Settings page.
+Until the wire-bender mechanicals are connected the bench default is a
+legacy placeholder of 200 steps/unit. Note the true motor-shaft math at
+the current driver programming (DRVCTRL 1/16 microstep + DEDGE): one
+revolution = 3200 microsteps = 1600 PWM cycles, and the "steps" counted
+by the backend are PWM cycles. So with the 200 default, 1 unit ≈ 1/8
+revolution — calibrate per-axis from the Settings page once mechanicals
+are attached; do NOT trust the default for real distances.
 
 State file: /var/lib/ortho-bender/axis_calibration.json
 Defaults are conservative — they make speed=10 "units/s" equivalent to

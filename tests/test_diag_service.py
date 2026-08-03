@@ -17,9 +17,9 @@ def diag_service(mock_backend):
 
 @pytest.mark.asyncio
 async def test_spi_test_all_drivers(diag_service):
-    """SPI test returns results for all 3 drivers."""
+    """SPI test returns results for all 4 drivers (3x TMC260C + TMC5072)."""
     results = await diag_service.spi_test()
-    assert len(results) == 3
+    assert len(results) == 4
     for r in results:
         assert r.ok is True
 
@@ -66,7 +66,7 @@ async def test_get_backend_info(diag_service):
     """get_backend_info returns mock backend info."""
     info = await diag_service.get_backend_info()
     assert info.backend == "mock"
-    assert len(info.drivers) == 3
+    assert len(info.drivers) == 4
 
 
 @pytest.mark.asyncio

@@ -52,6 +52,13 @@ SMARTEN_DEFAULT  = 0xA0000
 SGCSCONF_DEFAULT = 0xD3F13
 # DRVCONF=0xEF050: SLPH=11, SLPL=11, VSENSE=1, RDSEL=01 (SG_VALUE readback)
 DRVCONF_DEFAULT  = 0xEF050
+# DRVCTRL=0x00304: INTPOL=1, DEDGE=1, MRES=4 (1/16 microstep).
+# Was 0x00300 (MRES=0 → 1/256): at 8 kHz PWM that limited the shaft to
+# 18.75 RPM. 1/16 gives 16x the mechanical speed at identical coil
+# current, and matches the microstep assumption in machine_config.h and
+# the M7 firmware. DEDGE (step on both PWM edges) must stay set — the
+# PWM STEP path counts on 2 microsteps per PWM cycle.
+DRVCTRL_DEFAULT  = 0x00304
 
 # Static safety verification (fails at import if defaults are unsafe)
 assert (SGCSCONF_DEFAULT & 0x1F) <= SAFETY_CS_MAX, (
@@ -184,10 +191,15 @@ class Tmc260cDriver:
         await self.write_register(REG_SGCSCONF, value)
 
     async def set_microstep(self, mres: int) -> None:
-        """Set microstepping resolution (0=256, 1=128, ..., 8=fullstep)."""
+        """Set microstepping resolution (0=256, 1=128, ..., 8=fullstep).
+
+        Preserves the INTPOL/DEDGE bits from DRVCTRL_DEFAULT — an earlier
+        version wrote (1<<9)|mres which silently cleared DEDGE and halved
+        the effective step rate.
+        """
         if not 0 <= mres <= 8:
             raise ValueError(f"MRES must be 0-8, got {mres}")
-        value = (1 << 9) | (mres & 0x0F)
+        value = (DRVCTRL_DEFAULT & ~0x0F) | (mres & 0x0F)
         await self.write_register(REG_DRVCTRL, value)
 
     async def set_stallguard(self, threshold: int, filter_enable: bool) -> None:
@@ -207,7 +219,7 @@ class Tmc260cDriver:
         re-write known defaults and return the expected values.
         """
         return {
-            'DRVCTRL': (1 << 9) | 0x04,
+            'DRVCTRL': DRVCTRL_DEFAULT & 0xFFFFF,
             'CHOPCONF': CHOPCONF_DEFAULT & 0x1FFFF,
             'SMARTEN': SMARTEN_DEFAULT & 0x1FFFF,
             'SGCSCONF': SGCSCONF_DEFAULT & 0x1FFFF,

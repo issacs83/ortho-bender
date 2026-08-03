@@ -45,6 +45,7 @@ from .motor_backend import MotorBackend
 from .tmc260c_driver import (
     SAFETY_CS_MAX, SAFETY_TOFF_MAX,
     CHOPCONF_DEFAULT, SMARTEN_DEFAULT, DRVCONF_DEFAULT, SGCSCONF_DEFAULT,
+    DRVCTRL_DEFAULT,
 )
 
 log = logging.getLogger(__name__)
@@ -62,11 +63,25 @@ _SPI_NO_CS = 0x40
 # Verified working timings
 _CS_SETTLE_S = 0.0005      # 500 us — required for BEND chip on SAI5_RXD1 pad
 _DIR_SETUP_S = 0.000010    # 10 us
-_INIT_SEQ_CYCLES_FULL = 50      # full init: only when chip is brand-new
-                                # (first jog after server start).
+_INIT_SEQ_CYCLES_FULL = 50      # full init worst case: only when chip is
+                                # brand-new (first jog after server start).
+_INIT_SEQ_MIN_CYCLES = 5        # minimum full-init cycles before the
+                                # responsive-early-exit may fire.
+_INIT_GOOD_CYCLES_EXIT = 3      # consecutive cycles with a valid SPI
+                                # response after which init is declared done
+                                # (cuts cold-start ~525 ms → ~85 ms when the
+                                # chip is powered and answering).
 _REENABLE_CYCLES = 5            # fast chopper re-enable on subsequent jogs:
                                 # CHOPCONF + SGCSCONF only (~15 ms total).
 _SILENCE_CYCLES = 5             # chopper-off cycles between jogs.
+
+# Soft-start ramp: acceleration-limited instead of a fixed 12-step/0.36 s
+# sweep, so a small speed step reaches target almost immediately while a
+# 200 → 8000 Hz jump still ramps over ~1 s. At DRVCTRL 1/16 + DEDGE,
+# 8000 Hz/s ≈ 0 → 300 RPM in one second — bench-tune if an axis stalls
+# during acceleration.
+_RAMP_ACCEL_HZ_PER_S = 8000
+_RAMP_TICK_S = 0.03
 
 # Bench convention: ▶ button (direction=+1) must rotate the motor
 # clockwise (forward), ◀ button (direction=-1) counter-clockwise.
@@ -90,12 +105,14 @@ def _parse_gpio(pin: str) -> tuple[str, int]:
     return chip_path, offset
 
 
-# Init sequence — write order matters for chopper enable
+# Init sequence — write order matters for chopper enable.
+# SGCSCONF is listed with the module default but _init_chip() substitutes
+# the PSU-capped value at write time (see apply_current_cap()).
 _INIT_SEQ = [
     ('CHOPCONF', 0x04, CHOPCONF_DEFAULT),
     ('SMARTEN',  0x05, SMARTEN_DEFAULT),
     ('DRVCONF',  0x07, DRVCONF_DEFAULT),
-    ('DRVCTRL',  0x00, 0x00300),
+    ('DRVCTRL',  0x00, DRVCTRL_DEFAULT),
     ('SGCSCONF', 0x06, SGCSCONF_DEFAULT),
 ]
 
@@ -168,6 +185,17 @@ class SpidevMotorBackend(MotorBackend):
         # /api/motor/status reads from racing the running pulse_step task
         # (which would corrupt CS toggling and cause empty HTTP responses).
         self._spi_lock = asyncio.Lock()
+
+        # PSU-derived current-scale cap (see apply_current_cap). Starts at
+        # the absolute hardware limit; main.py narrows it from the active
+        # PSU preset so _init_chip never writes a CS the supply can't feed.
+        self._cs_scale_cap: int = SAFETY_CS_MAX
+
+        # PWM sysfs write-state (see _pwm_set_hz): avoids the
+        # duty=0 → enable re-toggle on every ramp tick, which produced up
+        # to one dead period of STEP output per tick.
+        self._pwm_enabled: bool = False
+        self._pwm_last_period_ns: int = 0
 
     # -------------------------------------------------------------------
     # Persistence (axis positions survive server restarts)
@@ -502,24 +530,20 @@ class SpidevMotorBackend(MotorBackend):
                 raise RuntimeError(f"axis {axis} fault detected (0x{status:05X})")
 
             # PWM4 setup — STEP signal goes live now.
-            # Soft acceleration ramp from 200 Hz up to the target freq so
-            # high-inertia axes (FEED via lead screw) don't stall on the
-            # first STEP. The ramp is short (~250 ms) so quick taps still
-            # feel responsive. pulse_step_multi has the same shape.
+            # Acceleration-limited soft start from 200 Hz so high-inertia
+            # axes (FEED via lead screw) don't stall on the first STEP.
+            # Unlike the previous fixed 12-step/0.36 s sweep, ramp time is
+            # proportional to the frequency jump: a small speed change
+            # reaches target in one tick (~30 ms) while 200 → 8000 Hz
+            # takes ~1 s at _RAMP_ACCEL_HZ_PER_S.
             await self._pwm_ensure_exported()
-            # Soft acceleration ramp 200 Hz → target. Cap raised to 8000 Hz
-            # (commit 2026-05-09), so we use a slightly longer ramp to stay
-            # ahead of the 2× larger jump without sacrificing tap response.
             START_HZ = 200
-            if freq_hz > START_HZ:
-                ramp_steps = 12
-                ramp_total_s = 0.36
-                for i in range(ramp_steps):
-                    h = int(START_HZ + (freq_hz - START_HZ) * (i + 1) / ramp_steps)
-                    await self._pwm_set_hz(h)
-                    await asyncio.sleep(ramp_total_s / ramp_steps)
-            else:
-                await self._pwm_set_hz(freq_hz)
+            h = min(START_HZ, freq_hz)
+            await self._pwm_set_hz(h)
+            while h < freq_hz:
+                await asyncio.sleep(_RAMP_TICK_S)
+                h = min(freq_hz, h + int(_RAMP_ACCEL_HZ_PER_S * _RAMP_TICK_S))
+                await self._pwm_set_hz(h)
             t0 = time.monotonic()
 
             # Run + fault/stall monitoring with 100 ms polling.
@@ -603,6 +627,26 @@ class SpidevMotorBackend(MotorBackend):
     # -------------------------------------------------------------------
     # Internal: TMC260C init / silence / status
     # -------------------------------------------------------------------
+    def apply_current_cap(self, cs_cap: int) -> None:
+        """Narrow the SGCSCONF current scale written by _init_chip.
+
+        Called by main.py with PsuService.cs_cap (and again whenever the
+        operator changes the PSU preset). Without this, every jog wrote
+        SGCSCONF_DEFAULT (CS=19) regardless of the selected supply — the
+        UnsafeRegisterWrite guard only protects the /diag/register path.
+        The cap only ever narrows: it is clamped to SAFETY_CS_MAX.
+        """
+        capped = max(0, min(int(cs_cap), SAFETY_CS_MAX))
+        if capped != self._cs_scale_cap:
+            log.info("SGCSCONF current cap: CS ≤ %d (PSU-derived)", capped)
+        self._cs_scale_cap = capped
+
+    def _sgcs_on_value(self) -> int:
+        """SGCSCONF with the current scale limited to the PSU cap."""
+        default_cs = SGCSCONF_DEFAULT & 0x1F
+        cs = min(default_cs, self._cs_scale_cap)
+        return (SGCSCONF_DEFAULT & ~0x1F) | cs
+
     async def _init_chip(self, cs: int) -> None:
         """Lazy init: full SEQ on first call, fast chopper re-enable after.
 
@@ -611,11 +655,16 @@ class SpidevMotorBackend(MotorBackend):
         initialized, subsequent silence→jog cycles only need to toggle
         CHOPCONF (TOFF) and SGCSCONF (CS) to disable/re-enable the
         chopper. This makes short button taps responsive (~15 ms vs ~375 ms).
+
+        The full init loop exits early once the chip has produced
+        _INIT_GOOD_CYCLES_EXIT consecutive valid SPI responses (after a
+        minimum of _INIT_SEQ_MIN_CYCLES cycles) — an unpowered or absent
+        chip returns 0x00000/0xFFFFF and still gets the full 50 cycles.
         """
         if self._initialized.get(cs, False):
             # Fast re-enable: chopper on + current scale
             chopconf_on = self._encode(0x04, CHOPCONF_DEFAULT)
-            sgcs_on     = self._encode(0x06, SGCSCONF_DEFAULT)
+            sgcs_on     = self._encode(0x06, self._sgcs_on_value())
             tx_chop = bytes([(chopconf_on >> 16) & 0xFF, (chopconf_on >> 8) & 0xFF, chopconf_on & 0xFF])
             tx_sgcs = bytes([(sgcs_on >> 16) & 0xFF, (sgcs_on >> 8) & 0xFF, sgcs_on & 0xFF])
             for _ in range(_REENABLE_CYCLES):
@@ -626,15 +675,28 @@ class SpidevMotorBackend(MotorBackend):
             return
 
         # Full one-time init for a never-touched chip
-        for _ in range(_INIT_SEQ_CYCLES_FULL):
+        good_cycles = 0
+        for cycle in range(_INIT_SEQ_CYCLES_FULL):
+            rx = b"\x00\x00\x00"
             for _name, tag, value in _INIT_SEQ:
+                if tag == 0x06:  # SGCSCONF: substitute PSU-capped value
+                    value = self._sgcs_on_value()
                 datagram = self._encode(tag, value)
                 tx = bytes([
                     (datagram >> 16) & 0xFF,
                     (datagram >> 8)  & 0xFF,
                     datagram         & 0xFF,
                 ])
-                await self.spi_transfer(cs, tx)
+                rx = await self.spi_transfer(cs, tx)
+            status = ((rx[0] << 16) | (rx[1] << 8) | rx[2]) & 0xFFFFF
+            if status not in (0x00000, 0xFFFFF):
+                good_cycles += 1
+            else:
+                good_cycles = 0
+            if (cycle + 1 >= _INIT_SEQ_MIN_CYCLES
+                    and good_cycles >= _INIT_GOOD_CYCLES_EXIT):
+                log.info("axis cs=%d init early-exit after %d cycles", cs, cycle + 1)
+                break
         self._initialized[cs] = True
         self._chip_active[cs] = True
         self._chip_responsive[cs] = True
@@ -717,16 +779,38 @@ class SpidevMotorBackend(MotorBackend):
                 raise
 
     async def _pwm_set_hz(self, hz: int) -> None:
+        """Program the PWM to `hz` without gapping a running STEP train.
+
+        First activation uses the safe duty=0 → period → duty → enable
+        order. While already enabled, only period/duty are rewritten, in
+        an order that keeps duty_cycle ≤ period at every instant (the
+        sysfs PWM API rejects the write otherwise):
+          - period grows:  write period first, then duty
+          - period shrinks: write duty first (new duty < old period), then period
+        The previous implementation re-ran the full duty=0/enable dance on
+        every ramp tick — up to one dead STEP period per tick, i.e. lost
+        steps 12× per soft-start.
+        """
         period = int(1e9 / hz)
         duty   = period // 2
         try:
-            with open(f"{self._pwm_path}/duty_cycle", 'w') as f: f.write('0\n')
-            with open(f"{self._pwm_path}/period",     'w') as f: f.write(f"{period}\n")
-            with open(f"{self._pwm_path}/duty_cycle", 'w') as f: f.write(f"{duty}\n")
-            with open(f"{self._pwm_path}/enable",     'w') as f: f.write('1\n')
+            if not self._pwm_enabled:
+                with open(f"{self._pwm_path}/duty_cycle", 'w') as f: f.write('0\n')
+                with open(f"{self._pwm_path}/period",     'w') as f: f.write(f"{period}\n")
+                with open(f"{self._pwm_path}/duty_cycle", 'w') as f: f.write(f"{duty}\n")
+                with open(f"{self._pwm_path}/enable",     'w') as f: f.write('1\n')
+                self._pwm_enabled = True
+            elif period >= self._pwm_last_period_ns:
+                with open(f"{self._pwm_path}/period",     'w') as f: f.write(f"{period}\n")
+                with open(f"{self._pwm_path}/duty_cycle", 'w') as f: f.write(f"{duty}\n")
+            else:
+                with open(f"{self._pwm_path}/duty_cycle", 'w') as f: f.write(f"{duty}\n")
+                with open(f"{self._pwm_path}/period",     'w') as f: f.write(f"{period}\n")
+            self._pwm_last_period_ns = period
             self._pwm_active = True
         except Exception as exc:
             log.error("PWM set %d Hz failed: %s", hz, exc)
+            self._pwm_enabled = False
             raise
 
     async def _pwm_disable(self) -> None:
@@ -736,3 +820,4 @@ class SpidevMotorBackend(MotorBackend):
         except Exception:
             pass
         self._pwm_active = False
+        self._pwm_enabled = False

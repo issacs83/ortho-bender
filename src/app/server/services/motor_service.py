@@ -141,8 +141,10 @@ class MotorService:
         # BEND/ROTATE). The CalibrationService converts to step rate so an
         # operator entering "10 mm/s" feeds the wire at the calibrated rate
         # regardless of motor microstepping or lead-screw spec.
-        # Bench hard cap 8000 Hz = TMC260C-PA recommended max for 1/4-1/8
-        # microstep with 200 step/rev (≈ 2400 RPM at full step).
+        # Bench hard cap 8000 Hz PWM. At DRVCTRL 1/16 microstep + DEDGE
+        # (2 microsteps per PWM cycle) this is 16 000 µsteps/s =
+        # 5 rev/s = 300 RPM at the motor shaft. Raising this cap needs a
+        # bench verification pass (PWM pad integrity + stall behaviour).
         cal = self._calibration
         steps_per_unit = cal.steps_per_unit(axis) if cal else 200.0
         speed_clamped = min(abs(speed), cal.speed_limit(axis) if cal else 40.0)
