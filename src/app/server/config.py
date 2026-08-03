@@ -56,8 +56,9 @@ class Settings(BaseSettings):
     # Camera
     # ------------------------------------------------------------------
     # "auto" = USB VID hot-plug auto-detect (default)
-    # "mock" | "vmbpy" | "novitec" = force a specific backend
+    # "mock" | "vmbpy" | "novitec" | "v4l2" = force a specific backend
     camera_backend: str = "auto"
+    camera_device: str = "/dev/video0"  # V4L2 capture node (v4l2 backend)
     camera_fps: float = 30.0
     camera_jpeg_quality: int = 85
     camera_pixel_format: str = "mono8"
