@@ -33,9 +33,10 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-import numpy as np
+if TYPE_CHECKING:
+    import numpy as np
 
 
 # ---------------------------------------------------------------------------

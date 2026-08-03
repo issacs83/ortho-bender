@@ -74,7 +74,7 @@ class DiagService:
             else:
                 connected, chip = await drv.probe()
             results.append(DriverProbeResult(
-                driver=did, connected=connected, chip=chip,
+                driver=did, connected=connected, chip=chip or "",
             ))
             log.info("Driver probe %s: %s (%s)", did, "OK" if connected else "NOT FOUND", chip or "—")
         return results

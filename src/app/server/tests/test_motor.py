@@ -37,7 +37,7 @@ async def test_motor_status_has_expected_fields(client):
     assert "current_step" in data
     assert "total_steps" in data
     assert "axis_mask" in data
-    assert data["axis_mask"] == 0x03  # PHASE1 mock: FEED + BEND
+    assert data["axis_mask"] == 0x0F  # mock reports all 4 axes (FEED, BEND, ROTATE, LIFT)
 
 
 # ---------------------------------------------------------------------------
