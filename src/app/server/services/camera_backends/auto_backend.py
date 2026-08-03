@@ -21,6 +21,11 @@ USB detection order of preference:
   1. ``usb.core`` (pyusb) -- preferred, no subprocess.
   2. ``lsusb`` subprocess parse -- fallback when pyusb is absent.
 
+A lowest-priority platform tier detects MIPI CSI-2 cameras exposed as
+platform V4L2 nodes (QUERYCAP bus_info ``platform:...``, e.g. the Alvium
+1800 C on the i.MX8MP ISI pipeline) via a sentinel VID above the 16-bit
+USB space, so they flow through the same scan_fn/backend_factory seams.
+
 Thread safety:
   - All public methods are async and take an internal asyncio.Lock when
     they need to swap the sub-backend.  Individual feature calls delegate
@@ -59,15 +64,22 @@ log = logging.getLogger(__name__)
 # Vendor map -- VID -> (backend short name, friendly model family)
 # ---------------------------------------------------------------------------
 
+# Platform (non-USB) devices are represented by sentinel "VIDs" above the
+# 16-bit USB VID space so they flow through the same scan_fn/backend_factory
+# seams as real USB vendors.
+_PLATFORM_V4L2_VID = 0x10000   # MIPI CSI-2 camera behind the SoC ISI pipeline
+
 _VENDOR_MAP: dict[int, tuple[str, str]] = {
     0x1AB2: ("vmbpy",   "Alvium"),    # Allied Vision
     0x2B00: ("novitec", "u-Nova2"),   # NOVITEC
+    _PLATFORM_V4L2_VID: ("v4l2", "Alvium CSI-2"),  # platform V4L2 node
 }
 
 
 # Priority order when multiple cameras are attached simultaneously.
-# First match wins -- Alvium is preferred because it has the richer SDK.
-_VENDOR_PRIORITY: tuple[int, ...] = (0x1AB2, 0x2B00)
+# First match wins -- Alvium USB is preferred because it has the richer
+# SDK; the platform V4L2 tier is lowest priority.
+_VENDOR_PRIORITY: tuple[int, ...] = (0x1AB2, 0x2B00, _PLATFORM_V4L2_VID)
 
 
 # Default scan cadence (seconds).  Overridden by OB_CAMERA_SCAN_INTERVAL.
@@ -144,12 +156,56 @@ def _scan_usb_lsusb() -> set[int]:
     return vids
 
 
+def _find_platform_v4l2_device() -> Optional[str]:
+    """Return the first /dev/video* node backed by a platform bus.
+
+    MIPI CSI-2 cameras on the i.MX8MP ISI pipeline report a QUERYCAP
+    ``bus_info`` starting with ``platform:`` (e.g.
+    ``platform:32e00000.isi.0``). USB webcams (``usb-...``) are ignored.
+    Returns None when no such node exists or V4L2 access fails.
+    """
+    import fcntl
+    import glob
+
+    try:
+        from ._v4l2 import VIDIOC_QUERYCAP, v4l2_capability
+    except Exception:  # pragma: no cover - ctypes layer always importable
+        return None
+
+    for path in sorted(glob.glob("/dev/video*")):
+        try:
+            fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+        except OSError:
+            continue
+        try:
+            cap = v4l2_capability()
+            fcntl.ioctl(fd, VIDIOC_QUERYCAP, cap)
+            if cap.bus_info.startswith(b"platform:"):
+                return path
+        except OSError:
+            pass
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+    return None
+
+
 def _scan_usb() -> set[int]:
-    """Scan the USB bus, preferring pyusb, falling back to lsusb."""
+    """Scan for cameras: USB VIDs plus the platform V4L2 sentinel tier."""
     vids = _scan_usb_pyusb()
-    if vids is not None:
-        return vids
-    return _scan_usb_lsusb()
+    if vids is None:
+        vids = _scan_usb_lsusb()
+    # Lowest-priority platform tier: a MIPI CSI-2 camera behind the SoC
+    # ISI pipeline is not a USB device; represent it with a sentinel VID.
+    try:
+        if _find_platform_v4l2_device() is not None:
+            vids = set(vids)
+            vids.add(_PLATFORM_V4L2_VID)
+    except Exception as exc:
+        log.debug("platform V4L2 scan raised: %s", exc)
+    return vids
 
 
 def _pick_desired_vid(detected: set[int]) -> Optional[int]:
@@ -178,6 +234,12 @@ def _build_sub_backend(vid: int) -> Optional[CameraBackend]:
         if name == "novitec":
             from .novitec_backend import NovitecBackend
             return NovitecBackend()
+        if name == "v4l2":
+            from .v4l2_backend import V4l2CameraBackend
+            path = _find_platform_v4l2_device()
+            if path is None:
+                return None
+            return V4l2CameraBackend(device_path=path)
     except ImportError as exc:
         log.warning(
             "Sub-backend %s unavailable (%s) -- skipping", name, exc)

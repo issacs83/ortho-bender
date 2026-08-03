@@ -124,6 +124,15 @@ async def lifespan(app: FastAPI):
             log.warning("NOVITEC backend failed (%s) — falling back to mock", exc)
             from .services.camera_backends.mock_backend import MockCameraBackend
             camera_backend = MockCameraBackend()
+    elif backend_kind == "v4l2":
+        try:
+            from .services.camera_backends.v4l2_backend import V4l2CameraBackend
+            camera_backend = V4l2CameraBackend(device_path=cfg.camera_device)
+            log.info("Camera backend: V4L2/MIPI (%s)", cfg.camera_device)
+        except (ImportError, Exception) as exc:
+            log.warning("V4L2 backend failed (%s) — falling back to mock", exc)
+            from .services.camera_backends.mock_backend import MockCameraBackend
+            camera_backend = MockCameraBackend()
     elif backend_kind == "vmbpy":
         try:
             from .services.camera_backends.vmbpy_backend import VmbPyCameraBackend
