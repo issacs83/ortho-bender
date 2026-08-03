@@ -58,6 +58,18 @@ class DiagBackendResponse(BaseModel):
     drivers: list[DriverId]
 
 
+class DriverProbeResult(BaseModel):
+    """Result of probing a single motor driver via SPI."""
+    driver: DriverId
+    connected: bool
+    chip: str = ""  # detected chip name (e.g. "TMC260C", "TMC5072")
+
+
+class DriverProbeResponse(BaseModel):
+    """Aggregated probe results for all motor drivers."""
+    drivers: list[DriverProbeResult]
+
+
 class StallGuardCalibrationRequest(BaseModel):
     driver: DriverId = Field(..., description="Driver to calibrate")
     speed_hz: int = Field(200, gt=0, le=2000, description="STEP frequency during calibration")

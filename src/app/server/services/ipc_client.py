@@ -417,7 +417,7 @@ class IpcClient:
                 self._mock_motion_state,
                 0,   # active_alarms
                 1,   # watchdog_ok
-                0x03 # PHASE1 axis mask
+                0x0F  # all 4 axes: FEED, BEND, ROTATE, LIFT
             )
             return IpcMessage(msg_type=MSG_STATUS_HEARTBEAT, payload=resp_payload)
 
@@ -433,7 +433,7 @@ class IpcClient:
             *self._mock_velocity,
             self._mock_current_step,
             self._mock_total_steps,
-            0x03,  # PHASE1 axis mask
+            0x0F,  # all 4 axes: FEED, BEND, ROTATE, LIFT
             1 if self._mock_driver_enabled else 0,
         )
         return IpcMessage(msg_type=MSG_STATUS_MOTION, payload=payload)

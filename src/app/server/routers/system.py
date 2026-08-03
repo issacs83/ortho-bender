@@ -54,11 +54,16 @@ def _camera_service(request: Request) -> CameraService:
 # GET /api/system/status
 # ---------------------------------------------------------------------------
 
+def _driver_probe(request: Request) -> dict:
+    return getattr(request.app.state, "driver_probe", {})
+
+
 @router.get("/status", response_model=ApiResponse)
 async def get_system_status(
     ipc: IpcClient = Depends(_ipc),
     motor: MotorService = Depends(_motor_service),
     camera: CameraService = Depends(_camera_service),
+    driver_probe: dict = Depends(_driver_probe),
 ) -> ApiResponse:
     """Aggregate health: IPC link, M7 heartbeat, camera, motion state."""
     uptime_s = time.monotonic() - _boot_time
@@ -84,15 +89,38 @@ async def get_system_status(
         except Exception as exc:
             log.debug("Heartbeat poll failed: %s", exc)
 
+    # Camera status — read from CameraBackend ABC
+    camera_connected = camera.is_connected
+    camera_model: str | None = None
+    if camera_connected:
+        try:
+            dev = camera.device_info()
+            camera_model = dev.get("model")
+        except Exception:
+            pass
+
+    # Motor driver summary — count connected drivers from probe
+    motor_connected = any(
+        d.get("connected", False) for d in driver_probe.values()
+    ) if driver_probe else False
+    motor_model: str | None = None
+    if motor_connected:
+        chips = [d["chip"] for d in driver_probe.values() if d.get("connected")]
+        motor_model = ", ".join(sorted(set(chips))) if chips else None
+
     return ok({
         "motion_state":     motion_state.value,
-        "camera_connected": camera._connected,
+        "camera_connected": camera_connected,
+        "camera_model":     camera_model,
         "ipc_connected":    ipc_ok,
         "m7_heartbeat_ok":  m7_hb_ok,
+        "motor_connected":  motor_connected,
+        "motor_model":      motor_model,
         "active_alarms":    active_alarms,
         "uptime_s":         round(uptime_s, 1),
         "cpu_temp_c":       cpu_temp,
         "sdk_version":      SDK_VERSION,
+        "driver_probe":     driver_probe,
     })
 
 

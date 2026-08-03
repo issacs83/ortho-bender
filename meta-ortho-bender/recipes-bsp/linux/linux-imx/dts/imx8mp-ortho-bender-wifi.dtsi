@@ -47,11 +47,19 @@
 	status = "okay";
 };
 
+/*
+ * PCIe PHY — use base DTS clock model (upstream PHY subsystem).
+ *
+ * IMPORTANT: Do NOT override clocks here.  The SoC DTSI provides the
+ * correct clock reference for the running kernel version.  A previous
+ * version of this overlay referenced <&hsio_blk_ctrl> which belongs to
+ * the legacy HSIO BLK_CTRL model and causes a Galcore boot hang when
+ * paired with a kernel that uses the upstream PHY model.
+ *
+ * See docs/hardware/05_BOOT_HANG_ANALYSIS.md for the full analysis.
+ */
 &pcie_phy {
-	fsl,refclk-pad-mode = <IMX8_PCIE_REFCLK_PAD_INPUT>;
-	fsl,clkreq-unsupported;
-	clocks = <&hsio_blk_ctrl>;
-	clock-names = "ref";
+	ext_osc = <1>;
 	status = "okay";
 };
 

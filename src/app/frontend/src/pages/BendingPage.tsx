@@ -8,9 +8,12 @@ import { systemApi } from '../api/client';
 import { StepIndicator } from '../components/bending/StepIndicator';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { StatusBadge } from '../components/ui/StatusBadge';
+import { Button } from '../components/ui/Button';
+import { Card, CardTitle } from '../components/ui/Card';
 import { useMotorWs } from '../hooks/useMotorWs';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { AXIS_COLORS, AXIS_NAMES, AXIS_UNITS, BG_PANEL, BG_PRIMARY, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, WIRE_MATERIALS, WIRE_DIAMETERS, HISTORY_LEN, type WireMaterial } from '../constants';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { AXIS_COLORS, AXIS_NAMES, WIRE_MATERIALS, WIRE_DIAMETERS, HISTORY_LEN, type WireMaterial } from '../lib/domain-data';
+import { cn } from '../lib/cn';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -54,7 +57,7 @@ function WirePreview({ steps }: { steps: BcodeRow[] }) {
   const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' ');
 
   return (
-    <svg width={width} height={height} style={{ background: BG_PRIMARY, borderRadius: 6, border: `1px solid ${BORDER}` }}>
+    <svg width={width} height={height} className="bg-surface-2 rounded border border-border">
       <path d={pathD} fill="none" stroke="#3b82f6" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
       {points.map(([px, py], i) => (
         <circle key={i} cx={px} cy={py} r={3} fill={i === 0 ? '#22c55e' : i === points.length - 1 ? '#f59e0b' : '#3b82f6'} />
@@ -79,8 +82,8 @@ function PreflightModal({ sysStatus, steps, material, onStart, onCancel }: Prefl
   const checks = [
     { label: 'System IDLE',        ok: (sysStatus?.motion_state ?? -1) === 0 },
     { label: 'Board connected',    ok: true },
-    { label: 'IPC connected',      ok: sysStatus?.ipc_connected ?? false },
-    { label: 'M7 heartbeat OK',    ok: sysStatus?.m7_heartbeat_ok ?? false },
+    { label: 'Controller link',    ok: sysStatus?.ipc_connected ?? false },
+    { label: 'Motor controller',   ok: sysStatus?.m7_heartbeat_ok ?? false },
     { label: 'No active alarms',   ok: (sysStatus?.active_alarms ?? 1) === 0 },
     { label: 'B-code valid',       ok: steps.length > 0 },
     { label: 'Material selected',  ok: true },
@@ -89,32 +92,31 @@ function PreflightModal({ sysStatus, steps, material, onStart, onCancel }: Prefl
   const canStart = checks.filter((c) => !c.optional).every((c) => c.ok);
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-      <div style={{ background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 24, width: 420, maxWidth: '90vw' }}>
-        <h3 style={{ margin: '0 0 16px', color: TEXT_PRIMARY }}>Pre-flight Check</h3>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[1000]">
+      <div className="bg-surface-1 border border-border rounded-lg p-6 w-[420px] max-w-[90vw]">
+        <h3 className="text-[15px] font-semibold text-text-primary mb-4">Pre-flight Check</h3>
+        <div className="flex flex-col gap-2 mb-5">
           {checks.map((c) => (
-            <div key={c.label} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 16 }}>{c.ok ? '✅' : c.optional ? '⚠️' : '❌'}</span>
-              <span style={{ fontSize: 13, color: c.ok ? '#6ee7b7' : c.optional ? '#fcd34d' : '#fca5a5' }}>
+            <div key={c.label} className="flex items-center gap-2.5">
+              <span className="text-base">{c.ok ? '✅' : c.optional ? '⚠️' : '❌'}</span>
+              <span className={cn(
+                'text-[13px]',
+                c.ok ? 'text-success' : c.optional ? 'text-warning' : 'text-danger',
+              )}>
                 {c.label}
                 {c.optional && !c.ok && ' (optional)'}
               </span>
             </div>
           ))}
         </div>
-        <div style={{ fontSize: 12, color: TEXT_MUTED, marginBottom: 16 }}>
+        <div className="text-[12px] text-text-tertiary mb-4">
           Material: {material.name} | Steps: {steps.length}
         </div>
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button onClick={onCancel} style={{ padding: '8px 16px', background: '#1e293b', border: `1px solid ${BORDER}`, color: TEXT_SECONDARY, borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>Cancel</button>
-          <button
-            onClick={onStart}
-            disabled={!canStart}
-            style={{ padding: '8px 16px', background: canStart ? '#1d4ed8' : '#1e293b', border: 'none', color: canStart ? '#fff' : TEXT_MUTED, borderRadius: 6, cursor: canStart ? 'pointer' : 'not-allowed', fontSize: 13, fontWeight: 600 }}
-          >
+        <div className="flex gap-2.5 justify-end">
+          <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+          <Button variant="primary" onClick={onStart} disabled={!canStart}>
             Start Bending
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -221,30 +223,34 @@ export function BendingPage() {
   const totalLength = rows.reduce((s, r) => s + r.L_mm, 0);
   const elapsedStr = `${Math.floor(elapsedMs / 60000)}m ${Math.floor((elapsedMs % 60000) / 1000)}s`;
 
-  const cardStyle = { background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 20 };
-  const inputNum = (value: number, min: number, max: number, valid: boolean, onChange: (v: number) => void) => (
-    <input
-      type="number"
-      value={value}
-      min={min}
-      max={max}
-      onChange={(e) => onChange(Number(e.target.value))}
-      style={{
-        width: 72,
-        background: BG_PRIMARY,
-        border: `1px solid ${valid ? BORDER : '#ef4444'}`,
-        borderRadius: 4,
-        color: valid ? TEXT_PRIMARY : '#ef4444',
-        padding: '4px 6px',
-        fontSize: 12,
-        textAlign: 'center' as const,
-      }}
-    />
-  );
+  const allRowsValid = rows.length > 0 && rows.every(isRowValid);
+
+  const selectCls = 'bg-surface-2 border border-border text-text-primary px-2.5 py-1.5 rounded text-[13px] w-full outline-none focus:border-accent';
+  const labelCls = 'text-[12px] text-text-tertiary block mb-1.5';
+  const thCls = 'px-2 py-1 text-left text-text-tertiary text-[11px] border-b border-border font-semibold';
+  const tdCls = 'px-2 py-1';
+
+  function numInput(value: number, min: number, max: number, valid: boolean, onChange: (v: number) => void) {
+    return (
+      <input
+        type="number"
+        value={value}
+        min={min}
+        max={max}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className={cn(
+          'w-[72px] bg-surface-2 border rounded text-center text-[12px] px-1.5 py-1 outline-none numeric',
+          valid ? 'border-border text-text-primary focus:border-accent' : 'border-danger text-danger',
+        )}
+      />
+    );
+  }
+
+  const STATE_LABELS = ['IDLE', 'HOMING', 'RUNNING', 'JOGGING', 'STOPPING', 'FAULT', 'ESTOP'];
 
   return (
-    <div style={{ padding: 'clamp(12px, 3vw, 20px)', maxWidth: 1100, margin: '0 auto' }}>
-      <h2 style={{ margin: '0 0 20px', color: TEXT_PRIMARY, fontSize: 18 }}>Wire Bending</h2>
+    <div className="px-[clamp(12px,3vw,20px)] py-[clamp(12px,3vw,20px)] max-w-[1100px] mx-auto">
+      <h2 className="text-[18px] font-semibold text-text-primary mb-5">Wire Bending</h2>
 
       <StepIndicator currentStep={wizardStep} />
 
@@ -252,60 +258,49 @@ export function BendingPage() {
       {/* Step 0: Material & Wire Setup                                    */}
       {/* ================================================================ */}
       {wizardStep === 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
-          <div style={cardStyle}>
-            <h3 style={{ margin: '0 0 16px', fontSize: 14, color: TEXT_PRIMARY }}>Wire Profile</h3>
+        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
+          <Card>
+            <CardTitle className="mb-4">Wire Profile</CardTitle>
 
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 6 }}>Material</label>
-              <select
-                value={materialId}
-                onChange={(e) => setMaterialId(Number(e.target.value))}
-                style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '6px 10px', borderRadius: 4, fontSize: 13, width: '100%' }}
-              >
+            <div className="mb-3.5">
+              <label className={labelCls}>Material</label>
+              <select value={materialId} onChange={(e) => setMaterialId(Number(e.target.value))} className={selectCls}>
                 {WIRE_MATERIALS.map((m) => (
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
               </select>
             </div>
 
-            <div style={{ marginBottom: 20 }}>
-              <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 6 }}>Wire Diameter</label>
-              <select
-                value={diameterMm}
-                onChange={(e) => setDiameterMm(Number(e.target.value))}
-                style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '6px 10px', borderRadius: 4, fontSize: 13, width: '100%' }}
-              >
+            <div className="mb-5">
+              <label className={labelCls}>Wire Diameter</label>
+              <select value={diameterMm} onChange={(e) => setDiameterMm(Number(e.target.value))} className={selectCls}>
                 {WIRE_DIAMETERS.map((d) => (
                   <option key={d} value={d}>{d.toFixed(3)} mm</option>
                 ))}
               </select>
             </div>
 
-            <button
-              onClick={() => setWizardStep(1)}
-              style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 6, padding: '10px 20px', cursor: 'pointer', fontSize: 13, fontWeight: 600, width: '100%' }}
-            >
+            <Button variant="primary" className="w-full" onClick={() => setWizardStep(1)}>
               Next: B-code Editor →
-            </button>
-          </div>
+            </Button>
+          </Card>
 
-          <div style={cardStyle}>
-            <h3 style={{ margin: '0 0 16px', fontSize: 14, color: TEXT_PRIMARY }}>Material Properties</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <Card>
+            <CardTitle className="mb-4">Material Properties</CardTitle>
+            <div className="flex flex-col gap-2.5">
               {[
                 ['Springback', material.springback],
                 ['Heating',    material.heating],
                 ['Speed',      material.speed],
                 ['Max Angle',  `${material.maxAngle}°`],
               ].map(([k, v]) => (
-                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${BORDER}` }}>
-                  <span style={{ fontSize: 13, color: TEXT_MUTED }}>{k}</span>
-                  <span style={{ fontSize: 13, color: TEXT_PRIMARY }}>{v}</span>
+                <div key={k} className="flex justify-between py-1.5 border-b border-border">
+                  <span className="text-[13px] text-text-tertiary">{k}</span>
+                  <span className="text-[13px] text-text-primary">{v}</span>
                 </div>
               ))}
             </div>
-          </div>
+          </Card>
         </div>
       )}
 
@@ -314,78 +309,66 @@ export function BendingPage() {
       {/* ================================================================ */}
       {wizardStep === 1 && (
         <div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 16, marginBottom: 16 }}>
-            <div style={cardStyle}>
-              <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>B-code Sequence</h3>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: '1fr 300px' }}>
+            <Card>
+              <CardTitle className="mb-3">B-code Sequence</CardTitle>
+              <table className="w-full border-collapse text-[13px]">
                 <thead>
                   <tr>
                     {['#', 'L (mm)', 'beta (°)', 'theta (°)', ''].map((h) => (
-                      <th key={h} style={{ padding: '4px 8px', textAlign: 'left', color: TEXT_MUTED, fontSize: 11, borderBottom: `1px solid ${BORDER}`, fontWeight: 600 }}>{h}</th>
+                      <th key={h} className={thCls}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((row, i) => {
-                    const valid = isRowValid(row);
                     return (
                       <tr key={row.id}>
-                        <td style={{ padding: '4px 8px', color: TEXT_MUTED }}>{i + 1}</td>
-                        <td style={{ padding: '4px 8px' }}>{inputNum(row.L_mm, 0.1, 999, row.L_mm > 0, (v) => updateRow(row.id, 'L_mm', v))}</td>
-                        <td style={{ padding: '4px 8px' }}>{inputNum(row.beta_deg, -180, 180, row.beta_deg >= -180 && row.beta_deg <= 180, (v) => updateRow(row.id, 'beta_deg', v))}</td>
-                        <td style={{ padding: '4px 8px' }}>{inputNum(row.theta_deg, -90, 90, row.theta_deg >= -90 && row.theta_deg <= 90, (v) => updateRow(row.id, 'theta_deg', v))}</td>
-                        <td style={{ padding: '4px 8px' }}>
-                          <button onClick={() => removeRow(row.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14 }}>✕</button>
+                        <td className={cn(tdCls, 'text-text-tertiary')}>{i + 1}</td>
+                        <td className={tdCls}>{numInput(row.L_mm, 0.1, 999, row.L_mm > 0, (v) => updateRow(row.id, 'L_mm', v))}</td>
+                        <td className={tdCls}>{numInput(row.beta_deg, -180, 180, row.beta_deg >= -180 && row.beta_deg <= 180, (v) => updateRow(row.id, 'beta_deg', v))}</td>
+                        <td className={tdCls}>{numInput(row.theta_deg, -90, 90, row.theta_deg >= -90 && row.theta_deg <= 90, (v) => updateRow(row.id, 'theta_deg', v))}</td>
+                        <td className={tdCls}>
+                          <button
+                            onClick={() => removeRow(row.id)}
+                            className="bg-transparent border-none text-danger cursor-pointer text-[14px] hover:opacity-70"
+                          >✕</button>
                         </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
-              <button
-                onClick={addRow}
-                style={{ marginTop: 10, background: '#1e293b', border: `1px solid ${BORDER}`, color: TEXT_SECONDARY, padding: '6px 14px', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
-              >
+              <Button variant="secondary" size="sm" className="mt-2.5" onClick={addRow}>
                 + Add Step
-              </button>
+              </Button>
 
-              <div style={{ marginTop: 14, padding: '10px', background: BG_PRIMARY, borderRadius: 4, display: 'flex', gap: 20, fontSize: 12, color: TEXT_MUTED }}>
-                <span>Total: <strong style={{ color: TEXT_PRIMARY }}>{totalLength.toFixed(1)} mm</strong></span>
-                <span>Steps: <strong style={{ color: TEXT_PRIMARY }}>{rows.length}</strong></span>
-                <span>Est: <strong style={{ color: TEXT_PRIMARY }}>~{Math.ceil(totalLength / 5)}s</strong></span>
+              <div className="mt-3.5 p-2.5 bg-surface-2 rounded flex gap-5 text-[12px] text-text-tertiary">
+                <span>Total: <strong className="text-text-primary numeric">{totalLength.toFixed(1)} mm</strong></span>
+                <span>Steps: <strong className="text-text-primary numeric">{rows.length}</strong></span>
+                <span>Est: <strong className="text-text-primary numeric">~{Math.ceil(totalLength / 5)}s</strong></span>
               </div>
-            </div>
+            </Card>
 
-            <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-              <h3 style={{ margin: '0 0 4px', fontSize: 14, color: TEXT_PRIMARY, alignSelf: 'flex-start' }}>Wire Preview</h3>
+            <Card className="flex flex-col items-center gap-2.5">
+              <CardTitle className="self-start mb-1">Wire Preview</CardTitle>
               <WirePreview steps={rows} />
-              <div style={{ fontSize: 11, color: TEXT_MUTED }}>
-                <span style={{ color: '#22c55e' }}>●</span> Start &nbsp;
-                <span style={{ color: '#f59e0b' }}>●</span> End
+              <div className="text-[11px] text-text-tertiary">
+                <span className="text-success">●</span> Start &nbsp;
+                <span className="text-warning">●</span> End
               </div>
-            </div>
+            </Card>
           </div>
 
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between' }}>
-            <button onClick={() => setWizardStep(0)} style={{ background: '#1e293b', border: `1px solid ${BORDER}`, color: TEXT_SECONDARY, padding: '10px 20px', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>
-              ← Back
-            </button>
-            <button
+          <div className="flex justify-between">
+            <Button variant="secondary" onClick={() => setWizardStep(0)}>← Back</Button>
+            <Button
+              variant="primary"
               onClick={() => setShowPreflight(true)}
-              disabled={rows.length === 0 || rows.some((r) => !isRowValid(r))}
-              style={{
-                background: rows.length > 0 && rows.every(isRowValid) ? '#1d4ed8' : '#1e293b',
-                border: 'none',
-                color: rows.length > 0 && rows.every(isRowValid) ? '#fff' : TEXT_MUTED,
-                padding: '10px 20px',
-                borderRadius: 6,
-                cursor: rows.length > 0 && rows.every(isRowValid) ? 'pointer' : 'not-allowed',
-                fontSize: 13,
-                fontWeight: 600,
-              }}
+              disabled={!allRowsValid}
             >
               Execute Bending →
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -394,48 +377,58 @@ export function BendingPage() {
       {/* Step 2: Execute & Monitor                                        */}
       {/* ================================================================ */}
       {wizardStep === 2 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ ...cardStyle, display: 'flex', gap: 20, alignItems: 'center' }}>
-            <span style={{ fontSize: 13, color: TEXT_MUTED }}>Material: <strong style={{ color: TEXT_PRIMARY }}>{material.name}</strong></span>
-            <span style={{ fontSize: 13, color: TEXT_MUTED }}>Steps: <strong style={{ color: TEXT_PRIMARY }}>{rows.length}</strong></span>
-            <StatusBadge variant="info" label={liveMotor ? ['IDLE','HOMING','RUNNING','JOGGING','STOPPING','FAULT','ESTOP'][liveMotor.state] ?? 'RUNNING' : 'RUNNING'} />
-          </div>
+        <div className="flex flex-col gap-4">
+          <Card className="flex gap-5 items-center">
+            <span className="text-[13px] text-text-tertiary">
+              Material: <strong className="text-text-primary">{material.name}</strong>
+            </span>
+            <span className="text-[13px] text-text-tertiary">
+              Steps: <strong className="text-text-primary numeric">{rows.length}</strong>
+            </span>
+            <StatusBadge
+              variant="info"
+              label={liveMotor ? (STATE_LABELS[liveMotor.state] ?? 'RUNNING') : 'RUNNING'}
+            />
+          </Card>
 
-          <div style={cardStyle}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span style={{ fontSize: 13, color: TEXT_MUTED }}>Progress</span>
-              <span style={{ fontSize: 13, color: TEXT_PRIMARY }}>
+          <Card>
+            <div className="flex justify-between mb-2">
+              <span className="text-[13px] text-text-tertiary">Progress</span>
+              <span className="text-[13px] text-text-primary numeric">
                 {bendingStatus?.current_step ?? 0} / {bendingStatus?.total_steps ?? rows.length}
               </span>
             </div>
-            <div style={{ height: 8, background: BG_PRIMARY, borderRadius: 4, overflow: 'hidden', marginBottom: 8 }}>
-              <div style={{ height: '100%', width: `${bendingStatus?.progress_pct ?? 0}%`, background: '#3b82f6', borderRadius: 4, transition: 'width 0.5s' }} />
+            <div className="h-2 bg-surface-2 rounded-full overflow-hidden mb-2">
+              <div
+                className="h-full bg-accent rounded-full transition-[width] duration-500"
+                style={{ width: `${bendingStatus?.progress_pct ?? 0}%` }}
+              />
             </div>
-            <div style={{ display: 'flex', gap: 20, fontSize: 12, color: TEXT_MUTED }}>
-              <span>Elapsed: <strong style={{ color: TEXT_PRIMARY }}>{elapsedStr}</strong></span>
+            <div className="flex gap-5 text-[12px] text-text-tertiary">
+              <span>Elapsed: <strong className="text-text-primary numeric">{elapsedStr}</strong></span>
             </div>
-          </div>
+          </Card>
 
-          <div style={cardStyle}>
-            <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Axis Position (live)</h3>
+          <Card>
+            <CardTitle className="mb-3">Axis Position (live)</CardTitle>
             <div style={{ height: 200 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartHistory}>
                   <XAxis dataKey="t" hide />
                   <YAxis stroke="#475569" tick={{ fill: '#64748b', fontSize: 10 }} />
-                  <Tooltip contentStyle={{ background: BG_PANEL, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY }} />
+                  <Tooltip contentStyle={{ background: 'var(--surface-1)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                   {AXIS_NAMES.map((name, i) => (
                     <Line key={name} type="monotone" dataKey={name} stroke={AXIS_COLORS[i]} dot={false} isAnimationActive={false} strokeWidth={1.5} />
                   ))}
                 </LineChart>
               </ResponsiveContainer>
             </div>
-          </div>
+          </Card>
 
-          <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <div className="flex justify-center">
             <button
               onClick={stopBending}
-              style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: 6, padding: '12px 32px', cursor: 'pointer', fontSize: 14, fontWeight: 700, letterSpacing: 1 }}
+              className="bg-danger text-white border-none rounded-md px-8 py-3 cursor-pointer text-[14px] font-bold tracking-wide hover:opacity-90 transition-opacity"
             >
               STOP BENDING
             </button>
@@ -447,65 +440,58 @@ export function BendingPage() {
       {/* Step 3: Result & Inspect                                         */}
       {/* ================================================================ */}
       {wizardStep === 3 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
-            <div style={cardStyle}>
-              <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Camera Inspection</h3>
-              <div style={{ position: 'relative' }}>
+        <div className="flex flex-col gap-4">
+          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
+            <Card>
+              <CardTitle className="mb-3">Camera Inspection</CardTitle>
+              <div className="relative">
                 <img
                   src={cameraApi.streamUrl()}
                   alt="Inspection"
-                  style={{ width: '100%', borderRadius: 4, border: `1px solid ${BORDER}` }}
+                  className="w-full rounded border border-border"
                   onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
                 />
               </div>
-              <button
-                onClick={captureFrame}
-                style={{ marginTop: 10, background: '#1e293b', border: `1px solid ${BORDER}`, color: TEXT_SECONDARY, padding: '7px 14px', borderRadius: 4, cursor: 'pointer', fontSize: 12, width: '100%' }}
-              >
+              <Button variant="secondary" className="mt-2.5 w-full" onClick={captureFrame}>
                 Capture Frame
-              </button>
-            </div>
+              </Button>
+            </Card>
 
-            <div style={cardStyle}>
-              <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Step Summary</h3>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <Card>
+              <CardTitle className="mb-3">Step Summary</CardTitle>
+              <table className="w-full border-collapse text-[12px]">
                 <thead>
                   <tr>
                     {['#', 'L', 'beta', 'theta', 'Status'].map((h) => (
-                      <th key={h} style={{ padding: '4px 8px', textAlign: 'left', color: TEXT_MUTED, borderBottom: `1px solid ${BORDER}`, fontWeight: 600, fontSize: 11 }}>{h}</th>
+                      <th key={h} className={thCls}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((row, i) => (
                     <tr key={row.id}>
-                      <td style={{ padding: '4px 8px', color: TEXT_MUTED }}>{i + 1}</td>
-                      <td style={{ padding: '4px 8px', color: TEXT_PRIMARY }}>{row.L_mm}</td>
-                      <td style={{ padding: '4px 8px', color: TEXT_PRIMARY }}>{row.beta_deg}°</td>
-                      <td style={{ padding: '4px 8px', color: TEXT_PRIMARY }}>{row.theta_deg}°</td>
-                      <td style={{ padding: '4px 8px' }}>
+                      <td className={cn(tdCls, 'text-text-tertiary numeric')}>{i + 1}</td>
+                      <td className={cn(tdCls, 'text-text-primary numeric')}>{row.L_mm}</td>
+                      <td className={cn(tdCls, 'text-text-primary numeric')}>{row.beta_deg}°</td>
+                      <td className={cn(tdCls, 'text-text-primary numeric')}>{row.theta_deg}°</td>
+                      <td className={tdCls}>
                         <StatusBadge variant="success" label="OK" />
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
+            </Card>
           </div>
 
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-            <button
+          <div className="flex gap-2.5 justify-end">
+            <Button
+              variant="primary"
               onClick={() => { setWizardStep(0); setRows([{ id: 1, L_mm: 10, beta_deg: 0, theta_deg: 0 }]); }}
-              style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 6, padding: '10px 20px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
             >
               New Bending
-            </button>
-            <button
-              style={{ background: '#1e293b', border: `1px solid ${BORDER}`, color: TEXT_SECONDARY, borderRadius: 6, padding: '10px 20px', cursor: 'pointer', fontSize: 13 }}
-            >
-              Export CSV
-            </button>
+            </Button>
+            <Button variant="secondary">Export CSV</Button>
           </div>
         </div>
       )}

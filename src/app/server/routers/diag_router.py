@@ -39,6 +39,20 @@ async def get_backend(svc: DiagService = Depends(get_diag_service)) -> ApiRespon
 
 
 # ---------------------------------------------------------------------------
+# GET /api/motor/diag/probe
+# ---------------------------------------------------------------------------
+
+@router.get("/probe", response_model=ApiResponse)
+async def probe_drivers(svc: DiagService = Depends(get_diag_service)) -> ApiResponse:
+    """Probe all motor driver CS lines and identify connected chips."""
+    try:
+        results = await svc.probe_drivers()
+        return ok({"drivers": [r.model_dump() for r in results]})
+    except Exception as exc:
+        return err(str(exc), "PROBE_ERROR")
+
+
+# ---------------------------------------------------------------------------
 # GET /api/motor/diag/spi-test
 # ---------------------------------------------------------------------------
 

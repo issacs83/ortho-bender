@@ -126,6 +126,23 @@ class Tmc260cDriver:
         self._last_status = status
         return status
 
+    async def probe(self) -> tuple[bool, str]:
+        """Probe SPI bus and verify a TMC260C responds on this CS line.
+
+        Sends a DRVCONF read command and checks the 20-bit response:
+        - All-zero (0x00000) or all-ones (0xFFFFF) means no chip / bus fault.
+        - Any other valid 20-bit response means TMC260C is connected.
+
+        Returns (connected, chip_name).
+        """
+        try:
+            status = await self.read_status()
+            if status.raw == 0 or status.raw == 0xFFFFF:
+                return False, ""
+            return True, "TMC260C"
+        except Exception:
+            return False, ""
+
     async def set_current(self, scale: int) -> None:
         """Set motor current scale (0-31)."""
         if not 0 <= scale <= 31:

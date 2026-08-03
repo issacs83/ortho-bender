@@ -199,7 +199,31 @@ os.environ["OB_MOCK_STEP_DURATION"] = "0.01"  # 0.3 → 0.01
 
 ## 8. 실기기 vs Mock 판별
 
-코드에서 현재 모드를 확인해야 하는 경우:
+### 8.1 모터 백엔드 3-mode 구조
+
+모터 진단 서비스는 `OB_MOTOR_BACKEND` 환경변수로 3가지 모드 중 하나를 선택합니다:
+
+| 모드 | 환경변수 값 | 용도 | 하드웨어 의존 |
+|------|------------|------|-------------|
+| Mock | `mock` (기본) | 개발, CI, 데모 | 없음 |
+| Spidev | `spidev` | EVK 테스트 벤치 | Linux spidev + gpiod |
+| M7 | `m7` | 프로덕션 | M7 RPMsg IPC |
+
+현재 모터 백엔드 모드를 확인하려면:
+```bash
+curl http://localhost:8000/api/motor/diag/backend
+```
+```json
+{
+  "success": true,
+  "data": {
+    "backend": "spidev",
+    "drivers": ["tmc260c_0", "tmc260c_1", "tmc5072"]
+  }
+}
+```
+
+### 8.2 시스템 상태 확인
 
 ```bash
 curl http://localhost:8000/api/system/status
@@ -230,7 +254,10 @@ curl http://localhost:8000/api/camera/status
 | `services/ipc_client.py` | Mock IPC + `_simulate_bcode` |
 | `services/camera_service.py` | Mock 카메라 프레임 생성 |
 | `services/motor_service.py` | IPC 응답 파싱 (실/mock 공통) |
-| `config.py` | `OB_MOCK_MODE` 환경변수 로드 |
+| `services/motor_backend.py` | MotorBackend ABC + MockMotorBackend |
+| `services/spi_backend.py` | SpidevMotorBackend (Linux spidev + gpiod v2) |
+| `services/diag_service.py` | TMC 진단 서비스 (3개 백엔드 공통) |
+| `config.py` | `OB_MOCK_MODE`, `OB_MOTOR_BACKEND` 환경변수 로드 |
 
 ---
 

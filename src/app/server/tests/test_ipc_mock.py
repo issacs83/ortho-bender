@@ -71,7 +71,7 @@ async def test_ipc_mock_status_motion(ipc):
     state = raw[0]
     axis_mask = raw[11]
     assert 0 <= state <= 6
-    assert axis_mask == 0x03
+    assert axis_mask == 0x0F
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +204,7 @@ async def test_ipc_mock_heartbeat_returns_payload(ipc):
     )
     assert wdt_ok == 1
     assert 0 <= state <= 6
-    assert axis_mask == 0x03
+    assert axis_mask == 0x0F
 
 
 # ---------------------------------------------------------------------------

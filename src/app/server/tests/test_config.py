@@ -80,9 +80,9 @@ def test_env_override_ipc_device():
 
 
 def test_default_camera_fps():
-    """Default camera FPS should be 15.0."""
+    """Default camera FPS should be 30.0."""
     settings = _make_settings()
-    assert settings.camera_fps == 15.0
+    assert settings.camera_fps == 30.0
 
 
 def test_default_feed_max_mm():

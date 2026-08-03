@@ -96,9 +96,9 @@ cd /opt/ortho-bender && rm -f /tmp/ortho-backend.log && \
 disown
 ```
 
-**systemd (production — 향후)**
+**systemd (production)**
 ```ini
-# /etc/systemd/system/ortho-bender.service
+# /etc/systemd/system/ortho-bender-sdk.service
 [Unit]
 Description=Ortho-Bender SDK Backend
 After=network.target
@@ -108,6 +108,7 @@ Type=simple
 User=root
 WorkingDirectory=/opt/ortho-bender
 Environment="OB_MOCK_MODE=false"
+Environment="OB_MOTOR_BACKEND=spidev"
 Environment="GENICAM_GENTL64_PATH=/opt/VimbaX_2026-1/cti"
 ExecStart=/usr/bin/python3 -m uvicorn server.main:app --host 0.0.0.0 --port 8000
 Restart=on-failure
@@ -115,6 +116,34 @@ RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
+```
+
+> **백엔드 모드 선택**: `OB_MOTOR_BACKEND` 에 따라 진단 서비스의 하드웨어 접근 방식이 결정됩니다:
+> - `mock` — 하드웨어 없이 개발 (기본값)
+> - `spidev` — Linux spidev + gpiod 직접 SPI/GPIO 접근 (테스트 벤치용)
+> - `m7` — M7 RPMsg IPC 경유 (프로덕션)
+
+### 3.4 spidev 백엔드 추가 패키지 (EVK 테스트 벤치)
+
+spidev 모드를 사용하려면 EVK에 다음 Python 패키지가 필요합니다:
+```bash
+pip3 install spidev gpiod
+```
+- `spidev` >= 3.6 — Linux spidev 인터페이스
+- `gpiod` >= 2.0 — gpiod v2 API (libgpiod 2.x 필요)
+
+패키지가 설치되지 않은 상태에서 `OB_MOTOR_BACKEND=spidev` 로 기동하면
+`ImportError` 와 함께 서비스가 중단됩니다.
+
+EVK에 인터넷 연결이 없는 경우, 동일 아키텍처(aarch64) 호스트에서 wheel 을
+빌드하여 전송하세요:
+```bash
+# 호스트에서
+pip3 wheel spidev gpiod -w /tmp/wheels
+scp /tmp/wheels/*.whl root@192.168.77.2:/tmp/
+
+# EVK에서
+pip3 install /tmp/spidev-*.whl /tmp/gpiod-*.whl
 ```
 
 ```bash
@@ -132,6 +161,14 @@ systemctl status ortho-bender
 | `OB_MOCK_MODE` | `false` | `true` 시 IPC + 카메라 모두 mock |
 | `OB_IPC_DEVICE` | `/dev/rpmsg0` | M7 RPMsg 디바이스 |
 | `OB_IPC_TIMEOUT_S` | `2.0` | IPC 요청 타임아웃 |
+| `OB_MOTOR_BACKEND` | `mock` | 모터 백엔드: `mock` / `spidev` / `m7` |
+| `OB_SPI_DEVICE` | `/dev/spidev1.0` | SPI 디바이스 경로 (spidev 모드) |
+| `OB_SPI_SPEED_HZ` | `2000000` | SPI 클럭 속도 (spidev 모드) |
+| `OB_GPIO_CS1` | `GPIO3_IO19` | TMC260C #2 soft CS (spidev 모드) |
+| `OB_GPIO_CS2` | `GPIO3_IO20` | TMC5072 soft CS (spidev 모드) |
+| `OB_GPIO_FEED_STEP` | `GPIO3_IO22` | Feed axis STEP (spidev 모드) |
+| `OB_GPIO_BEND_STEP` | `GPIO3_IO24` | Bend axis STEP (spidev 모드) |
+| `OB_GPIO_DIR` | `GPIO5_IO06` | 공유 DIR (spidev 모드) |
 | `OB_PORT` | `8000` | HTTP 포트 |
 | `OB_HOST` | `0.0.0.0` | 바인딩 주소 |
 | `OB_LOG_LEVEL` | `info` | `debug/info/warning/error` |
@@ -247,7 +284,8 @@ rsync -avz src/app/server/ root@192.168.77.2:/opt/ortho-bender/server/
 
 ## 10. 관련 문서
 
-- [MOCK_MODE.md](03_MOCK_MODE.md) — 하드웨어 없이 개발
+- [MOCK_MODE.md](03_MOCK_MODE.md) — 하드웨어 없이 개발 + 3-mode 백엔드
 - [TROUBLESHOOTING.md](05_TROUBLESHOOTING.md) — 배포 중 자주 발생하는 문제
 - [bootflow.md](../architecture/03_BOOTFLOW.md) — 부팅 시퀀스 상세
 - [evk-remoteproc-analysis.md](../hardware/02_EVK_REMOTEPROC.md) — M7 remoteproc 내부
+- [TEST_BENCH_CONNECTION.md](../hardware/04_TEST_BENCH_CONNECTION.md) — DRI0035 + TMC5072 하드웨어 연결 가이드

@@ -1,13 +1,6 @@
-/**
- * ConfirmModal.tsx — Keyboard-accessible confirmation dialog.
- *
- * - Esc = Cancel
- * - Enter = Confirm
- * - Focus trapped within modal
- */
-
 import { useEffect, useRef } from 'react';
-import { BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_SECONDARY } from '../../constants';
+import { cn } from '../../lib/cn';
+import { Button } from './Button';
 
 interface ConfirmModalProps {
   title: string;
@@ -19,12 +12,8 @@ interface ConfirmModalProps {
 }
 
 export function ConfirmModal({
-  title,
-  description,
-  confirmLabel = 'Confirm',
-  confirmVariant = 'primary',
-  onConfirm,
-  onCancel,
+  title, description, confirmLabel = 'Confirm', confirmVariant = 'primary',
+  onConfirm, onCancel,
 }: ConfirmModalProps) {
   const confirmRef = useRef<HTMLButtonElement>(null);
 
@@ -40,55 +29,27 @@ export function ConfirmModal({
 
   return (
     <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.7)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-      }}
+      className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60"
       onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
     >
-      <div style={{
-        background: BG_PANEL,
-        border: `1px solid ${BORDER}`,
-        borderRadius: 8,
-        padding: 24,
-        width: 380,
-        maxWidth: '90vw',
-      }}>
-        <h3 style={{ margin: '0 0 10px', color: TEXT_PRIMARY, fontSize: 16 }}>{title}</h3>
-        <p style={{ margin: '0 0 20px', color: TEXT_SECONDARY, fontSize: 14, lineHeight: 1.5 }}>{description}</p>
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button
-            onClick={onCancel}
-            style={{
-              padding: '8px 16px',
-              background: '#1e293b',
-              border: `1px solid ${BORDER}`,
-              color: TEXT_SECONDARY,
-              borderRadius: 6,
-              cursor: 'pointer',
-              fontSize: 13,
-            }}
-          >
-            Cancel
-          </button>
+      <div
+        className="bg-surface-1 border border-border rounded-xl p-6 w-[90vw] max-w-[400px] shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-semibold text-text-primary mb-2">{title}</h3>
+        <p className="text-[13px] text-text-secondary mb-6 leading-relaxed">{description}</p>
+        <div className="flex gap-3 justify-end">
+          <Button variant="ghost" onClick={onCancel}>Cancel</Button>
           <button
             ref={confirmRef}
             onClick={onConfirm}
-            style={{
-              padding: '8px 16px',
-              background: confirmVariant === 'danger' ? '#dc2626' : '#3b82f6',
-              border: 'none',
-              color: '#fff',
-              borderRadius: 6,
-              cursor: 'pointer',
-              fontSize: 13,
-              fontWeight: 600,
-            }}
+            className={cn(
+              'inline-flex items-center justify-center gap-2 rounded-md font-semibold px-3.5 py-2 text-[13px]',
+              'transition-[background,opacity] duration-fast',
+              confirmVariant === 'danger'
+                ? 'bg-danger text-white hover:opacity-90'
+                : 'bg-accent text-white hover:opacity-90',
+            )}
           >
             {confirmLabel}
           </button>

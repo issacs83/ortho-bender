@@ -1,0 +1,23 @@
+[Unit]
+Description=Ortho-Bender AP mode (uap0: hostapd + udhcpd)
+After=network.target sys-subsystem-net-devices-uap0.device
+Wants=sys-subsystem-net-devices-uap0.device
+
+[Service]
+Type=forking
+Environment=PATH=/usr/sbin:/sbin:/usr/bin:/bin
+ExecStartPre=-/sbin/ip link set uap0 down
+ExecStartPre=/sbin/ip addr flush dev uap0
+ExecStartPre=/sbin/ip link set uap0 up
+ExecStartPre=/sbin/ip addr add 192.168.4.1/24 dev uap0
+ExecStart=/usr/sbin/hostapd /etc/hostapd/ortho-bender-ap.conf -P /run/ortho-bender-hostapd.pid -B
+ExecStartPost=/usr/sbin/udhcpd /etc/udhcpd-uap0.conf
+PIDFile=/run/ortho-bender-hostapd.pid
+ExecStop=-/bin/kill -TERM $(cat /run/udhcpd-uap0.pid 2>/dev/null)
+ExecStopPost=-/sbin/ip addr flush dev uap0
+ExecStopPost=-/sbin/ip link set uap0 down
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -97,6 +97,22 @@ class Tmc5072Driver:
         """Extract 32-bit register value from 5-byte SPI response."""
         return (rx[1] << 24) | (rx[2] << 16) | (rx[3] << 8) | rx[4]
 
+    async def probe(self) -> tuple[bool, str]:
+        """Probe SPI bus and verify a TMC5072 responds on this CS line.
+
+        Reads IC_VERSION register (0x73). TMC5072 returns version code
+        (typically 0x10). Zero or 0xFFFFFFFF means no chip / bus fault.
+
+        Returns (connected, chip_name).
+        """
+        try:
+            ic_ver = await self.read_register(IC_VERSION)
+            if ic_ver == 0 or ic_ver == 0xFFFFFFFF:
+                return False, ""
+            return True, "TMC5072"
+        except Exception:
+            return False, ""
+
     async def read_register(self, addr: int) -> int:
         """Read a TMC5072 register.
 
