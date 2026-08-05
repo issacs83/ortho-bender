@@ -149,6 +149,9 @@ async def camera_stream(
             content={"success": False, "error": "Camera is offline", "code": "CAMERA_OFFLINE"},
         )
 
+    # Clamp: the bench sensor tops out at ~50 fps and an unbounded value
+    # would spin the capture loop; very low values still stream but slowly.
+    fps = max(1.0, min(fps, 50.0))
     return StreamingResponse(
         svc.mjpeg_generator(fps=fps),
         media_type="multipart/x-mixed-replace; boundary=frame",
