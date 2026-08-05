@@ -84,6 +84,7 @@ FMT_YUYV = 0x56595559  # 'YUYV'
 CID_EXPOSURE = 0x00980911       # ns on the avt3 subdev (INTEGER64)
 CID_GAIN = 0x00980913           # millibel on the avt3 subdev
 CID_EXPOSURE_AUTO = 0x009A0901  # 0 = auto, 1 = manual
+CID_DEVICE_TEMPERATURE = 0x009A0933  # 0.1 degC, read-only
 
 # cv2.CAP_PROP_* numeric values (avoid importing cv2 here)
 PROP_WIDTH = 3
@@ -600,6 +601,38 @@ class IsiV4l2Capture:
             fcntl.ioctl(self._fd, VIDIOC_REQBUFS, req)
         except OSError:
             pass
+
+    # -- preset application (stream paused: several controls EBUSY
+    #    while streaming, same as frame-interval) -----------------------
+    def apply_snapshot(self, fps: float | None, roi: dict | None,
+                       controls: list) -> dict:
+        """Apply an (fps, roi, [(cid, value, name), ...]) snapshot with the
+        capture pipeline stopped, then bring the stream back up. Returns
+        {name: error} for per-item failures."""
+        errors: dict[str, str] = {}
+        self._teardown_stream()
+        try:
+            if fps:
+                try:
+                    self.ctrl.set_frame_rate(fps)
+                except OSError as exc:
+                    errors["fps"] = str(exc)
+            width, height = self._width, self._height
+            if roi:
+                try:
+                    applied = self.ctrl.set_selection(
+                        roi["left"], roi["top"], roi["width"], roi["height"])
+                    width, height = applied["width"], applied["height"]
+                except OSError as exc:
+                    errors["roi"] = str(exc)
+            for cid, value, name in controls:
+                try:
+                    self.ctrl.set_control(cid, value)
+                except (OSError, PermissionError) as exc:
+                    errors[name] = str(exc)
+        finally:
+            self._width, self._height = self._setup(width, height)
+        return errors
 
     # -- sensor frame rate (needs the stream stopped: driver EBUSYs) ----
     def set_sensor_fps(self, fps: float) -> float | None:

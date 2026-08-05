@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import os
 import time
@@ -358,6 +359,13 @@ class CameraService:
                 device_id = self._vmb_cam.get_model()
             except Exception:
                 device_id = "Alvium_1800_U-158m"
+        temperature_c = None
+        if self._connected and self._backend == CameraBackend.ISI and self._cap is not None:
+            try:
+                from .isi_v4l2 import CID_DEVICE_TEMPERATURE
+                temperature_c = self._cap.ctrl._get(CID_DEVICE_TEMPERATURE) / 10.0
+            except (OSError, ImportError):
+                pass
         return {
             "connected":    self._connected,
             "device_id":    device_id,
@@ -368,6 +376,7 @@ class CameraService:
             "format":       self._pixel_format,
             "backend":      self._backend.value,
             "fps":          self._fps or None,
+            "temperature_c": temperature_c,
             "power_state":  self._power_state,
         }
 
@@ -527,6 +536,92 @@ class CameraService:
         if actual:
             self._fps = actual
         return actual
+
+    # ------------------------------------------------------------------
+    # Named presets — server-side substitute for the camera UserSet
+    # feature, which Alvium CSI-2 models do not expose over V4L2.
+    # ------------------------------------------------------------------
+
+    _PRESETS_FILE = "/var/lib/ortho-bender/camera_presets.json"
+    _PRESET_SKIP_TYPES = ("ctrl_class", "button", "string")
+
+    def _load_presets(self) -> dict:
+        try:
+            with open(self._PRESETS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return {}
+
+    def _save_presets(self, presets: dict) -> None:
+        os.makedirs(os.path.dirname(self._PRESETS_FILE), exist_ok=True)
+        tmp = self._PRESETS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(presets, f, indent=1)
+        os.replace(tmp, self._PRESETS_FILE)
+
+    async def list_presets(self) -> dict:
+        return self._load_presets()
+
+    async def save_preset(self, name: str) -> dict:
+        """Snapshot every writable control + ROI + sensor fps under `name`."""
+        controls = await self.list_controls()
+        snapshot = {
+            "controls": {
+                c["name"]: c["value"] for c in controls
+                if c["type"] not in self._PRESET_SKIP_TYPES
+                and not c["read_only"] and c["value"] is not None
+            },
+            "roi": (await self.get_roi())["crop"],
+            "fps": await self.get_sensor_frame_rate(),
+            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        presets = self._load_presets()
+        presets[name] = snapshot
+        self._save_presets(presets)
+        return {name: snapshot}
+
+    async def apply_preset(self, name: str) -> dict:
+        """Apply a saved preset in one stream pause (several controls and
+        the frame interval EBUSY while streaming): fps → ROI → controls."""
+        presets = self._load_presets()
+        if name not in presets:
+            raise KeyError(f"preset {name!r} not found")
+        if self._backend != CameraBackend.ISI or self._cap is None:
+            raise RuntimeError(
+                f"Presets not supported on backend {self._backend.value!r}")
+        p = presets[name]
+        by_name = {c["name"]: c for c in await self.list_controls()}
+        control_items = []
+        skipped: dict[str, str] = {}
+        for cname, value in p.get("controls", {}).items():
+            c = by_name.get(cname)
+            if c is None:
+                skipped[cname] = "not present on this camera"
+                continue
+            if c["read_only"] or c["inactive"]:
+                continue
+            control_items.append((c["id"], value, cname))
+        loop = asyncio.get_running_loop()
+        async with self._frame_lock:
+            errors = await loop.run_in_executor(
+                None, self._cap.apply_snapshot,
+                p.get("fps"), p.get("roi"), control_items)
+        errors.update(skipped)
+        self._width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self._height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        try:
+            self._exposure_us = self._cap.ctrl.get_exposure_us()
+            self._gain_db = self._cap.ctrl.get_gain_db()
+        except OSError:
+            pass
+        return {"applied": name, "errors": errors}
+
+    async def delete_preset(self, name: str) -> None:
+        presets = self._load_presets()
+        if name not in presets:
+            raise KeyError(f"preset {name!r} not found")
+        del presets[name]
+        self._save_presets(presets)
 
     async def get_roi(self) -> dict:
         """Current sensor crop + bounds (isi_csi2 backend)."""

@@ -219,6 +219,68 @@ async def set_camera_control(
 
 
 # ---------------------------------------------------------------------------
+# Camera presets — server-side UserSet substitute
+# ---------------------------------------------------------------------------
+
+@router.get("/presets", response_model=ApiResponse)
+async def list_camera_presets(
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Named camera presets (all writable controls + ROI + sensor fps).
+
+    Alvium CSI-2 models expose no on-camera UserSet over V4L2, so
+    presets are stored server-side and re-applied through the normal
+    control paths.
+    """
+    return ok({"presets": await svc.list_presets()})
+
+
+class CameraPresetRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64,
+                      description="Preset name (e.g. 'backlight-wire')")
+
+
+@router.post("/presets", response_model=ApiResponse)
+async def save_camera_preset(
+    body: CameraPresetRequest,
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Snapshot the current camera state under the given name."""
+    try:
+        return ok(await svc.save_preset(body.name))
+    except (RuntimeError, OSError) as exc:
+        return err(str(exc), "CAMERA_PRESET_ERROR")
+
+
+@router.post("/presets/{name}/apply", response_model=ApiResponse)
+async def apply_camera_preset(
+    name: str,
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Apply a saved preset (fps → ROI → controls). Per-item failures are
+    reported in `errors` without aborting the rest."""
+    try:
+        return ok(await svc.apply_preset(name))
+    except KeyError as exc:
+        return err(str(exc), "CAMERA_PRESET_NOT_FOUND")
+    except (RuntimeError, OSError) as exc:
+        return err(str(exc), "CAMERA_PRESET_ERROR")
+
+
+@router.delete("/presets/{name}", response_model=ApiResponse)
+async def delete_camera_preset(
+    name: str,
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Delete a saved preset."""
+    try:
+        await svc.delete_preset(name)
+        return ok({"deleted": name})
+    except KeyError as exc:
+        return err(str(exc), "CAMERA_PRESET_NOT_FOUND")
+
+
+# ---------------------------------------------------------------------------
 # GET/POST /api/camera/framerate — sensor acquisition rate
 # ---------------------------------------------------------------------------
 

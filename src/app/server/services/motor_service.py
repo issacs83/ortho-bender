@@ -91,6 +91,42 @@ class MotorService:
         """Inject the CalibrationService used for axis steps/unit conversion."""
         self._calibration = cal
 
+    def set_motion_profiles(self, profiles) -> None:
+        """Inject the MotionProfileService (per-axis accel/decel/shape)."""
+        self._motion_profiles = profiles
+
+    def _profile_for(self, axis: int) -> dict | None:
+        """Backend-facing ramp profile for `axis`.
+
+        Profiles store accel/decel in physical units (mm/s² or deg/s²);
+        the ramp engine consumes STEP-frequency slew (Hz/s). Convert here
+        with the same per-axis steps_per_unit calibration used for speed,
+        clamped to the range the bench PWM path was validated for.
+        """
+        mp = getattr(self, "_motion_profiles", None)
+        if mp is None:
+            return None
+        p = mp.get(axis)
+        cal = self._calibration
+        spu = cal.steps_per_unit(axis) if cal else 200.0
+        out = {"start_hz": p["start_hz"], "shape": p["shape"]}
+        for phys, hz in (("accel", "accel_hz_s"), ("decel", "decel_hz_s")):
+            out[hz] = int(max(200, min(40000, float(p[phys]) * spu)))
+        return out
+
+    def _max_speed_for(self, axis: int) -> float:
+        """Per-axis machine velocity limit (profile max_speed).
+
+        Command-time clamp, GRBL $110-112 style: a machine limit distinct
+        from the operator's jog_speed default — direct API callers cannot
+        exceed it either. Reads the stored profile, NOT _profile_for's
+        backend dict (which carries only ramp parameters).
+        """
+        mp = getattr(self, "_motion_profiles", None)
+        if mp is None:
+            return 40.0
+        return float(mp.get(axis).get("max_speed", 40.0))
+
     def _ensure_not_estop(self, action: str) -> None:
         """HARD GATE — refuse motion commands while bench E-STOP is latched.
 
@@ -147,7 +183,8 @@ class MotorService:
         # bench verification pass (PWM pad integrity + stall behaviour).
         cal = self._calibration
         steps_per_unit = cal.steps_per_unit(axis) if cal else 200.0
-        speed_clamped = min(abs(speed), cal.speed_limit(axis) if cal else 40.0)
+        speed_clamped = min(abs(speed), cal.speed_limit(axis) if cal else 40.0,
+                            self._max_speed_for(axis))
         freq = int(speed_clamped * steps_per_unit)
         freq = max(200, min(freq, 8000))
         max_duration_s = 60 if continuous else 5
@@ -156,7 +193,8 @@ class MotorService:
         log.info("jog_start axis=%d cs=%d freq=%dHz dir=%+d (max %ds, continuous=%s)",
                  axis, cs, freq, dir_sign, max_duration_s, continuous)
         self._bench_jog_task = self._asyncio.create_task(
-            self._spi_backend.pulse_step(cs, steps, freq, dir_sign)
+            self._spi_backend.pulse_step(cs, steps, freq, dir_sign,
+                                         profile=self._profile_for(axis))
         )
         return {
             "status": "jog_started",
@@ -220,7 +258,7 @@ class MotorService:
         speed_lim = cal.speed_limit(axis) if cal else 40.0
         clamped_distance = max(-dist_limit, min(dist_limit, distance))
         steps = max(1, int(abs(clamped_distance) * steps_per_unit))
-        speed_clamped = min(abs(speed), speed_lim)
+        speed_clamped = min(abs(speed), speed_lim, self._max_speed_for(axis))
         freq = int(speed_clamped * steps_per_unit)
         freq = max(200, min(freq, 8000))
         # Cap duration to 10 s
@@ -231,7 +269,8 @@ class MotorService:
             "bench jog axis=%d cs=%d steps=%d freq=%dHz dir=%+d (req dist=%.3f speed=%.3f)",
             axis, cs, steps, freq, direction, distance, speed,
         )
-        await self._spi_backend.pulse_step(cs, steps, freq, direction)
+        await self._spi_backend.pulse_step(cs, steps, freq, direction,
+                                           profile=self._profile_for(axis))
 
     # ------------------------------------------------------------------
     # Status
@@ -402,6 +441,30 @@ class MotorService:
         await self._ipc.send_recv(MSG_MOTION_JOG, payload)
         return await self.get_status()
 
+    async def set_zero(self, axis: int, value: float = 0.0) -> MotorStatusResponse:
+        """Define the current physical position as `value` (user units).
+
+        Zero-point / datum setting for the bench: the operator jogs the
+        axis to a known reference (mechanical stop, mark, future limit
+        switch) and declares the position counter to be `value`
+        (typically 0). The counter is persisted, so it survives server
+        restarts. Uses the same steps-per-unit convention as the status
+        display. Bench-only until M7 homing lands.
+        """
+        if not self.has_bench:
+            raise RuntimeError("set_zero is only available in bench mode")
+        cs = self._axis_to_cs.get(int(axis))
+        if cs is None:
+            raise ValueError(f"Axis {axis} is not present on the bench")
+        # Same conversion as _bench_status (display units = steps / 200).
+        self._spi_backend.positions[cs] = int(round(value * 200.0))
+        save = getattr(self._spi_backend, "_save_state", None)
+        if callable(save):
+            save()
+        log.info("set_zero: axis=%d (cs=%d) position counter := %.3f units",
+                 axis, cs, value)
+        return await self.get_status()
+
     async def home(self, axis_mask: int = 0) -> MotorStatusResponse:
         """Execute homing sequence for the specified axes.
 
@@ -436,7 +499,9 @@ class MotorService:
             # 1) Kill PWM + silence chips immediately. Coils dead first so the
             #    motor is mechanically safe even if step 2 raises.
             try:
-                await self._spi_backend._pwm_disable()
+                # kill=True latches the PWM off — an in-flight ramp tick
+                # must not be able to re-enable STEP before the cancel lands.
+                await self._spi_backend._pwm_disable(kill=True)
             except Exception as exc:
                 log.warning("E-STOP PWM disable failed: %s", exc)
             for cs in (0, 1, 2):

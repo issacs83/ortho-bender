@@ -36,7 +36,7 @@ from ..services.psu_service import PSU_PRESETS, PsuService
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/system", tags=["system"])
 
-SDK_VERSION = "0.1.0"
+SDK_VERSION = "0.3.0"
 
 _boot_time = time.monotonic()
 

@@ -90,6 +90,46 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
 - `axis_mask=0` → 모든 enabled 축
 - StallGuard2 기반 기계적 endstop 검출
 
+### POST `/api/motor/zero`
+```json
+{ "axis": 1, "value": 0 }
+```
+영점(기준점) 설정 — 현재 물리 위치를 `value`(기본 0, mm/°)로 선언합니다.
+- 모션 없음. 축을 기준 위치(기계적 스토퍼, 마킹, 추후 리밋 스위치)로 조그한 뒤 호출
+- 위치 카운터는 재시작 후에도 유지됨
+- 리밋 스위치 배선 후 자동 호밍 루틴이 이 API 위에 구축될 예정
+
+### GET `/api/motor/profiles`
+**Response (data)**
+```json
+{ "profiles": { "0": { "jog_speed": 10.0, "max_speed": 40.0,
+  "step_size": 1.0, "start_hz": 200, "accel": 40.0, "decel": 40.0,
+  "shape": "linear" }, "1": { ... } } }
+```
+축별 모션 프로파일 (조그 기본값 + 가감속 형상). 보드에
+`/var/lib/ortho-bender/motion_profiles.json` 으로 영속 저장.
+
+### PUT `/api/motor/profiles/{axis}`
+```json
+{ "jog_speed": 12.0, "shape": "scurve" }
+```
+부분 업데이트 — 생략한 필드는 유지.
+- `jog_speed` (0–40, mm/s 또는 °/s), `step_size` (0–360)
+- `max_speed` (0–40): 축별 **기계 속도 한계** (GRBL `$110-112` 상당) —
+  jog/move 등 모든 모션 명령의 speed 가 커맨드 시점에 이 값으로 클램프됨.
+  `jog_speed` 는 이 값을 넘을 수 없음
+- `start_hz` (50–2000): 램프 시작(플로어) STEP 주파수
+- `accel` / `decel` (1–200): 가감속, **물리 단위 (mm/s² 또는 °/s²)** —
+  GRBL `$120-122` / LinuxCNC `MAX_ACCELERATION` 상당. 커맨드 시점에 축
+  캘리브레이션(steps_per_unit)으로 STEP 슬루율(Hz/s, 200–40000 클램프)로
+  환산되므로 마이크로스텝/캘리브레이션이 바뀌어도 의미가 유지됨
+- `shape`: `"linear"`(사다리꼴) 또는 `"scurve"`(저크 제한 smoothstep —
+  피크 가속도가 `accel` 설정값과 같아, S-curve 전환 시에도 설정 가속도를
+  초과하지 않음)
+- 감속 램프는 조그 정지/자연 종료 시 적용. 폴트·스톨·E-STOP 은 하드 스톱 유지
+- 참고: S-curve 감속은 같은 `decel` 에서 linear 대비 **정지 시간·거리가
+  1.5배** (피크 가속도를 유지하는 대가). 정밀 정지 위치가 중요하면 linear 사용
+
 ### POST `/api/motor/stop`
 모든 축 즉시 감속 정지. body 없음.
 

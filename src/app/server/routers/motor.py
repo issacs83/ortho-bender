@@ -16,6 +16,7 @@ from ..models.schemas import (
     ApiResponse,
     MotionState,
     MotorHomeRequest,
+    MotorZeroRequest,
     MotorJogRequest,
     MotorMoveRequest,
     MotorResetRequest,
@@ -166,6 +167,90 @@ async def motor_jog_stop(
 # ---------------------------------------------------------------------------
 # POST /api/motor/home
 # ---------------------------------------------------------------------------
+
+from pydantic import BaseModel, Field
+
+
+class MotionProfileUpdate(BaseModel):
+    """Partial per-axis motion profile update — omitted fields keep their value.
+
+    Unknown fields are rejected (422) so a client still sending the
+    pre-0.3.0 `accel_hz_s`/`decel_hz_s` names fails loudly instead of
+    "succeeding" with no effect.
+    """
+    model_config = {"extra": "forbid"}
+    jog_speed: float | None = Field(None, gt=0, le=40,
+                                    description="Default jog rate (mm/s or deg/s)")
+    max_speed: float | None = Field(None, gt=0, le=40,
+                                    description="Machine velocity limit — all motion "
+                                                "commands are clamped to this "
+                                                "(GRBL $110-112 analog)")
+    step_size: float | None = Field(None, gt=0, le=360,
+                                    description="Incremental jog distance (mm or deg)")
+    start_hz: int | None = Field(None, ge=50, le=2000,
+                                 description="Ramp floor frequency (Hz)")
+    accel: float | None = Field(None, ge=1, le=200,
+                                description="Acceleration in physical units "
+                                            "(mm/s² or deg/s²; converted to STEP "
+                                            "slew via axis calibration)")
+    decel: float | None = Field(None, ge=1, le=200,
+                                description="Deceleration for stop/finish ramps "
+                                            "(mm/s² or deg/s²)")
+    shape: str | None = Field(None, pattern="^(linear|scurve)$",
+                              description="Velocity profile: trapezoidal 'linear' "
+                                          "or jerk-limited 'scurve'")
+
+
+def _profiles(request: Request):
+    return request.app.state.motion_profiles
+
+
+@router.get("/profiles", response_model=ApiResponse)
+async def get_motion_profiles(request: Request) -> ApiResponse:
+    """Per-axis motion profiles (jog defaults + acceleration shaping).
+
+    accel/decel are physical (mm/s² or deg/s²) and converted to STEP
+    slew via the axis calibration at command time. S-curve uses a
+    smoothstep frequency schedule whose peak slope equals the configured
+    accel, so switching shape never exceeds the configured acceleration.
+    Applied by the bench to every jog/move ramp, including the
+    deceleration ramp on stop and end-of-travel.
+    """
+    return ok({"profiles": _profiles(request).all()})
+
+
+@router.put("/profiles/{axis}", response_model=ApiResponse)
+async def update_motion_profile(
+    axis: int, body: MotionProfileUpdate, request: Request,
+) -> ApiResponse:
+    """Update one axis' motion profile (partial; persisted on the board)."""
+    try:
+        updated = _profiles(request).update(
+            axis, body.model_dump(exclude_none=True))
+        return ok({"axis": axis, "profile": updated})
+    except ValueError as exc:
+        return err(str(exc), "MOTOR_PROFILE_ERROR")
+
+
+@router.post("/zero", response_model=ApiResponse)
+async def motor_set_zero(
+    body: MotorZeroRequest,
+    svc: MotorService = Depends(_motor_service),
+) -> ApiResponse:
+    """Zero-point (datum) setting — declare the current physical position.
+
+    Jog the axis to a known reference (mechanical stop, mark, or a limit
+    switch once wired) and call this to define the position counter as
+    `value` (default 0). No motion occurs; the counter persists across
+    restarts. Homing via the two bench limit switches will build on this
+    once they are powered and wired.
+    """
+    try:
+        status = await svc.set_zero(int(body.axis), body.value)
+        return ok(status.model_dump())
+    except (RuntimeError, ValueError) as exc:
+        return err(str(exc), "MOTOR_ZERO_ERROR")
+
 
 @router.post("/home", response_model=ApiResponse)
 async def motor_home(
