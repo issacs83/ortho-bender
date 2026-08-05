@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { cameraApi, type CameraControl, type CameraStatus } from '../api/client';
+import { cameraApi, type CameraControl, type CameraRoiInfo, type CameraStatus } from '../api/client';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { ConnectionControl } from '../components/ui/ConnectionControl';
 import { SliderInput } from '../components/ui/SliderInput';
@@ -12,27 +12,38 @@ import { useCameraWs } from '../hooks/useCameraWs';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { BG_PANEL, BG_PRIMARY, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED } from '../constants';
 
-type CameraSubTab = 'live' | 'acquisition' | 'params' | 'processing' | 'gallery';
+type PanelSectionId = 'acquisition' | 'params' | 'processing' | 'gallery';
 
-const SUB_TABS: { id: CameraSubTab; label: string }[] = [
-  { id: 'live',        label: 'Live & Capture' },
-  { id: 'acquisition', label: 'Acquisition' },
-  { id: 'params',      label: 'Parameters' },
-  { id: 'processing',  label: 'Image Processing' },
-  { id: 'gallery',     label: 'Gallery' },
+const PANEL_SECTIONS: { id: PanelSectionId; label: string; icon: string }[] = [
+  { id: 'acquisition', label: 'Acquisition',      icon: '📷' },
+  { id: 'params',      label: 'Parameters',       icon: '🎛' },
+  { id: 'processing',  label: 'Image Processing', icon: '🖼' },
+  { id: 'gallery',     label: 'Gallery',          icon: '🗂' },
 ];
 
-function SubTabBar({ active, onChange }: { active: CameraSubTab; onChange: (t: CameraSubTab) => void }) {
+function CollapsibleSection({ label, icon, open, onToggle, children }: {
+  label: string; icon: string; open: boolean; onToggle: () => void; children: React.ReactNode;
+}) {
   return (
-    <div style={{ display: 'flex', borderBottom: `1px solid ${BORDER}`, marginBottom: 20 }}>
-      {SUB_TABS.map((t) => (
-        <button key={t.id} onClick={() => onChange(t.id)} style={{
-          padding: '10px 18px', background: 'none', border: 'none',
-          borderBottom: active === t.id ? '2px solid #3b82f6' : '2px solid transparent',
-          color: active === t.id ? TEXT_PRIMARY : TEXT_MUTED,
-          cursor: 'pointer', fontSize: 13, fontWeight: active === t.id ? 600 : 400,
-        }}>{t.label}</button>
-      ))}
+    <div style={{ borderBottom: `1px solid ${BORDER}` }}>
+      <button onClick={onToggle} style={{
+        display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+        padding: '10px 14px', background: open ? '#16213a' : 'transparent',
+        border: 'none', cursor: 'pointer', color: TEXT_PRIMARY, fontSize: 13,
+        fontWeight: 600, textAlign: 'left' as const,
+      }}>
+        <span style={{
+          display: 'inline-block', transition: 'transform 0.2s ease',
+          transform: open ? 'rotate(90deg)' : 'none', color: '#3b82f6', fontSize: 11,
+        }}>▶</span>
+        <span style={{ fontSize: 13 }}>{icon}</span>
+        {label}
+      </button>
+      {open && (
+        <div style={{ padding: '10px 12px 14px', animation: 'cam-section-in 0.18s ease' }}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }
@@ -319,6 +330,78 @@ function Acquisition({ status, onApply }: { status: CameraStatus | null; onApply
 }
 
 // ---------------------------------------------------------------------------
+// ROI — sensor crop (subdev selection API; not part of /controls)
+// ---------------------------------------------------------------------------
+
+function RoiCard({ onApply }: { onApply: () => void }) {
+  const [info, setInfo] = useState<CameraRoiInfo | null>(null);
+  const [left, setLeft] = useState(0);
+  const [top, setTop] = useState(0);
+  const [width, setWidth] = useState(0);
+  const [height, setHeight] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  async function load() {
+    try {
+      const r = await cameraApi.roi();
+      setInfo(r);
+      setLeft(r.crop.left); setTop(r.crop.top);
+      setWidth(r.crop.width); setHeight(r.crop.height);
+    } catch (e) { setMsg(String(e)); }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function apply(rect: { left: number; top: number; width: number; height: number }) {
+    setBusy(true);
+    setMsg('적용 중… (스트림 재시작)');
+    try {
+      const r = await cameraApi.setRoi(rect);
+      setInfo(r);
+      setLeft(r.crop.left); setTop(r.crop.top);
+      setWidth(r.crop.width); setHeight(r.crop.height);
+      setMsg(`적용됨: (${r.crop.left},${r.crop.top}) ${r.crop.width}×${r.crop.height}`);
+      onApply();
+    } catch (e) { setMsg(`실패: ${String(e)}`); }
+    finally { setBusy(false); }
+  }
+
+  const numStyle = { width: 74, background: '#0f172a', color: TEXT_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 4, padding: '4px 6px', fontSize: 12 };
+  const b = info?.bounds;
+  return (
+    <div style={{ background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 14, marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+        <h3 style={{ margin: 0, fontSize: 14, color: TEXT_PRIMARY }}>ROI / 센서 영역</h3>
+        {b && <span style={{ fontSize: 11, color: TEXT_MUTED }}>센서 최대 {b.width}×{b.height}</span>}
+      </div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'end', marginBottom: 8 }}>
+        {[['Offset X', left, setLeft], ['Offset Y', top, setTop], ['Width', width, setWidth], ['Height', height, setHeight]].map(([lab, val, set]) => (
+          <label key={String(lab)} style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11, color: TEXT_MUTED }}>
+            {String(lab)}
+            <input type="number" style={numStyle} value={Number(val)} min={0}
+              onChange={(e) => (set as (n: number) => void)(Number(e.target.value))} />
+          </label>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button disabled={busy} onClick={() => apply({ left, top, width, height })}
+          style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '5px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: busy ? 0.6 : 1 }}>
+          Apply
+        </button>
+        <button disabled={busy || !info} onClick={() => info && apply({ ...info.default })}
+          style={{ background: '#1e293b', color: TEXT_SECONDARY, border: `1px solid ${BORDER}`, borderRadius: 4, padding: '5px 12px', cursor: 'pointer', fontSize: 12 }}>
+          Full Frame
+        </button>
+        <span style={{ fontSize: 11, color: msg.startsWith('실패') ? '#ef4444' : TEXT_MUTED }}>{msg}</span>
+      </div>
+      <div style={{ fontSize: 11, color: TEXT_MUTED, marginTop: 6 }}>
+        ROI를 줄이면 프레임레이트 상승 여지가 생기고 대역폭이 줄어듭니다. 드라이버가 정렬 단위로 값을 보정할 수 있습니다 (적용값 표시).
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Parameters — full driver control surface, rendered dynamically
 // ---------------------------------------------------------------------------
 
@@ -591,7 +674,6 @@ function Gallery() {
 // ---------------------------------------------------------------------------
 
 export function CameraPage() {
-  const [subTab, setSubTab] = useState<CameraSubTab>('live');
   const [status, setStatus] = useState<CameraStatus | null>(null);
 
   useEffect(() => {
@@ -603,40 +685,127 @@ export function CameraPage() {
 
   const refreshStatus = () => cameraApi.status().then(setStatus).catch(() => null);
 
+  // -- side panel state (persisted) ---------------------------------------
+  const [panelOpen, setPanelOpen] = usePersistentState('camera.panel.open', true);
+  const [panelW, setPanelW] = usePersistentState('camera.panel.w', 430);
+  const [sections, setSections] = usePersistentState<Record<string, boolean>>(
+    'camera.panel.sections', { acquisition: true, params: false, processing: false, gallery: false });
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+
+  const toggleSection = (id: PanelSectionId) =>
+    setSections((s) => ({ ...s, [id]: !s[id] }));
+  const openFromRail = (id: PanelSectionId) => {
+    setPanelOpen(true);
+    setSections((s) => ({ ...s, [id]: true }));
+  };
+
+  function onDividerDown(e: React.PointerEvent) {
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    dragRef.current = { startX: e.clientX, startW: panelW };
+    setDragging(true);
+  }
+  function onDividerMove(e: React.PointerEvent) {
+    if (!dragRef.current) return;
+    const w = dragRef.current.startW + (dragRef.current.startX - e.clientX);
+    setPanelW(Math.max(330, Math.min(700, w)));
+  }
+  function onDividerUp() { dragRef.current = null; setDragging(false); }
+
+  const sectionBody = (id: PanelSectionId) => {
+    switch (id) {
+      case 'acquisition': return (<>
+        <RoiCard onApply={refreshStatus} />
+        <Acquisition status={status} onApply={refreshStatus} />
+      </>);
+      case 'params':      return <ParametersTab />;
+      case 'processing':  return <ImageProcessing />;
+      case 'gallery':     return <Gallery />;
+    }
+  };
+
   return (
-    <div style={{ padding: 'clamp(12px, 3vw, 20px)', maxWidth: 1100, margin: '0 auto' }}>
-      <h2 style={{ margin: '0 0 4px', color: TEXT_PRIMARY, fontSize: 18 }}>Camera</h2>
-      <div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 14 }}>
-        {status?.device_id ?? 'Allied Vision Alvium'}
+    <div style={{ padding: 'clamp(12px, 2vw, 20px)', maxWidth: 1600, margin: '0 auto' }}>
+      <style>{`@keyframes cam-section-in { from { opacity: 0; transform: translateY(-4px); } }`}</style>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0, color: TEXT_PRIMARY, fontSize: 18 }}>Camera</h2>
+        <span style={{ fontSize: 13, color: TEXT_MUTED }}>{status?.device_id ?? 'Allied Vision Alvium'}</span>
+        <div style={{ marginLeft: 'auto' }}>
+          <ConnectionControl
+            label="Camera"
+            connected={status?.connected ?? false}
+            connectedLabel={status?.device ? `ON (${status.device.model})` : 'ON'}
+            disconnectedLabel="OFF"
+            onConnect={async () => { await cameraApi.connect(); await refreshStatus(); }}
+            onDisconnect={async () => { await cameraApi.disconnect(); await refreshStatus(); }}
+            disconnectConfirm={{
+              title: 'Disconnect camera?',
+              description:
+                'Live streaming and capture will stop until you reconnect.',
+            }}
+          />
+        </div>
       </div>
 
-      <div style={{
-        background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 6,
-        padding: 14, marginBottom: 18,
-      }}>
-        <ConnectionControl
-          label="Camera"
-          connected={status?.connected ?? false}
-          connectedLabel={status?.device ? `ON (${status.device.model})` : 'ON'}
-          disconnectedLabel="OFF"
-          onConnect={async () => { await cameraApi.connect(); await refreshStatus(); }}
-          onDisconnect={async () => { await cameraApi.disconnect(); await refreshStatus(); }}
-          disconnectConfirm={{
-            title: 'Disconnect camera?',
-            description:
-              'The Vimba X SDK will shut down cleanly (frame release → cam.__exit__ → VmbSystem.__exit__). ' +
-              'Live streaming and capture will stop until you reconnect.',
-          }}
-        />
+      <div style={{ display: 'flex', alignItems: 'stretch', flexWrap: 'wrap', gap: 0 }}>
+        {/* Live view — always visible while tuning */}
+        <div style={{ flex: '1 1 480px', minWidth: 340 }}>
+          <LiveCapture status={status} onApply={refreshStatus} />
+        </div>
+
+        {/* Resize divider */}
+        {panelOpen && (
+          <div
+            onPointerDown={onDividerDown} onPointerMove={onDividerMove}
+            onPointerUp={onDividerUp} onPointerCancel={onDividerUp}
+            style={{ flex: '0 0 8px', cursor: 'col-resize', display: 'flex',
+                     alignItems: 'center', justifyContent: 'center', touchAction: 'none' }}>
+            <div style={{ width: 3, height: 48, borderRadius: 2,
+                          background: dragging ? '#3b82f6' : BORDER }} />
+          </div>
+        )}
+
+        {/* Sliding side panel / collapsed rail */}
+        <div style={{
+          flex: `0 0 ${panelOpen ? panelW : 36}px`, width: panelOpen ? panelW : 36,
+          transition: dragging ? 'none' : 'flex-basis 0.25s ease, width 0.25s ease',
+          minHeight: 420,
+        }}>
+          {panelOpen ? (
+            <div style={{ background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8,
+                          height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', padding: '8px 12px',
+                            borderBottom: `1px solid ${BORDER}`, background: '#0f172a' }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: TEXT_SECONDARY }}>설정 패널</span>
+                <button onClick={() => setPanelOpen(false)} title="패널 접기"
+                  style={{ marginLeft: 'auto', background: 'none', border: 'none', color: TEXT_MUTED,
+                           cursor: 'pointer', fontSize: 14, padding: 2 }}>▶</button>
+              </div>
+              <div style={{ overflowY: 'auto', flex: 1 }}>
+                {PANEL_SECTIONS.map((s) => (
+                  <CollapsibleSection key={s.id} label={s.label} icon={s.icon}
+                    open={!!sections[s.id]} onToggle={() => toggleSection(s.id)}>
+                    {sections[s.id] && sectionBody(s.id)}
+                  </CollapsibleSection>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div style={{ background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8,
+                          height: '100%', display: 'flex', flexDirection: 'column',
+                          alignItems: 'center', paddingTop: 6, gap: 10 }}>
+              <button onClick={() => setPanelOpen(true)} title="패널 열기"
+                style={{ background: 'none', border: 'none', color: TEXT_MUTED, cursor: 'pointer', fontSize: 14 }}>◀</button>
+              {PANEL_SECTIONS.map((s) => (
+                <button key={s.id} onClick={() => openFromRail(s.id)} title={s.label}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: 2 }}>
+                  {s.icon}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
-
-      <SubTabBar active={subTab} onChange={setSubTab} />
-
-      {subTab === 'live'        && <LiveCapture status={status} onApply={refreshStatus} />}
-      {subTab === 'acquisition' && <Acquisition status={status} onApply={refreshStatus} />}
-      {subTab === 'params'      && <ParametersTab />}
-      {subTab === 'processing'  && <ImageProcessing />}
-      {subTab === 'gallery'     && <Gallery />}
     </div>
   );
 }

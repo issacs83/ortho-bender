@@ -258,12 +258,28 @@ export const cameraApi = {
   controls: (): Promise<{ controls: CameraControl[] }> =>
     request("/api/camera/controls"),
 
+  roi: (): Promise<CameraRoiInfo> =>
+    request("/api/camera/roi"),
+
+  setRoi: (r: { left: number; top: number; width: number; height: number }): Promise<CameraRoiInfo> =>
+    request("/api/camera/roi", { method: "POST", body: JSON.stringify(r) }),
+
   setControl: (id: number, value: number): Promise<{ id: number; value: number | null }> =>
     request("/api/camera/controls", {
       method: "POST",
       body: JSON.stringify({ id, value }),
     }),
 };
+
+export interface CameraRect { left: number; top: number; width: number; height: number }
+
+/** Sensor crop info from GET /api/camera/roi. */
+export interface CameraRoiInfo {
+  crop: CameraRect;
+  bounds: CameraRect;
+  default: CameraRect;
+  capture: { width: number; height: number };
+}
 
 /** One entry of the camera driver's dynamic control surface. */
 export interface CameraControl {

@@ -507,6 +507,28 @@ class CameraService:
             pass
         return result
 
+    async def get_roi(self) -> dict:
+        """Current sensor crop + bounds (isi_csi2 backend)."""
+        if self._backend != CameraBackend.ISI or self._cap is None:
+            raise RuntimeError(
+                f"ROI not supported on backend {self._backend.value!r}")
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._cap.get_roi)
+
+    async def set_roi(self, left: int, top: int, width: int, height: int) -> dict:
+        """Apply a sensor crop; the capture pipeline restarts at the new
+        size (in-flight captures are serialised out via the frame lock)."""
+        if self._backend != CameraBackend.ISI or self._cap is None:
+            raise RuntimeError(
+                f"ROI not supported on backend {self._backend.value!r}")
+        loop = asyncio.get_running_loop()
+        async with self._frame_lock:
+            result = await loop.run_in_executor(
+                None, self._cap.set_roi, left, top, width, height)
+        self._width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self._height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        return result
+
     # ------------------------------------------------------------------
     # MJPEG streaming generator
     # ------------------------------------------------------------------

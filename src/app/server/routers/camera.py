@@ -216,6 +216,46 @@ async def set_camera_control(
 
 
 # ---------------------------------------------------------------------------
+# GET/POST /api/camera/roi — sensor crop (region of interest)
+# ---------------------------------------------------------------------------
+
+@router.get("/roi", response_model=ApiResponse)
+async def get_camera_roi(
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Current sensor crop rectangle plus its bounds and default.
+
+    ROI lives on the V4L2 subdev *selection* API (not a control), which
+    is why it does not appear in GET /controls.
+    """
+    try:
+        return ok(await svc.get_roi())
+    except (RuntimeError, OSError) as exc:
+        return err(str(exc), "CAMERA_ROI_ERROR")
+
+
+class CameraRoiRequest(BaseModel):
+    left: int = Field(0, ge=0, description="X offset on the sensor (px)")
+    top: int = Field(0, ge=0, description="Y offset on the sensor (px)")
+    width: int = Field(..., gt=0, description="ROI width (px)")
+    height: int = Field(..., gt=0, description="ROI height (px)")
+
+
+@router.post("/roi", response_model=ApiResponse)
+async def set_camera_roi(
+    body: CameraRoiRequest,
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Apply a sensor crop. The capture/stream restarts at the new size;
+    the driver may clamp or align the rectangle — the response carries
+    what was actually applied."""
+    try:
+        return ok(await svc.set_roi(body.left, body.top, body.width, body.height))
+    except (RuntimeError, OSError) as exc:
+        return err(str(exc), "CAMERA_ROI_ERROR")
+
+
+# ---------------------------------------------------------------------------
 # POST /api/camera/settings
 # ---------------------------------------------------------------------------
 

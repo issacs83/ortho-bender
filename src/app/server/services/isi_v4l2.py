@@ -58,6 +58,13 @@ VIDIOC_G_EXT_CTRLS = 0xC0205647
 VIDIOC_S_EXT_CTRLS = 0xC0205648
 VIDIOC_QUERY_EXT_CTRL = 0xC0E85667
 VIDIOC_QUERYMENU = 0xC02C5625
+VIDIOC_SUBDEV_G_SELECTION = 0xC040563D
+VIDIOC_SUBDEV_S_SELECTION = 0xC040563E
+
+SEL_TGT_CROP = 0x0000
+SEL_TGT_CROP_DEFAULT = 0x0001
+SEL_TGT_CROP_BOUNDS = 0x0002
+SUBDEV_FMT_ACTIVE = 1
 
 CTRL_FLAG_NEXT = 0x80000000 | 0x40000000   # NEXT_CTRL | NEXT_COMPOUND
 CTRL_TYPE_NAMES = {1: "int", 2: "bool", 3: "menu", 4: "button", 5: "int64",
@@ -158,6 +165,15 @@ class _ExtControlPtr(ctypes.Structure):
 class _QueryMenu(ctypes.Structure):
     _fields_ = [("id", _u32), ("index", _u32), ("name", ctypes.c_char * 32),
                 ("reserved", _u32)]
+
+
+class _Rect(ctypes.Structure):
+    _fields_ = [("left", _s32), ("top", _s32), ("width", _u32), ("height", _u32)]
+
+
+class _SubdevSelection(ctypes.Structure):
+    _fields_ = [("which", _u32), ("pad", _u32), ("target", _u32),
+                ("flags", _u32), ("r", _Rect), ("reserved", _u32 * 8)]
 
 
 class _ExtControls(ctypes.Structure):
@@ -310,6 +326,30 @@ class AvtSubdevControls:
             return None
         return self._get(cid)
 
+    # -- ROI (sensor crop) via the subdev selection API -----------------
+    def get_selection(self, target: int = SEL_TGT_CROP) -> dict:
+        s = _SubdevSelection()
+        s.which = SUBDEV_FMT_ACTIVE
+        s.pad = 0
+        s.target = target
+        fcntl.ioctl(self._fd, VIDIOC_SUBDEV_G_SELECTION, s)
+        return {"left": s.r.left, "top": s.r.top,
+                "width": s.r.width, "height": s.r.height}
+
+    def set_selection(self, left: int, top: int, width: int, height: int) -> dict:
+        s = _SubdevSelection()
+        s.which = SUBDEV_FMT_ACTIVE
+        s.pad = 0
+        s.target = SEL_TGT_CROP
+        s.r.left = int(left)
+        s.r.top = int(top)
+        s.r.width = int(width)
+        s.r.height = int(height)
+        fcntl.ioctl(self._fd, VIDIOC_SUBDEV_S_SELECTION, s)
+        # Driver may clamp/align — return what it actually applied.
+        return {"left": s.r.left, "top": s.r.top,
+                "width": s.r.width, "height": s.r.height}
+
     # -- public, in CameraService units ---------------------------------
     def get_exposure_us(self) -> float:
         return self._get(CID_EXPOSURE) / 1000.0
@@ -451,6 +491,62 @@ class IsiV4l2Capture:
                     ctypes.c_int(BUF_TYPE_CAPTURE_MPLANE))
         self._streaming = True
         return w, h
+
+    def _teardown_stream(self) -> None:
+        """Stop streaming and release mmap buffers (fd stays open)."""
+        if self._streaming:
+            try:
+                fcntl.ioctl(self._fd, VIDIOC_STREAMOFF,
+                            ctypes.c_int(BUF_TYPE_CAPTURE_MPLANE))
+            except OSError:
+                pass
+            self._streaming = False
+        for m in self._maps:
+            try:
+                m.close()
+            except Exception:
+                pass
+        self._maps = []
+        req = _RequestBuffers()
+        req.count = 0
+        req.type = BUF_TYPE_CAPTURE_MPLANE
+        req.memory = MEM_MMAP
+        try:
+            fcntl.ioctl(self._fd, VIDIOC_REQBUFS, req)
+        except OSError:
+            pass
+
+    # -- ROI ------------------------------------------------------------
+    def get_roi(self) -> dict:
+        return {
+            "crop": self.ctrl.get_selection(SEL_TGT_CROP),
+            "bounds": self.ctrl.get_selection(SEL_TGT_CROP_BOUNDS),
+            "default": self.ctrl.get_selection(SEL_TGT_CROP_DEFAULT),
+            "capture": {"width": self._width, "height": self._height},
+        }
+
+    def set_roi(self, left: int, top: int, width: int, height: int) -> dict:
+        """Apply a sensor crop and rebuild the capture pipeline at the new
+        size. Returns the rect the driver actually applied (it may clamp
+        or align the request)."""
+        self._teardown_stream()
+        try:
+            applied = self.ctrl.set_selection(left, top, width, height)
+            self._width, self._height = self._setup(applied["width"],
+                                                    applied["height"])
+        except Exception:
+            # Best effort to come back up at the previous size.
+            try:
+                if not self._streaming:
+                    self._width, self._height = self._setup(self._width,
+                                                            self._height)
+            except Exception:
+                log.exception("IsiV4l2Capture: stream recovery failed")
+            raise
+        log.info("IsiV4l2Capture: ROI -> (%d,%d) %dx%d",
+                 applied["left"], applied["top"],
+                 applied["width"], applied["height"])
+        return self.get_roi()
 
     def _dqbuf(self) -> _BufferMp | None:
         planes = (_Plane * 1)()
