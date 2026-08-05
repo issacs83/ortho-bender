@@ -7,10 +7,11 @@ import { systemApi, type SystemStatus } from '../api/client';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { SkeletonLoader } from '../components/ui/SkeletonLoader';
-import { Button } from '../components/ui/Button';
-import { Card, CardTitle } from '../components/ui/Card';
-import { EmptyState } from '../components/ui/EmptyState';
-import { cn } from '../lib/cn';
+import {
+  BG_PANEL, BG_PRIMARY, BORDER,
+  TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED,
+  COLOR_SUCCESS, COLOR_WARNING, COLOR_ERROR,
+} from '../constants';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -89,12 +90,16 @@ function signalBars(signal: number): number {
 
 function SignalIcon({ bars }: { bars: number }) {
   return (
-    <div className="flex items-end gap-0.5 h-4">
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 16 }}>
       {[1, 2, 3, 4].map((b) => (
         <div
           key={b}
-          className={cn('w-1 rounded-[1px] transition-colors', b <= bars ? 'bg-success' : 'bg-border')}
-          style={{ height: b * 4 }}
+          style={{
+            width: 4,
+            height: b * 4,
+            borderRadius: 1,
+            background: b <= bars ? COLOR_SUCCESS : BORDER,
+          }}
         />
       ))}
     </div>
@@ -105,12 +110,29 @@ function ProgressBar({ value, max, dangerThreshold }: { value: number; max: numb
   const pct = Math.min(100, (value / max) * 100);
   const isDanger = dangerThreshold !== undefined && value >= dangerThreshold;
   return (
-    <div className="h-1.5 bg-canvas rounded-full overflow-hidden flex-1">
-      <div
-        className={cn('h-full rounded-full transition-[width]', isDanger ? 'bg-danger' : 'bg-accent')}
-        style={{ width: `${pct}%` }}
-      />
+    <div style={{ height: 6, background: '#0f172a', borderRadius: 3, overflow: 'hidden', flex: 1 }}>
+      <div style={{
+        height: '100%',
+        width: `${pct}%`,
+        background: isDanger ? '#ef4444' : '#3b82f6',
+        borderRadius: 3,
+        transition: 'width 0.3s',
+      }} />
     </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <span style={{
+      display: 'inline-block',
+      width: 14,
+      height: 14,
+      border: '2px solid #334155',
+      borderTopColor: '#3b82f6',
+      borderRadius: '50%',
+      animation: 'spin 0.7s linear infinite',
+    }} />
   );
 }
 
@@ -136,14 +158,24 @@ function PasswordModal({
   useEffect(() => { inputRef.current?.focus(); }, []);
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000]">
-      <div className="bg-surface-1 border border-border rounded-lg p-7 w-[360px] shadow-2xl">
-        <h3 className="text-[15px] font-semibold text-text-primary mb-1.5">Connect to network</h3>
-        <div className="text-[13px] text-text-tertiary mb-5">"{ssid}"</div>
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+    }}>
+      <div style={{
+        background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 10,
+        padding: 28, width: 360, boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+      }}>
+        <h3 style={{ margin: '0 0 6px', fontSize: 15, color: TEXT_PRIMARY }}>
+          Connect to network
+        </h3>
+        <div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 20 }}>
+          "{ssid}"
+        </div>
 
-        <div className="mb-4">
-          <div className="text-[12px] text-text-tertiary mb-1.5">Password</div>
-          <div className="flex gap-2">
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: TEXT_MUTED, marginBottom: 6 }}>Password</div>
+          <div style={{ display: 'flex', gap: 8 }}>
             <input
               ref={inputRef}
               type={show ? 'text' : 'password'}
@@ -151,19 +183,58 @@ function PasswordModal({
               onChange={(e) => setPw(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && !connecting && onConnect(pw || null)}
               placeholder="Enter password"
-              className="flex-1 bg-surface-2 border border-border rounded text-text-primary placeholder:text-text-disabled px-2.5 py-1.5 text-[13px] outline-none focus:border-accent"
+              style={{
+                flex: 1,
+                background: BG_PRIMARY,
+                border: `1px solid ${BORDER}`,
+                borderRadius: 4,
+                color: TEXT_PRIMARY,
+                padding: '7px 10px',
+                fontSize: 13,
+              }}
             />
-            <Button variant="secondary" size="sm" onClick={() => setShow(!show)}>
+            <button
+              onClick={() => setShow(!show)}
+              style={{
+                background: BG_PRIMARY,
+                border: `1px solid ${BORDER}`,
+                borderRadius: 4,
+                color: TEXT_SECONDARY,
+                padding: '0 10px',
+                cursor: 'pointer',
+                fontSize: 12,
+              }}
+            >
               {show ? 'Hide' : 'Show'}
-            </Button>
+            </button>
           </div>
         </div>
 
-        <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onCancel} disabled={connecting}>Cancel</Button>
-          <Button variant="primary" onClick={() => onConnect(pw || null)} loading={connecting}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button
+            onClick={onCancel}
+            disabled={connecting}
+            style={{
+              padding: '8px 16px', border: `1px solid ${BORDER}`, borderRadius: 6,
+              background: 'transparent', color: TEXT_SECONDARY, cursor: 'pointer', fontSize: 13,
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConnect(pw || null)}
+            disabled={connecting}
+            style={{
+              padding: '8px 16px', border: 'none', borderRadius: 6,
+              background: connecting ? '#1e3a5f' : '#1d4ed8',
+              color: '#fff', cursor: connecting ? 'default' : 'pointer',
+              fontSize: 13, fontWeight: 600,
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}
+          >
+            {connecting && <Spinner />}
             {connecting ? 'Connecting...' : 'Connect'}
-          </Button>
+          </button>
         </div>
       </div>
     </div>
@@ -238,20 +309,49 @@ function WifiTab() {
     }
   }
 
+  const cardStyle = {
+    background: BG_PANEL,
+    border: `1px solid ${BORDER}`,
+    borderRadius: 8,
+    padding: 20,
+  };
+
+  const btnBase = {
+    padding: '7px 14px',
+    border: 'none',
+    borderRadius: 6,
+    cursor: 'pointer',
+    fontSize: 13,
+    fontWeight: 600 as const,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+  };
+
   return (
-    <div className="flex flex-col gap-4">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* Status card */}
-      <Card>
-        <div className="flex justify-between items-center mb-3.5">
-          <CardTitle>WiFi Status</CardTitle>
-          <Button variant="primary" size="sm" loading={scanning} onClick={handleScan}>
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <h3 style={{ margin: 0, fontSize: 14, color: TEXT_PRIMARY }}>WiFi Status</h3>
+          <button
+            onClick={handleScan}
+            disabled={scanning}
+            style={{
+              ...btnBase,
+              background: scanning ? '#1e293b' : '#1d4ed8',
+              color: scanning ? TEXT_MUTED : '#fff',
+              border: `1px solid ${scanning ? BORDER : 'transparent'}`,
+            }}
+          >
+            {scanning && <Spinner />}
             {scanning ? 'Scanning...' : 'Scan'}
-          </Button>
+          </button>
         </div>
 
         {/* Connection state */}
-        <div className="flex items-center gap-2.5 mb-2.5">
-          <span className="text-[13px] text-text-tertiary">Status:</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <span style={{ fontSize: 13, color: TEXT_MUTED }}>Status:</span>
           {status === null ? (
             <SkeletonLoader lines={1} />
           ) : (
@@ -263,58 +363,73 @@ function WifiTab() {
         </div>
 
         {status?.connected && (
-          <div className="flex flex-col gap-1.5 mb-2.5">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
             {status.ssid && (
-              <div className="flex gap-2">
-                <span className="text-[13px] text-text-tertiary w-20">SSID</span>
-                <span className="text-[13px] text-text-primary font-semibold">{status.ssid}</span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <span style={{ fontSize: 13, color: TEXT_MUTED, width: 80 }}>SSID</span>
+                <span style={{ fontSize: 13, color: TEXT_PRIMARY, fontWeight: 600 }}>{status.ssid}</span>
               </div>
             )}
             {status.ip_address && (
-              <div className="flex gap-2">
-                <span className="text-[13px] text-text-tertiary w-20">IP Address</span>
-                <span className="text-[13px] text-text-primary numeric">{status.ip_address}</span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <span style={{ fontSize: 13, color: TEXT_MUTED, width: 80 }}>IP Address</span>
+                <span style={{ fontSize: 13, color: TEXT_PRIMARY }}>{status.ip_address}</span>
               </div>
             )}
             {status.freq && (
-              <div className="flex gap-2">
-                <span className="text-[13px] text-text-tertiary w-20">Band</span>
-                <span className="text-[13px] text-text-primary">{status.freq >= 5000 ? '5 GHz' : '2.4 GHz'}</span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <span style={{ fontSize: 13, color: TEXT_MUTED, width: 80 }}>Band</span>
+                <span style={{ fontSize: 13, color: TEXT_PRIMARY }}>{status.freq >= 5000 ? '5 GHz' : '2.4 GHz'}</span>
               </div>
             )}
           </div>
         )}
 
         {status?.connected && (
-          <Button
-            variant="danger"
-            size="sm"
-            loading={disconnecting}
+          <button
             onClick={handleDisconnect}
+            disabled={disconnecting}
+            style={{
+              ...btnBase,
+              background: '#7f1d1d',
+              color: '#fca5a5',
+              border: `1px solid #991b1b`,
+            }}
           >
+            {disconnecting && <Spinner />}
             {disconnecting ? 'Disconnecting...' : 'Disconnect'}
-          </Button>
+          </button>
         )}
 
         {connectError && (
-          <div className="mt-2.5 text-[12px] text-danger">{connectError}</div>
+          <div style={{ marginTop: 10, fontSize: 12, color: COLOR_ERROR }}>{connectError}</div>
         )}
         {scanError && (
-          <div className="mt-2.5 text-[12px] text-danger">{scanError}</div>
+          <div style={{ marginTop: 10, fontSize: 12, color: COLOR_ERROR }}>{scanError}</div>
         )}
-      </Card>
+      </div>
 
       {/* Networks list */}
       {networks.length > 0 && (
-        <Card>
-          <CardTitle className="mb-3.5">Available Networks ({networks.length})</CardTitle>
+        <div style={cardStyle}>
+          <h3 style={{ margin: '0 0 14px', fontSize: 14, color: TEXT_PRIMARY }}>
+            Available Networks ({networks.length})
+          </h3>
 
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
                   {['Signal', 'SSID', 'Security', 'Band', ''].map((h) => (
-                    <th key={h} className="text-left text-[11px] text-text-tertiary pb-2 border-b border-border pr-4 font-medium">{h}</th>
+                    <th key={h} style={{
+                      textAlign: 'left',
+                      fontSize: 11,
+                      color: TEXT_MUTED,
+                      paddingBottom: 8,
+                      borderBottom: `1px solid ${BORDER}`,
+                      paddingRight: 16,
+                      fontWeight: 500,
+                    }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -323,41 +438,55 @@ function WifiTab() {
                   const bars = signalBars(net.signal);
                   const isConnected = status?.connected && status.ssid === net.ssid;
                   return (
-                    <tr key={net.bssid} className="border-b border-border">
-                      <td className="py-2.5 pr-4 align-middle">
+                    <tr key={net.bssid} style={{ borderBottom: `1px solid ${BORDER}` }}>
+                      <td style={{ padding: '10px 16px 10px 0', verticalAlign: 'middle' }}>
                         <SignalIcon bars={bars} />
                       </td>
-                      <td className="py-2.5 pr-4 align-middle">
-                        <span className={cn('text-[13px]', isConnected ? 'text-success' : 'text-text-primary')}>
+                      <td style={{ padding: '10px 16px 10px 0', verticalAlign: 'middle' }}>
+                        <span style={{ fontSize: 13, color: isConnected ? COLOR_SUCCESS : TEXT_PRIMARY }}>
                           {net.ssid}
                           {isConnected && (
-                            <span className="ml-2 text-[11px] text-success">(connected)</span>
+                            <span style={{ marginLeft: 8, fontSize: 11, color: COLOR_SUCCESS }}>
+                              (connected)
+                            </span>
                           )}
                         </span>
                       </td>
-                      <td className="py-2.5 pr-4 align-middle">
-                        <span className={cn(
-                          'text-[11px] px-2 py-0.5 rounded',
-                          net.security === 'OPEN'
-                            ? 'bg-success-soft text-success border border-success/30'
-                            : 'bg-accent-soft text-accent border border-accent/30'
-                        )}>
+                      <td style={{ padding: '10px 16px 10px 0', verticalAlign: 'middle' }}>
+                        <span style={{
+                          fontSize: 11,
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                          background: net.security === 'OPEN' ? '#065f4620' : '#1e3a5f',
+                          color: net.security === 'OPEN' ? COLOR_SUCCESS : '#93c5fd',
+                          border: `1px solid ${net.security === 'OPEN' ? '#065f46' : '#1e40af'}`,
+                        }}>
                           {net.security}
                         </span>
                       </td>
-                      <td className="py-2.5 pr-4 align-middle">
-                        <span className="text-[12px] text-text-tertiary">{net.band}</span>
+                      <td style={{ padding: '10px 16px 10px 0', verticalAlign: 'middle' }}>
+                        <span style={{ fontSize: 12, color: TEXT_MUTED }}>{net.band}</span>
                       </td>
-                      <td className="py-2.5 align-middle text-right">
+                      <td style={{ padding: '10px 0', verticalAlign: 'middle', textAlign: 'right' }}>
                         {!isConnected && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => { setConnectError(null); setSelectedSsid(net.ssid); }}
-                            className="text-accent border border-accent/40 hover:border-accent"
+                          <button
+                            onClick={() => {
+                              setConnectError(null);
+                              setSelectedSsid(net.ssid);
+                            }}
+                            style={{
+                              padding: '5px 12px',
+                              border: `1px solid #1d4ed8`,
+                              borderRadius: 5,
+                              background: 'transparent',
+                              color: '#60a5fa',
+                              cursor: 'pointer',
+                              fontSize: 12,
+                              fontWeight: 600,
+                            }}
                           >
                             Connect
-                          </Button>
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -366,7 +495,7 @@ function WifiTab() {
               </tbody>
             </table>
           </div>
-        </Card>
+        </div>
       )}
 
       {/* Password modal */}
@@ -388,18 +517,31 @@ function WifiTab() {
 
 function BluetoothTab() {
   return (
-    <Card>
-      <EmptyState
-        icon={
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5" />
-          </svg>
-        }
-        message="Bluetooth Not Available"
-        hint={`Marvell 88W8997 Bluetooth requires a kernel rebuild. CONFIG_BT_HCIUART_MRVL=m must be enabled.`}
-        className="py-12"
-      />
-    </Card>
+    <div style={{
+      background: BG_PANEL,
+      border: `1px solid ${BORDER}`,
+      borderRadius: 8,
+      padding: 48,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 14,
+      minHeight: 200,
+    }}>
+      {/* BT icon */}
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={TEXT_MUTED} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5" />
+      </svg>
+      <div style={{ fontSize: 15, color: TEXT_SECONDARY, fontWeight: 600 }}>
+        Bluetooth Not Available
+      </div>
+      <div style={{ fontSize: 12, color: TEXT_MUTED, textAlign: 'center', maxWidth: 340, lineHeight: 1.7 }}>
+        Marvell 88W8997 Bluetooth requires a kernel rebuild.
+        <br />
+        <code style={{ fontSize: 11, color: '#93c5fd' }}>CONFIG_BT_HCIUART_MRVL=m</code> must be enabled.
+      </div>
+    </div>
   );
 }
 
@@ -475,115 +617,150 @@ function BoardSystemTab() {
     }, 200);
   }
 
-  const inputCls = 'bg-surface-2 border border-border rounded text-text-primary px-2.5 py-1.5 text-[13px] w-full outline-none focus:border-accent';
-  const labelCls = 'text-[12px] text-text-tertiary mb-0.5 block';
+  const cardStyle = {
+    background: BG_PANEL,
+    border: `1px solid ${BORDER}`,
+    borderRadius: 8,
+    padding: 20,
+  };
+
+  const labelStyle = { fontSize: 12, color: TEXT_MUTED, marginBottom: 2 };
+  const inputStyle = {
+    background: BG_PRIMARY,
+    border: `1px solid ${BORDER}`,
+    borderRadius: 4,
+    color: TEXT_PRIMARY,
+    padding: '6px 10px',
+    fontSize: 13,
+    width: '100%',
+    boxSizing: 'border-box' as const,
+  };
+  const btnBase = {
+    padding: '8px 14px',
+    border: 'none',
+    borderRadius: 6,
+    cursor: 'pointer',
+    fontSize: 13,
+    fontWeight: 600,
+  };
 
   return (
-    <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
 
       {/* Board Connection */}
-      <Card>
-        <CardTitle className="mb-4">Board Connection</CardTitle>
+      <div style={cardStyle}>
+        <h3 style={{ margin: '0 0 16px', fontSize: 14, color: TEXT_PRIMARY }}>Board Connection</h3>
 
-        <div className="mb-3.5">
-          <div className={labelCls}>Connection Type</div>
-          <div className="flex gap-4 mt-1.5">
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ ...labelStyle }}>Connection Type</div>
+          <div style={{ display: 'flex', gap: 16, marginTop: 6 }}>
             {(['ethernet', 'usb', 'wifi'] as ConnType[]).map((t) => (
-              <label key={t} className="flex items-center gap-1.5 cursor-pointer text-[13px] text-text-secondary">
-                <input type="radio" value={t} checked={connType === t} onChange={() => setConnType(t)} className="accent-accent" />
+              <label key={t} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13, color: TEXT_SECONDARY }}>
+                <input type="radio" value={t} checked={connType === t} onChange={() => setConnType(t)} style={{ accentColor: '#3b82f6' }} />
                 {t === 'ethernet' ? 'Direct Ethernet' : t === 'usb' ? 'USB CDC' : 'WiFi'}
               </label>
             ))}
           </div>
         </div>
 
-        <div className="grid gap-2.5 mb-3" style={{ gridTemplateColumns: '1fr auto' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, marginBottom: 12 }}>
           <div>
-            <label className={labelCls}>Board IP</label>
-            <input className={inputCls} value={boardIp} onChange={(e) => setBoardIp(e.target.value)} />
+            <div style={labelStyle}>Board IP</div>
+            <input style={inputStyle} value={boardIp} onChange={(e) => setBoardIp(e.target.value)} />
           </div>
           <div>
-            <label className={labelCls}>Port</label>
-            <input className={cn(inputCls, 'w-[70px]')} value={port} onChange={(e) => setPort(e.target.value)} />
+            <div style={labelStyle}>Port</div>
+            <input style={{ ...inputStyle, width: 70 }} value={port} onChange={(e) => setPort(e.target.value)} />
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5 mb-3.5">
-          <label className="flex items-center gap-2 cursor-pointer text-[13px] text-text-secondary">
-            <input type="checkbox" checked={autoReconnect} onChange={(e) => setAutoReconnect(e.target.checked)} className="accent-accent" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: TEXT_SECONDARY }}>
+            <input type="checkbox" checked={autoReconnect} onChange={(e) => setAutoReconnect(e.target.checked)} style={{ accentColor: '#3b82f6' }} />
             Auto-reconnect
           </label>
         </div>
 
         {lastConnected && (
-          <div className="text-[11px] text-text-tertiary mb-3">Last connected: {lastConnected}</div>
+          <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 12 }}>Last connected: {lastConnected}</div>
         )}
 
-        <div className="flex items-center gap-2.5 mb-3.5">
-          <span className="text-[13px] text-text-secondary">Status:</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <span style={{ fontSize: 13, color: TEXT_SECONDARY }}>Status:</span>
           <StatusBadge
             variant={connStatus === 'connected' ? 'success' : connStatus === 'connecting' ? 'warning' : 'error'}
             label={connStatus === 'connected' ? 'Connected' : connStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
           />
         </div>
 
-        {error && <div className="text-[12px] text-danger mb-3">{error}</div>}
+        {error && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 12 }}>{error}</div>}
 
-        <div className="flex gap-2">
-          <Button variant="primary" onClick={handleConnect} loading={loading}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={handleConnect} disabled={loading} style={{ ...btnBase, background: '#1d4ed8', color: '#fff', opacity: loading ? 0.6 : 1 }}>
             {loading ? 'Connecting...' : 'Connect'}
-          </Button>
-          <Button variant="secondary" onClick={handleDisconnect}>Disconnect</Button>
-          <Button variant="secondary" onClick={handleConnect}>Reconnect</Button>
+          </button>
+          <button onClick={handleDisconnect} style={{ ...btnBase, background: '#1e293b', color: TEXT_SECONDARY, border: `1px solid ${BORDER}` }}>
+            Disconnect
+          </button>
+          <button onClick={handleConnect} style={{ ...btnBase, background: '#1e293b', color: TEXT_SECONDARY, border: `1px solid ${BORDER}` }}>
+            Reconnect
+          </button>
         </div>
-      </Card>
+      </div>
 
       {/* System Info */}
-      <Card>
-        <CardTitle className="mb-4">System Info</CardTitle>
+      <div style={cardStyle}>
+        <h3 style={{ margin: '0 0 16px', fontSize: 14, color: TEXT_PRIMARY }}>System Info</h3>
         {!sysStatus ? (
           <SkeletonLoader lines={6} />
         ) : (
-          <div className="flex flex-col gap-3">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {[
               ['SDK Version', sysStatus.sdk_version],
               ['FW Version', 'v1.0.0'],
               ['OS Version', 'Yocto Linux 6.1'],
             ].map(([k, v]) => (
-              <div key={k} className="flex justify-between">
-                <span className="text-[13px] text-text-tertiary">{k}</span>
-                <span className="text-[13px] text-text-primary numeric">{v}</span>
+              <div key={k} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 13, color: TEXT_MUTED }}>{k}</span>
+                <span style={{ fontSize: 13, color: TEXT_PRIMARY }}>{v}</span>
               </div>
             ))}
 
             <div>
-              <div className="flex justify-between mb-1">
-                <span className="text-[13px] text-text-tertiary">CPU Temp</span>
-                <span className={cn('text-[13px] numeric', (sysStatus.cpu_temp_c ?? 0) >= 80 ? 'text-danger' : 'text-text-primary')}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontSize: 13, color: TEXT_MUTED }}>CPU Temp</span>
+                <span style={{ fontSize: 13, color: (sysStatus.cpu_temp_c ?? 0) >= 80 ? '#ef4444' : TEXT_PRIMARY }}>
                   {sysStatus.cpu_temp_c?.toFixed(1) ?? 'N/A'} °C
                 </span>
               </div>
-              <ProgressBar value={sysStatus.cpu_temp_c ?? 0} max={100} dangerThreshold={80} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <ProgressBar value={sysStatus.cpu_temp_c ?? 0} max={100} dangerThreshold={80} />
+              </div>
             </div>
 
-            <div className="flex justify-between">
-              <span className="text-[13px] text-text-tertiary">Uptime</span>
-              <span className="text-[13px] text-text-primary numeric">{formatUptime(sysStatus.uptime_s)}</span>
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontSize: 13, color: TEXT_MUTED }}>Uptime</span>
+                <span style={{ fontSize: 13, color: TEXT_PRIMARY }}>{formatUptime(sysStatus.uptime_s)}</span>
+              </div>
             </div>
           </div>
         )}
-      </Card>
+      </div>
 
       {/* Controller Link Status */}
-      <Card>
-        <div className="flex justify-between items-center mb-4">
-          <CardTitle>Controller Link</CardTitle>
-          <Button variant="secondary" size="sm" onClick={() => setShowResetIpcModal(true)}>
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h3 style={{ margin: 0, fontSize: 14, color: TEXT_PRIMARY }}>Controller Link</h3>
+          <button
+            onClick={() => setShowResetIpcModal(true)}
+            style={{ ...btnBase, padding: '4px 10px', background: '#1e293b', color: TEXT_SECONDARY, border: `1px solid ${BORDER}`, fontSize: 12 }}
+          >
             Reset Link
-          </Button>
+          </button>
         </div>
 
-        <div className="flex gap-2.5 mb-3.5 flex-wrap">
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
           <StatusBadge variant={sysStatus?.ipc_connected ? 'success' : 'error'} label={`Controller Link: ${sysStatus?.ipc_connected ? 'OK' : 'FAIL'}`} />
         </div>
 
@@ -593,18 +770,18 @@ function BoardSystemTab() {
           ['Error Rate',  '0.00 %'],
           ['Avg Latency', '—'],
         ].map(([k, v]) => (
-          <div key={k} className="flex justify-between mb-2">
-            <span className="text-[13px] text-text-tertiary">{k}</span>
-            <span className="text-[13px] text-text-primary numeric">{v}</span>
+          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span style={{ fontSize: 13, color: TEXT_MUTED }}>{k}</span>
+            <span style={{ fontSize: 13, color: TEXT_PRIMARY }}>{v}</span>
           </div>
         ))}
 
-        <div className="mt-3 text-[12px] text-text-tertiary">Recent Events</div>
-        <div className="mt-1.5 max-h-[100px] overflow-y-auto bg-canvas rounded p-2">
+        <div style={{ marginTop: 12, fontSize: 12, color: TEXT_MUTED }}>Recent Events</div>
+        <div style={{ marginTop: 6, maxHeight: 100, overflowY: 'auto', background: BG_PRIMARY, borderRadius: 4, padding: 8 }}>
           {ipcEvents.length === 0 ? (
-            <div className="text-[11px] text-text-tertiary">No events</div>
+            <div style={{ fontSize: 11, color: TEXT_MUTED }}>No events</div>
           ) : ipcEvents.map((ev, i) => (
-            <div key={i} className="text-[11px] text-text-tertiary border-b border-border pb-0.5 mb-0.5">{ev}</div>
+            <div key={i} style={{ fontSize: 11, color: TEXT_MUTED, borderBottom: `1px solid ${BORDER}`, paddingBottom: 3, marginBottom: 3 }}>{ev}</div>
           ))}
         </div>
 
@@ -618,20 +795,29 @@ function BoardSystemTab() {
             onCancel={() => setShowResetIpcModal(false)}
           />
         )}
-      </Card>
+      </div>
 
       {/* Firmware Update */}
-      <Card>
-        <CardTitle className="mb-4">Firmware Update</CardTitle>
+      <div style={cardStyle}>
+        <h3 style={{ margin: '0 0 16px', fontSize: 14, color: TEXT_PRIMARY }}>Firmware Update</h3>
 
-        <div className="mb-3.5">
-          <span className="text-[13px] text-text-tertiary">Current FW: </span>
-          <span className="text-[13px] text-text-primary numeric">v1.0.0</span>
+        <div style={{ marginBottom: 14 }}>
+          <span style={{ fontSize: 13, color: TEXT_MUTED }}>Current FW: </span>
+          <span style={{ fontSize: 13, color: TEXT_PRIMARY }}>v1.0.0</span>
         </div>
 
         <div
           onDrop={handleDrop}
           onDragOver={(e) => e.preventDefault()}
+          style={{
+            border: `2px dashed ${fwFile ? '#3b82f6' : BORDER}`,
+            borderRadius: 8,
+            padding: 24,
+            textAlign: 'center',
+            cursor: 'pointer',
+            marginBottom: 14,
+            background: fwFile ? '#1e3a5f20' : 'transparent',
+          }}
           onClick={() => {
             const input = document.createElement('input');
             input.type = 'file';
@@ -642,42 +828,46 @@ function BoardSystemTab() {
             };
             input.click();
           }}
-          className={cn(
-            'border-2 border-dashed rounded-lg p-6 text-center cursor-pointer mb-3.5 transition-colors',
-            fwFile ? 'border-accent bg-accent-soft' : 'border-border hover:border-border-strong',
-          )}
         >
           {fwFile ? (
             <div>
-              <div className="text-[13px] text-accent font-semibold">{fwFile.name}</div>
-              <div className="text-[11px] text-text-tertiary mt-1 numeric">
+              <div style={{ fontSize: 13, color: '#3b82f6', fontWeight: 600 }}>{fwFile.name}</div>
+              <div style={{ fontSize: 11, color: TEXT_MUTED, marginTop: 4 }}>
                 {(fwFile.size / 1024).toFixed(1)} KB
               </div>
             </div>
           ) : (
-            <div className="text-[13px] text-text-tertiary">Drop .bin file here or click to browse</div>
+            <div>
+              <div style={{ fontSize: 13, color: TEXT_MUTED }}>Drop .bin file here or click to browse</div>
+            </div>
           )}
         </div>
 
         {fwProgress > 0 && (
-          <div className="mb-3">
-            <div className="flex justify-between mb-1">
-              <span className="text-[12px] text-text-tertiary">Flashing...</span>
-              <span className="text-[12px] text-text-primary numeric">{fwProgress}%</span>
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <span style={{ fontSize: 12, color: TEXT_MUTED }}>Flashing...</span>
+              <span style={{ fontSize: 12, color: TEXT_PRIMARY }}>{fwProgress}%</span>
             </div>
             <ProgressBar value={fwProgress} max={100} />
           </div>
         )}
 
-        <Button
-          variant={fwFile && !flashing ? 'primary' : 'secondary'}
+        <button
           onClick={handleFlash}
           disabled={!fwFile || flashing}
-          className="w-full"
+          style={{
+            ...btnBase,
+            background: fwFile && !flashing ? '#1d4ed8' : '#1e293b',
+            color: fwFile && !flashing ? '#fff' : TEXT_MUTED,
+            border: `1px solid ${BORDER}`,
+            opacity: !fwFile ? 0.5 : 1,
+            width: '100%',
+          }}
         >
           {flashing ? 'Flashing...' : 'Flash Firmware'}
-        </Button>
-      </Card>
+        </button>
+      </div>
     </div>
   );
 }
@@ -696,23 +886,37 @@ export function ConnectionPage() {
   const [activeTab, setActiveTab] = useState<MainTab>('board');
 
   return (
-    <div className="px-[clamp(12px,3vw,20px)] py-[clamp(12px,3vw,20px)] max-w-[1100px] mx-auto">
-      <h2 className="text-[18px] font-semibold text-text-primary mb-5">Connection</h2>
+    <div style={{ padding: 'clamp(12px, 3vw, 20px)', maxWidth: 1100, margin: '0 auto' }}>
+      {/* CSS for spinner animation */}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+
+      <h2 style={{ margin: '0 0 20px', color: TEXT_PRIMARY, fontSize: 18 }}>Connection</h2>
 
       {/* Tab bar */}
-      <div className="flex gap-0.5 mb-5 border-b border-border">
+      <div style={{
+        display: 'flex',
+        gap: 2,
+        marginBottom: 20,
+        borderBottom: `1px solid ${BORDER}`,
+      }}>
         {TAB_LABELS.map(({ id, label }) => {
           const isActive = activeTab === id;
           return (
             <button
               key={id}
               onClick={() => setActiveTab(id)}
-              className={cn(
-                'px-[18px] py-[9px] border-none bg-transparent text-[13px] cursor-pointer -mb-px border-b-2 transition-colors',
-                isActive
-                  ? 'text-text-primary font-semibold border-accent'
-                  : 'text-text-tertiary font-normal border-transparent hover:text-text-secondary',
-              )}
+              style={{
+                padding: '9px 18px',
+                border: 'none',
+                background: 'transparent',
+                color: isActive ? TEXT_PRIMARY : TEXT_MUTED,
+                fontSize: 13,
+                fontWeight: isActive ? 600 : 400,
+                cursor: 'pointer',
+                borderBottom: isActive ? `2px solid #3b82f6` : '2px solid transparent',
+                marginBottom: -1,
+                transition: 'color 0.15s',
+              }}
             >
               {label}
             </button>

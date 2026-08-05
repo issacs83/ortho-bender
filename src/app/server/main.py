@@ -26,12 +26,15 @@ import os
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Query, WebSocket
+import asyncio
+
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .routers import bending, cam, camera, docs, motor, system, wifi, diag_router
+from .services.camera_service import CameraService
 from .services.diag_service import DiagService
 from .services.ipc_client import IpcClient
 from .services.motor_backend import MockMotorBackend
@@ -74,104 +77,123 @@ async def lifespan(app: FastAPI):
         await ipc.connect()
     app.state.ipc_client = ipc
 
-    # Motor service
-    motor_svc = MotorService(ipc)
-
-    # Camera backend — select via OB_CAMERA_BACKEND env var
-    # Default is "auto" (hot-plug detection); explicit values override.
-    backend_kind = (cfg.camera_backend or "auto").lower()
-    if cfg.mock_mode or backend_kind == "mock":
-        from .services.camera_backends.mock_backend import MockCameraBackend
-        camera_backend = MockCameraBackend()
-        log.info("Camera backend: Mock")
-    elif backend_kind == "auto":
+    # Services — camera always uses real hardware when mock_mode=false.
+    # Camera_service interface evolved (mock=bool → backend=CameraBackend).
+    # Try the new backend-injection signature first; fall back to legacy
+    # mock=bool, and finally degrade to None if both fail (motor-only mode).
+    # MotorService spidev injection happens later, after diag_backend init.
+    motor_svc  = MotorService(ipc)
+    camera_svc: CameraService | None = None
+    try:
         try:
-            from .services.camera_backends.auto_backend import AutoCameraBackend
+            from .services.camera_backends.auto_backend import AutoCameraBackend  # type: ignore
+            camera_svc = CameraService(backend=AutoCameraBackend())  # type: ignore[arg-type]
+        except (ImportError, TypeError):
+            camera_svc = CameraService(mock=cfg.mock_mode)  # type: ignore[arg-type]
+        await camera_svc.connect()
+    except Exception as exc:
+        log.warning("Camera init failed: %s — continuing without camera", exc)
+        camera_svc = None
 
-            async def _emit_camera_event(event: dict) -> None:
-                """Broadcast hot-plug events on /ws/system."""
-                mgr = getattr(application.state, "ws_manager", None)
-                if mgr is None:
-                    return
-                import json as _json
-                import time as _time
-                payload = {
-                    "timestamp_us": int(_time.monotonic() * 1_000_000),
-                    **event,
+    # Null-camera fallback so routes that depend on camera.get_status() etc.
+    # don't 500 when the camera failed to init (e.g. running on bench
+    # without Allied Vision device).
+    if camera_svc is None:
+        class _NullCameraService:
+            _connected = False
+            _width = 0
+            _height = 0
+            is_connected = False
+            backend_name = "null"
+            device_id: str | None = None
+            def get_status(self):
+                return {
+                    "connected": False, "backend": "mock", "device_id": None,
+                    "width": 0, "height": 0, "fps": 0,
                 }
-                try:
-                    await mgr.system.broadcast(_json.dumps(payload))
-                except Exception as exc:  # pragma: no cover - best effort
-                    log.debug("camera hot-plug broadcast failed: %s", exc)
-
-            camera_backend = AutoCameraBackend(
-                ws_event_callback=_emit_camera_event,
-            )
-            log.info("Camera backend: Auto (hot-plug, USB VID scan)")
-        except Exception as exc:
-            log.warning(
-                "AutoCameraBackend init failed (%s) — falling back to mock",
-                exc,
-            )
-            from .services.camera_backends.mock_backend import MockCameraBackend
-            camera_backend = MockCameraBackend()
-    elif backend_kind == "novitec":
-        try:
-            from .services.camera_backends.novitec_backend import NovitecBackend
-            camera_backend = NovitecBackend()
-            log.info("Camera backend: NOVITEC u-Nova2 (GenCP/U3V)")
-        except (ImportError, Exception) as exc:
-            log.warning("NOVITEC backend failed (%s) — falling back to mock", exc)
-            from .services.camera_backends.mock_backend import MockCameraBackend
-            camera_backend = MockCameraBackend()
-    elif backend_kind == "v4l2":
-        try:
-            from .services.camera_backends.v4l2_backend import V4l2CameraBackend
-            camera_backend = V4l2CameraBackend(device_path=cfg.camera_device)
-            log.info("Camera backend: V4L2/MIPI (%s)", cfg.camera_device)
-        except (ImportError, Exception) as exc:
-            log.warning("V4L2 backend failed (%s) — falling back to mock", exc)
-            from .services.camera_backends.mock_backend import MockCameraBackend
-            camera_backend = MockCameraBackend()
-    elif backend_kind == "vmbpy":
-        try:
-            from .services.camera_backends.vmbpy_backend import VmbPyCameraBackend
-            camera_backend = VmbPyCameraBackend()
-            log.info("Camera backend: VmbPy (Allied Vision)")
-        except ImportError:
-            log.warning("VmbPy not available — falling back to mock camera")
-            from .services.camera_backends.mock_backend import MockCameraBackend
-            camera_backend = MockCameraBackend()
-    else:
-        from .services.camera_backends.mock_backend import MockCameraBackend
-        camera_backend = MockCameraBackend()
-        log.warning(
-            "Unknown OB_CAMERA_BACKEND=%r — using Mock", cfg.camera_backend)
-
-    from .services.camera_service import CameraService
-    camera_svc = CameraService(camera_backend)
-    await camera_svc.connect()
+            async def capture_jpeg(self, **_kwargs):
+                return None
+            async def disconnect(self):
+                pass
+            def __getattr__(self, name):
+                # Permissive fallback for any other attribute access.
+                # Non-callable -> None/False; callable -> async no-op.
+                async def _async_noop(*_a, **_k): return None
+                if name.startswith("is_") or name.startswith("has_"):
+                    return False
+                return _async_noop
+        camera_svc = _NullCameraService()  # type: ignore[assignment]
+        log.info("Using NullCameraService fallback (no camera attached)")
 
     app.state.motor_service  = motor_svc
     app.state.camera_service = camera_svc
 
-    # Diagnostic backend — select via OB_MOTOR_BACKEND env var
+    # Boot-order resilience: at cold boot this service starts (~9 s) before
+    # the avt3 CSI-2 sensor finishes probing (~12 s), so the first connect()
+    # finds no camera and the UI would need a manual reconnect. Retry in the
+    # background with backoff until the camera appears (also covers camera
+    # power applied after boot).
+    camera_retry_task = None
+    if isinstance(camera_svc, CameraService) and not camera_svc.get_status()["connected"]:
+        async def _camera_reconnect_loop():
+            delay = 3.0
+            while True:
+                await asyncio.sleep(delay)
+                delay = min(delay * 1.5, 30.0)
+                try:
+                    if await camera_svc.connect():
+                        log.info("Camera reconnect loop: camera connected")
+                        return
+                except Exception as exc:
+                    log.debug("Camera reconnect attempt failed: %s", exc)
+
+        camera_retry_task = asyncio.create_task(_camera_reconnect_loop())
+        log.info("Camera not present yet — background reconnect loop started")
+
+    # Diagnostic backend — select via OB_MOTOR_BACKEND env var.
+    # Verified bench mapping (2026-05-08): cs=0→LIFT, cs=1→BEND, cs=2→FEED.
     if cfg.motor_backend == "spidev":
         from .services.spi_backend import SpidevMotorBackend
         diag_backend = SpidevMotorBackend(
             spi_device=cfg.spi_device,
             spi_speed_hz=cfg.spi_speed_hz,
-            gpio_cs1=cfg.gpio_cs1,
-            gpio_cs2=cfg.gpio_cs2,
-            gpio_feed_step=cfg.gpio_feed_step,
-            gpio_bend_step=cfg.gpio_bend_step,
+            gpio_lift_cs=cfg.gpio_lift_cs,
+            gpio_bend_cs=cfg.gpio_bend_cs,
+            gpio_feed_cs=cfg.gpio_feed_cs,
             gpio_dir=cfg.gpio_dir,
+            pwm_step_path=cfg.pwm_step_path,
+            pwm_step_export=cfg.pwm_step_export,
         )
         await diag_backend.open()
+        # Wire spidev backend into MotorService so REST move/jog drive the
+        # bench directly (instead of dispatching IPC to a non-existent M7).
+        motor_svc._spi_backend = diag_backend
+        log.info("MotorService bench mode enabled via SpidevMotorBackend")
     else:
         diag_backend = MockMotorBackend()
     diag_svc = DiagService(diag_backend)
+    # PSU preset is persisted on disk and consulted by DiagService when a
+    # raw register write touches SGCSCONF — so the operator's choice in
+    # Settings caps the driver current even if the frontend is bypassed.
+    from .services.psu_service import PsuService
+    psu_svc = PsuService()
+    diag_svc.set_psu_service(psu_svc)
+    app.state.psu_service = psu_svc
     app.state.diag_service = diag_svc
+    # Propagate the PSU cap into the bench backend so _init_chip writes a
+    # supply-appropriate SGCSCONF (not the unconditional CS=19 default).
+    if hasattr(diag_backend, "apply_current_cap"):
+        diag_backend.apply_current_cap(psu_svc.cs_cap)
+    log.info("PsuService active: %s (cs_cap=%d)", psu_svc.psu.label, psu_svc.cs_cap)
+
+    # Per-axis steps/unit calibration so jog/move convert mm/deg → step rate
+    # using the actual mechanical ratios. Defaults match the legacy "200
+    # microsteps = 1 unit" behaviour but are overridable from Settings.
+    from .services.calibration_service import CalibrationService
+    cal_svc = CalibrationService()
+    motor_svc.set_calibration(cal_svc)
+    app.state.calibration_service = cal_svc
+    log.info("CalibrationService active: %s", cal_svc.all()["steps_per_unit"])
 
     # Probe motor drivers at startup — identify which chips are connected
     driver_probe = await diag_svc.probe_drivers()
@@ -190,25 +212,16 @@ async def lifespan(app: FastAPI):
             return None
 
     async def _camera_provider():
+        if camera_svc is None:
+            return None
         try:
-            frame = await camera_svc.capture()
-            jpeg = frame.to_jpeg(quality=cfg.camera_jpeg_quality)
+            jpeg = await camera_svc.capture_jpeg(quality=cfg.camera_jpeg_quality)
             if not jpeg:
                 return None
-            meta = frame.meta
             return {
                 "jpeg":   jpeg,
-                "width":  meta.width,
-                "height": meta.height,
-                "meta": {
-                    "timestamp_us":  meta.timestamp_us,
-                    "exposure_us":   meta.exposure_us,
-                    "gain_db":       meta.gain_db,
-                    "temperature_c": meta.temperature_c,
-                    "fps_actual":    meta.fps_actual,
-                    "width":         meta.width,
-                    "height":        meta.height,
-                },
+                "width":  getattr(camera_svc, "_width", 0) or 0,
+                "height": getattr(camera_svc, "_height", 0) or 0,
             }
         except Exception:
             return None
@@ -217,7 +230,7 @@ async def lifespan(app: FastAPI):
         try:
             return {
                 "ipc_connected":    ipc.connected,
-                "camera_connected": camera_svc.is_connected,
+                "camera_connected": (camera_svc is not None and getattr(camera_svc, "_connected", False)),
                 "driver_probe":     app.state.driver_probe,
             }
         except Exception:
@@ -243,8 +256,14 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     log.info("Shutting down Ortho-Bender SDK...")
+    if camera_retry_task is not None and not camera_retry_task.done():
+        camera_retry_task.cancel()
     await ws_manager.stop()
-    await camera_svc.disconnect()
+    if camera_svc is not None:
+        try:
+            await camera_svc.disconnect()
+        except Exception:
+            pass
     await ipc.disconnect()
     log.info("Shutdown complete")
 
@@ -260,13 +279,35 @@ def create_app() -> FastAPI:
     application = FastAPI(
         title="Ortho-Bender SDK API",
         description=(
-            "REST + WebSocket API for the orthodontic wire bending machine (i.MX8MP). "
-            "Provides hardware-agnostic control of motor axes, camera, and B-code bending sequences."
+            "REST + WebSocket API for the orthodontic wire bending machine (i.MX8MP).\n\n"
+            "**Motor**: 3-axis bench control (jog/move/home) with hard safety caps "
+            "(CS ≤ 19, TOFF 1–8, PSU-derived clamps) and TMC260C register diagnostics.\n\n"
+            "**Camera**: Allied Vision Alvium 1800 C on MIPI CSI-2 via the native "
+            "`isi_csi2` backend — JPEG capture, MJPEG streaming (`?fps=1..50`), the "
+            "full dynamic control surface (`/api/camera/controls`), sensor ROI "
+            "(`/roi`), and sensor frame rate (`/framerate`). USB Alvium (VmbPy) "
+            "remains as a fallback backend.\n\n"
+            "**Bending**: B-code sequence execution with background progress "
+            "reporting, plus WebSocket telemetry channels (`/ws/motor`, "
+            "`/ws/camera`, `/ws/system`, `/ws/motor/diag`)."
         ),
-        version="0.1.0",
+        version="0.2.0",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
+        openapi_tags=[
+            {"name": "camera",
+             "description": "Alvium CSI-2 카메라 — 캡처/스트림/설정, 전체 컨트롤 "
+                            "표면(/controls), 센서 ROI(/roi)와 프레임레이트(/framerate). "
+                            "ROI·프레임레이트는 V4L2 컨트롤이 아닌 별도 subdev API라 "
+                            "/controls 목록에 없다."},
+            {"name": "motor",
+             "description": "3축 벤치 모터 제어 — jog/move/home, E-STOP, PSU 프리셋, "
+                            "축별 캘리브레이션. 안전 상한(CS≤19, TOFF 1–8)은 서버가 강제."},
+            {"name": "bending", "description": "B-code 벤딩 시퀀스 실행/진행률/정지."},
+            {"name": "system", "description": "시스템 상태, PSU 프리셋, 재부팅."},
+            {"name": "docs", "description": "오프라인 문서(md) 서빙."},
+        ],
     )
 
     # Serve Swagger/ReDoc assets locally (no CDN dependency — works offline)
@@ -335,19 +376,8 @@ def create_app() -> FastAPI:
         await application.state.ws_manager.handle_system(ws)
 
     @application.websocket("/ws/motor/diag")
-    async def ws_motor_diag(
-        ws: WebSocket,
-        format: str = Query(default="json", alias="format"),
-    ):
-        """
-        Diagnostic WebSocket — 200 Hz StallGuard2 / DRV_STATUS stream.
-
-        Query parameters:
-          ``?format=msgpack``  — binary MessagePack frames (~80 % smaller).
-          ``?format=json``     — JSON text frames (default, backward compatible).
-        """
-        use_msgpack = format.lower() == "msgpack"
-        await application.state.ws_manager.handle_motor_diag(ws, use_msgpack=use_msgpack)
+    async def ws_motor_diag(ws: WebSocket):
+        await application.state.ws_manager.handle_motor_diag(ws)
 
     # Health probe (used by systemd + load balancers)
     @application.get("/health", tags=["meta"])

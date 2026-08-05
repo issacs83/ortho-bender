@@ -1,0 +1,9 @@
+# Generated DTB binaries (regenerated from .dts)
+*.dtb
+current.dts
+new.dts
+
+# Forbidden: any sweep/experiment script must never be committed
+motor_chopconf_sweep*
+motor_*_sweep*
+motor_*_burn*

@@ -1,6 +1,9 @@
-import { cn } from '../../lib/cn';
-import { useEffect, useRef, useState } from 'react';
+/**
+ * SliderInput.tsx — Bidirectional slider + number input component.
+ */
+
 import type { CSSProperties } from 'react';
+import { BORDER, BG_PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY } from '../../constants';
 
 interface SliderInputProps {
   label: string;
@@ -9,113 +12,64 @@ interface SliderInputProps {
   max: number;
   step?: number;
   unit?: string;
-  onChange: (v: number) => void;
-  disabled?: boolean;
-  className?: string;
-  /** @deprecated Use className for spacing. Kept for backward compatibility. */
+  /** Hover help text shown next to the label as ⓘ. Use plain text. */
+  help?: string;
+  onChange: (value: number) => void;
   style?: CSSProperties;
 }
 
-function clamp(v: number, lo: number, hi: number) {
-  return Math.min(hi, Math.max(lo, v));
-}
-
-function decimalsFromStep(step: number): number {
-  if (!isFinite(step) || step <= 0) return 0;
-  const s = String(step);
-  const i = s.indexOf('.');
-  return i === -1 ? 0 : s.length - i - 1;
-}
-
-export function SliderInput({
-  label, value, min, max, step = 1, unit, onChange, disabled, className, style,
-}: SliderInputProps) {
-  const stepSafe = !isFinite(step) || step <= 0 ? 1 : step;
-  const decimals = decimalsFromStep(stepSafe);
-
-  const [draft, setDraft] = useState<string>(value.toFixed(decimals));
-  useEffect(() => {
-    setDraft(value.toFixed(decimals));
-  }, [value, decimals]);
-
-  const commit = (raw: string) => {
-    const n = Number(raw);
-    if (!isFinite(n)) {
-      setDraft(value.toFixed(decimals));
-      return;
-    }
-    const snapped = clamp(n, min, max);
-    onChange(Number(snapped.toFixed(decimals)));
-    setDraft(snapped.toFixed(decimals));
-  };
-
-  // Non-passive wheel handlers — bump value by step (Shift = ×10).
-  const sliderRef = useRef<HTMLInputElement>(null);
-  const numberRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (disabled) return;
-    const handler = (e: WheelEvent) => {
-      e.preventDefault();
-      const dir = e.deltaY > 0 ? -1 : 1;
-      const inc = stepSafe * (e.shiftKey ? 10 : 1) * dir;
-      const next = clamp(value + inc, min, max);
-      onChange(Number(next.toFixed(decimals)));
-    };
-    const s = sliderRef.current;
-    const n = numberRef.current;
-    s?.addEventListener('wheel', handler, { passive: false });
-    n?.addEventListener('wheel', handler, { passive: false });
-    return () => {
-      s?.removeEventListener('wheel', handler);
-      n?.removeEventListener('wheel', handler);
-    };
-  }, [value, stepSafe, min, max, disabled, decimals, onChange]);
-
+export function SliderInput({ label, value, min, max, step = 1, unit, help, onChange, style }: SliderInputProps) {
   return (
-    <div className={cn('flex flex-col gap-1', className)} style={style}>
-      <div className="flex justify-between items-baseline">
-        <label className="text-[11px] text-text-tertiary">{label}</label>
-        <div className="flex items-baseline gap-1">
+    <div style={{ ...style }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+        <label style={{ fontSize: 12, color: TEXT_SECONDARY, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          {label}
+          {help && (
+            <span
+              title={help}
+              aria-label={help}
+              style={{
+                cursor: 'help', fontSize: 10, color: TEXT_SECONDARY,
+                border: `1px solid ${BORDER}`, borderRadius: '50%',
+                width: 13, height: 13, display: 'inline-flex',
+                alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+              }}
+            >ⓘ</span>
+          )}
+        </label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <input
-            ref={numberRef}
             type="number"
+            value={value}
             min={min}
             max={max}
-            step={stepSafe}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={(e) => commit(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                commit((e.target as HTMLInputElement).value);
-                (e.target as HTMLInputElement).blur();
-              } else if (e.key === 'Escape') {
-                setDraft(value.toFixed(decimals));
-                (e.target as HTMLInputElement).blur();
-              }
+            step={step}
+            onChange={(e) => {
+              const v = parseFloat(e.target.value);
+              if (!isNaN(v)) onChange(Math.min(max, Math.max(min, v)));
             }}
-            disabled={disabled}
-            className="numeric text-[13px] text-text-primary bg-transparent border border-transparent rounded
-                       px-1 py-0 text-right w-[88px] outline-none
-                       hover:border-border focus:border-accent focus:bg-surface-3
-                       disabled:opacity-50 disabled:cursor-not-allowed
-                       [appearance:textfield]
-                       [&::-webkit-inner-spin-button]:appearance-none
-                       [&::-webkit-outer-spin-button]:appearance-none"
+            style={{
+              width: 64,
+              background: BG_PRIMARY,
+              border: `1px solid ${BORDER}`,
+              borderRadius: 4,
+              color: TEXT_PRIMARY,
+              padding: '2px 6px',
+              fontSize: 12,
+              textAlign: 'right',
+            }}
           />
-          {unit && <span className="text-[11px] text-text-tertiary">{unit}</span>}
+          {unit && <span style={{ fontSize: 11, color: TEXT_SECONDARY }}>{unit}</span>}
         </div>
       </div>
       <input
-        ref={sliderRef}
         type="range"
-        min={min} max={max} step={stepSafe} value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        disabled={disabled}
-        className="w-full h-1 bg-surface-3 rounded-full appearance-none cursor-pointer
-          [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5
-          [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent [&::-webkit-slider-thumb]:cursor-pointer
-          disabled:opacity-50 disabled:cursor-not-allowed"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        style={{ width: '100%', accentColor: '#3b82f6', cursor: 'pointer' }}
       />
     </div>
   );

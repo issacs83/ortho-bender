@@ -38,19 +38,34 @@ class Settings(BaseSettings):
     motor_backend: str = "mock"  # "mock" | "spidev" | "m7"
 
     # ------------------------------------------------------------------
-    # SPI (spidev mode only)
+    # SPI (spidev mode only) — verified 50 kHz for TMC260C bench reliability
     # ------------------------------------------------------------------
     spi_device: str = "/dev/spidev1.0"
-    spi_speed_hz: int = 2_000_000
+    spi_speed_hz: int = 50_000  # 50 kHz verified working (was 2 MHz, noise-prone)
 
     # ------------------------------------------------------------------
-    # GPIO pins (spidev mode only) — i.MX8MP J21 header
+    # GPIO pins (spidev mode only) — i.MX8MP EVK J21 header, verified 2026-05-08
+    # 3-axis CS lines (manual GPIO toggle, SPI_NO_CS mode):
+    #   LIFT (1층) = gpio5_07 (ECSPI1_MOSI alt5)
+    #   BEND (2층) = gpio3_22 (SAI5_RXD1 alt5)
+    #   FEED (3층) = gpio5_13 (ECSPI2_SS0 alt5, also cs-gpios in DTS)
+    # Shared signals:
+    #   STEP = PWM4 on SAI5_RXFS pad (pwmchip2/pwm0), parallel to all 3 chips
+    #   DIR  = gpio3_23 (SAI5_RXD3 alt5), parallel to all 3 chips
     # ------------------------------------------------------------------
-    gpio_cs1: str = "GPIO3_IO19"
-    gpio_cs2: str = "GPIO3_IO20"
-    gpio_feed_step: str = "GPIO3_IO22"
-    gpio_bend_step: str = "GPIO3_IO24"
-    gpio_dir: str = "GPIO5_IO06"
+    gpio_lift_cs: str = "GPIO5_IO07"
+    gpio_bend_cs: str = "GPIO3_IO22"
+    gpio_feed_cs: str = "GPIO5_IO13"
+    gpio_dir: str = "GPIO3_IO23"
+    pwm_step_path: str = "/sys/class/pwm/pwmchip2/pwm0"
+    pwm_step_export: str = "/sys/class/pwm/pwmchip2/export"
+
+    # Legacy aliases (kept for backwards-compat with diag_router and existing
+    # IpcMotorBackend signatures). Map onto the verified pins above.
+    gpio_cs1: str = "GPIO5_IO07"  # LIFT
+    gpio_cs2: str = "GPIO3_IO22"  # BEND
+    gpio_feed_step: str = ""      # not used (PWM4 shared)
+    gpio_bend_step: str = ""      # not used (PWM4 shared)
 
     # ------------------------------------------------------------------
     # Camera

@@ -36,7 +36,7 @@ def test_spi_test(client):
     data = r.json()
     assert data["success"] is True
     results = data["data"]["results"]
-    assert len(results) == 3
+    assert len(results) == 4
     assert all(res["ok"] for res in results)
 
 
