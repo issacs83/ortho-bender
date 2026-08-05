@@ -50,6 +50,7 @@ if _VMBPY_AVAILABLE and _GENICAM_PATH:
 
 
 class CameraBackend(str, Enum):
+    ISI        = "isi_csi2"
     VIMBA_X    = "vimba_x"
     GSTREAMER  = "gstreamer"
     UVC        = "uvc_fallback"
@@ -105,7 +106,12 @@ class CameraService:
                 return True
 
             ok = False
-            if _VMBPY_AVAILABLE and await self._try_vmbpy():
+            # ISI/CSI-2 first: the bench camera (Alvium C on MIPI) lives on
+            # the MPLANE-only ISI node that no other backend here can open,
+            # and probing it is cheap and deterministic.
+            if _CV2_AVAILABLE and await self._try_isi_v4l2():
+                ok = True
+            elif _VMBPY_AVAILABLE and await self._try_vmbpy():
                 ok = True
             elif not _CV2_AVAILABLE:
                 log.error("No camera backend available (VmbPy and OpenCV both missing)")
@@ -210,6 +216,53 @@ class CameraService:
         log.info("CameraService: opened via VmbPy (Vimba X USB3 Vision)")
         return True
 
+    async def _try_isi_v4l2(self) -> bool:
+        """Try the native ISI/CSI-2 MPLANE capture (Alvium C on i.MX8MP).
+
+        Uses raw V4L2 ioctls (see isi_v4l2.py) because the ISI node is
+        multiplanar-only. The returned object duck-types cv2.VideoCapture,
+        so every downstream OpenCV code path works unchanged, including
+        apply_settings() routing exposure/gain to the avt3 subdevice.
+        """
+        try:
+            from .isi_v4l2 import IsiV4l2Capture
+        except Exception as exc:  # numpy missing etc.
+            log.debug("ISI backend unavailable: %s", exc)
+            return False
+
+        loop = asyncio.get_running_loop()
+
+        def _open():
+            try:
+                cap = IsiV4l2Capture()
+            except Exception as exc:
+                log.debug("ISI open failed: %s", exc)
+                return None
+            ok, _ = cap.read()
+            if not ok:
+                cap.release()
+                return None
+            return cap
+
+        cap = await loop.run_in_executor(None, _open)
+        if cap is None:
+            log.debug("Camera backend isi_csi2 not available")
+            return False
+
+        self._cap = cap
+        self._backend = CameraBackend.ISI
+        self._connected = True
+        self._width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self._height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self._fps = cap.get(cv2.CAP_PROP_FPS)
+        self._exposure_us = cap.get(cv2.CAP_PROP_EXPOSURE) * 1_000_000.0
+        self._gain_db = cap.get(cv2.CAP_PROP_GAIN)
+        log.info("CameraService: opened via isi_csi2 (%dx%d @ %.1f fps, "
+                 "exposure %.0f us, gain %.1f dB)",
+                 self._width, self._height, self._fps,
+                 self._exposure_us, self._gain_db)
+        return True
+
     async def _try_vimba_x_gstreamer(self) -> bool:
         """Try the Allied Vision avtsrc GStreamer element."""
         pipeline = (
@@ -298,7 +351,9 @@ class CameraService:
 
     def get_status(self) -> dict:
         device_id = None
-        if self._connected and self._vmb_cam is not None:
+        if self._connected and self._backend == CameraBackend.ISI:
+            device_id = "Alvium 1800 C (MIPI CSI-2)"
+        elif self._connected and self._vmb_cam is not None:
             try:
                 device_id = self._vmb_cam.get_model()
             except Exception:
