@@ -35,6 +35,7 @@ export interface AxisStatus {
 /** Per-axis motion profile (jog defaults + acceleration shaping). */
 export interface MotionProfile {
   jog_speed: number;    // units/s (mm/s or deg/s)
+  max_speed: number;    // machine velocity limit (units/s) — commands clamped
   step_size: number;    // units per incremental jog
   start_hz: number;     // ramp floor frequency
   accel_hz_s: number;   // acceleration (Hz/s)

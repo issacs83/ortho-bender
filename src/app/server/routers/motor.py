@@ -175,6 +175,10 @@ class MotionProfileUpdate(BaseModel):
     """Partial per-axis motion profile update — omitted fields keep their value."""
     jog_speed: float | None = Field(None, gt=0, le=40,
                                     description="Default jog rate (mm/s or deg/s)")
+    max_speed: float | None = Field(None, gt=0, le=40,
+                                    description="Machine velocity limit — all motion "
+                                                "commands are clamped to this "
+                                                "(GRBL $110-112 analog)")
     step_size: float | None = Field(None, gt=0, le=360,
                                     description="Incremental jog distance (mm or deg)")
     start_hz: int | None = Field(None, ge=50, le=2000,

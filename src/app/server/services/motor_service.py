@@ -99,6 +99,16 @@ class MotorService:
         mp = getattr(self, "_motion_profiles", None)
         return mp.get(axis) if mp is not None else None
 
+    def _max_speed_for(self, axis: int) -> float:
+        """Per-axis machine velocity limit (profile max_speed).
+
+        Command-time clamp, GRBL $110-112 style: a machine limit distinct
+        from the operator's jog_speed default — direct API callers cannot
+        exceed it either.
+        """
+        p = self._profile_for(axis)
+        return float(p["max_speed"]) if p and "max_speed" in p else 40.0
+
     def _ensure_not_estop(self, action: str) -> None:
         """HARD GATE — refuse motion commands while bench E-STOP is latched.
 
@@ -155,7 +165,8 @@ class MotorService:
         # bench verification pass (PWM pad integrity + stall behaviour).
         cal = self._calibration
         steps_per_unit = cal.steps_per_unit(axis) if cal else 200.0
-        speed_clamped = min(abs(speed), cal.speed_limit(axis) if cal else 40.0)
+        speed_clamped = min(abs(speed), cal.speed_limit(axis) if cal else 40.0,
+                            self._max_speed_for(axis))
         freq = int(speed_clamped * steps_per_unit)
         freq = max(200, min(freq, 8000))
         max_duration_s = 60 if continuous else 5
@@ -229,7 +240,7 @@ class MotorService:
         speed_lim = cal.speed_limit(axis) if cal else 40.0
         clamped_distance = max(-dist_limit, min(dist_limit, distance))
         steps = max(1, int(abs(clamped_distance) * steps_per_unit))
-        speed_clamped = min(abs(speed), speed_lim)
+        speed_clamped = min(abs(speed), speed_lim, self._max_speed_for(axis))
         freq = int(speed_clamped * steps_per_unit)
         freq = max(200, min(freq, 8000))
         # Cap duration to 10 s

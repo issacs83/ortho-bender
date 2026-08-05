@@ -436,6 +436,9 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                   <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
                     Speed {numBox(p.jog_speed, 0.1, 40, 0.5, (v) => patchProfile(ax.axis, { jog_speed: v }))} {unit}/s
                   </label>
+                  <label title="Machine velocity limit — every motion command on this axis is clamped to it (GRBL $110-112 analog)" style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
+                    Vmax {numBox(p.max_speed ?? 40, 0.1, 40, 0.5, (v) => patchProfile(ax.axis, { max_speed: v }))} {unit}/s
+                  </label>
                   <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
                     Step {numBox(p.step_size, 0.01, 360, 0.1, (v) => patchProfile(ax.axis, { step_size: v }))} {unit}
                   </label>

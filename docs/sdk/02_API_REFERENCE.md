@@ -115,12 +115,17 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
 ```
 부분 업데이트 — 생략한 필드는 유지.
 - `jog_speed` (0–40, mm/s 또는 °/s), `step_size` (0–360)
+- `max_speed` (0–40): 축별 **기계 속도 한계** (GRBL `$110-112` 상당) —
+  jog/move 등 모든 모션 명령의 speed 가 커맨드 시점에 이 값으로 클램프됨.
+  `jog_speed` 는 이 값을 넘을 수 없음
 - `start_hz` (50–2000): 램프 시작(플로어) STEP 주파수
 - `accel_hz_s` / `decel_hz_s` (200–40000): STEP 주파수 슬루율
 - `shape`: `"linear"`(사다리꼴) 또는 `"scurve"`(저크 제한 smoothstep —
   피크 기울기가 `accel_hz_s` 와 같아, S-curve 전환 시에도 설정 가속도를
   초과하지 않음)
 - 감속 램프는 조그 정지/자연 종료 시 적용. 폴트·스톨·E-STOP 은 하드 스톱 유지
+- 참고: S-curve 감속은 같은 `decel_hz_s` 에서 linear 대비 **정지 시간·거리가
+  1.5배** (피크 가속도를 유지하는 대가). 정밀 정지 위치가 중요하면 linear 사용
 
 ### POST `/api/motor/stop`
 모든 축 즉시 감속 정지. body 없음.

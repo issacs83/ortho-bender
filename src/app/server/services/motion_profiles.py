@@ -5,6 +5,8 @@ Each axis carries its own jog defaults and acceleration profile, in the
 spirit of GRBL's $-settings / Klipper's printer.cfg:
 
   jog_speed   units/s   default jog rate (mm/s for FEED/LIFT, deg/s BEND/ROTATE)
+  max_speed   units/s   machine velocity limit — commands above it are clamped
+                        (GRBL $110-112 / LinuxCNC MAX_VELOCITY analog)
   step_size   units     incremental-jog distance
   start_hz    Hz        ramp floor — first commanded step frequency
   accel_hz_s  Hz/s      acceleration (PWM frequency slew rate)
@@ -35,6 +37,7 @@ PROFILE_SHAPES = ("linear", "scurve")
 
 DEFAULT_PROFILE: dict = {
     "jog_speed": 10.0,
+    "max_speed": 40.0,
     "step_size": 1.0,
     "start_hz": 200,
     "accel_hz_s": 8000,
@@ -47,6 +50,7 @@ DEFAULT_PROFILE: dict = {
 # SPEED_LIMIT in calibration_service.
 _BOUNDS = {
     "jog_speed":  (0.1, 40.0),
+    "max_speed":  (0.1, 40.0),
     "step_size":  (0.01, 360.0),
     "start_hz":   (50, 2000),
     "accel_hz_s": (200, 40000),
@@ -106,6 +110,8 @@ class MotionProfileService:
         out = dict(p)
         for key, (lo, hi) in _BOUNDS.items():
             out[key] = max(lo, min(hi, float(out[key])))
+        # jog default can never exceed the axis machine limit
+        out["jog_speed"] = min(out["jog_speed"], out["max_speed"])
         for key in ("start_hz", "accel_hz_s", "decel_hz_s"):
             out[key] = int(out[key])
         if out.get("shape") not in PROFILE_SHAPES:
