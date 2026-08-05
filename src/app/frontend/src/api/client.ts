@@ -264,11 +264,17 @@ export const cameraApi = {
   setRoi: (r: { left: number; top: number; width: number; height: number }): Promise<CameraRoiInfo> =>
     request("/api/camera/roi", { method: "POST", body: JSON.stringify(r) }),
 
-  setControl: (id: number, value: number): Promise<{ id: number; value: number | null }> =>
+  setControl: (id: number, value: number | number[]): Promise<{ id: number; value: number | number[] | null }> =>
     request("/api/camera/controls", {
       method: "POST",
       body: JSON.stringify({ id, value }),
     }),
+
+  framerate: (): Promise<{ fps: number | null }> =>
+    request("/api/camera/framerate"),
+
+  setFramerate: (fps: number): Promise<{ fps: number | null }> =>
+    request("/api/camera/framerate", { method: "POST", body: JSON.stringify({ fps }) }),
 };
 
 export interface CameraRect { left: number; top: number; width: number; height: number }
@@ -292,7 +298,7 @@ export interface CameraControl {
   default: number;
   read_only: boolean;
   inactive: boolean;
-  value: number | string | null;
+  value: number | string | number[] | null;
   menu?: Record<number, string>;
 }
 

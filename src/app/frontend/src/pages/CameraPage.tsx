@@ -12,9 +12,10 @@ import { useCameraWs } from '../hooks/useCameraWs';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { BG_PANEL, BG_PRIMARY, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED } from '../constants';
 
-type PanelSectionId = 'acquisition' | 'params' | 'processing' | 'gallery';
+type PanelSectionId = 'tuning' | 'acquisition' | 'params' | 'processing' | 'gallery';
 
 const PANEL_SECTIONS: { id: PanelSectionId; label: string; icon: string }[] = [
+  { id: 'tuning',      label: 'Live Tuning',      icon: '🎚' },
   { id: 'acquisition', label: 'Acquisition',      icon: '📷' },
   { id: 'params',      label: 'Parameters',       icon: '🎛' },
   { id: 'processing',  label: 'Image Processing', icon: '🖼' },
@@ -52,21 +53,12 @@ function CollapsibleSection({ label, icon, open, onToggle, children }: {
 // Live & Capture
 // ---------------------------------------------------------------------------
 
-function LiveCapture({ status, onApply }: { status: CameraStatus | null; onApply: () => void }) {
-  // Key is versioned: the old 'camera.useWs' could get stuck true forever
-  // after a single MJPEG error (e.g. a server restart mid-stream).
-  const [useWs, setUseWs] = usePersistentState('camera.useWs.v2', false);
-  const [zoom, setZoom] = usePersistentState('camera.zoom', 1);
-  const [showCrosshair, setShowCrosshair] = usePersistentState('camera.showCrosshair', false);
-  const [recording, setRecording] = useState(false);
-  const [frameCount, setFrameCount] = useState(0);
-  const [streamRetry, setStreamRetry] = useState(0);
-  const wsFrame = useCameraWs(useWs);
-
-  // Live tuning — sliders auto-apply (debounced) so exposure/gain can be
-  // judged against the stream without leaving this view.
+function LiveTuningCard({ status, onApply }: { status: CameraStatus | null; onApply: () => void }) {
+  // Sliders auto-apply (debounced) so exposure/gain can be judged against
+  // the always-visible stream.
   const [liveExp, setLiveExp] = useState(20000);
   const [liveGain, setLiveGain] = useState(0);
+  const [sensorFps, setSensorFps] = useState<number | ''>('');
   const [tuneMsg, setTuneMsg] = useState('');
   const tuneTimer = useRef<number | null>(null);
   const lastTouch = useRef(0);
@@ -81,6 +73,10 @@ function LiveCapture({ status, onApply }: { status: CameraStatus | null; onApply
     if (exp != null) setLiveExp(Math.round(exp));
     if (gain != null) setLiveGain(gain);
   }, [status]);
+
+  useEffect(() => {
+    cameraApi.framerate().then((r) => { if (r.fps != null) setSensorFps(Math.round(r.fps * 10) / 10); }).catch(() => null);
+  }, []);
 
   function queueTune(patch: { exposure_us?: number; gain_db?: number }) {
     lastTouch.current = Date.now();
@@ -98,6 +94,51 @@ function LiveCapture({ status, onApply }: { status: CameraStatus | null; onApply
       }
     }, 400);
   }
+
+  async function applyFps() {
+    if (sensorFps === '') return;
+    try {
+      const r = await cameraApi.setFramerate(Number(sensorFps));
+      if (r.fps != null) setSensorFps(Math.round(r.fps * 10) / 10);
+      setTuneMsg(`센서 ${r.fps?.toFixed(1)} fps 적용됨`);
+      onApply();
+    } catch (e) { setTuneMsg(`fps 적용 실패: ${String(e)}`); }
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: tuneMsg.startsWith('적용 실패') || tuneMsg.startsWith('fps 적용 실패') ? '#ef4444' : TEXT_MUTED, marginBottom: 6 }}>
+        {tuneMsg || '슬라이더를 움직이면 자동 적용됩니다'}
+      </div>
+      <SliderInput label="Exposure" value={liveExp} min={20} max={100000} step={100} unit="μs"
+        onChange={(v: number) => { setLiveExp(v); queueTune({ exposure_us: v }); }} />
+      <SliderInput label="Gain" value={liveGain} min={0} max={48} step={0.5} unit="dB"
+        onChange={(v: number) => { setLiveGain(v); queueTune({ gain_db: v }); }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+        <span style={{ fontSize: 12, color: TEXT_SECONDARY }}>Sensor FPS</span>
+        <input type="number" min={1} max={500} value={sensorFps}
+          onChange={(e) => setSensorFps(e.target.value === '' ? '' : Number(e.target.value))}
+          style={{ width: 80, background: '#0f172a', color: TEXT_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 4, padding: '4px 6px', fontSize: 12 }} />
+        <button onClick={applyFps}
+          style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '4px 12px', cursor: 'pointer', fontSize: 12 }}>
+          적용
+        </button>
+        <span style={{ fontSize: 11, color: TEXT_MUTED }}>낮출수록 노출 상한이 올라갑니다</span>
+      </div>
+    </div>
+  );
+}
+
+function LiveCapture({ status }: { status: CameraStatus | null }) {
+  // Key is versioned: the old 'camera.useWs' could get stuck true forever
+  // after a single MJPEG error (e.g. a server restart mid-stream).
+  const [useWs, setUseWs] = usePersistentState('camera.useWs.v2', false);
+  const [zoom, setZoom] = usePersistentState('camera.zoom', 1);
+  const [showCrosshair, setShowCrosshair] = usePersistentState('camera.showCrosshair', false);
+  const [recording, setRecording] = useState(false);
+  const [frameCount, setFrameCount] = useState(0);
+  const [streamRetry, setStreamRetry] = useState(0);
+  const wsFrame = useCameraWs(useWs);
 
   useEffect(() => { if (wsFrame) setFrameCount((c) => c + 1); }, [wsFrame]);
 
@@ -197,20 +238,6 @@ function LiveCapture({ status, onApply }: { status: CameraStatus | null; onApply
         >
           {recording ? 'Stop Recording' : 'Start Recording'}
         </button>
-      </div>
-
-      {/* Live tuning — adjust while watching the stream */}
-      <div style={{ background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '12px 16px', marginBottom: 12 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-          <h3 style={{ margin: 0, fontSize: 13, color: TEXT_PRIMARY }}>Live Tuning</h3>
-          <span style={{ fontSize: 11, color: tuneMsg.startsWith('적용 실패') ? '#ef4444' : TEXT_MUTED }}>{tuneMsg || '슬라이더를 움직이면 자동 적용됩니다'}</span>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '4px 24px' }}>
-          <SliderInput label="Exposure" value={liveExp} min={20} max={100000} step={100} unit="μs"
-            onChange={(v: number) => { setLiveExp(v); queueTune({ exposure_us: v }); }} />
-          <SliderInput label="Gain" value={liveGain} min={0} max={48} step={0.5} unit="dB"
-            onChange={(v: number) => { setLiveGain(v); queueTune({ gain_db: v }); }} />
-        </div>
       </div>
 
       {/* Status bar */}
@@ -480,6 +507,34 @@ function ParametersTab() {
         </select>
       );
     }
+    if (Array.isArray(c.value)) {
+      // Compound controls, e.g. "Binning Setting" (AREA: width x height)
+      return (
+        <span style={{ display: 'flex', gap: 6 }}>
+          {c.value.map((v, i) => (
+            <input key={i} type="number" value={v} disabled={disabled}
+              style={{ width: 64, background: '#0f172a', color: TEXT_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 4, padding: '4px 6px', fontSize: 12 }}
+              onChange={(e) => {
+                const next = [...(c.value as number[])];
+                next[i] = Number(e.target.value);
+                setControls((cs) => cs.map((x) => (x.id === c.id ? { ...x, value: next } : x)));
+                if (timers.current[c.id]) window.clearTimeout(timers.current[c.id]);
+                timers.current[c.id] = window.setTimeout(async () => {
+                  try {
+                    const r = await cameraApi.setControl(c.id, next);
+                    setRowMsg((m) => ({ ...m, [c.id]: `→ ${JSON.stringify(r.value)}` }));
+                    if (Array.isArray(r.value)) {
+                      setControls((cs) => cs.map((x) => (x.id === c.id ? { ...x, value: r.value as number[] } : x)));
+                    }
+                  } catch (err2) {
+                    setRowMsg((m) => ({ ...m, [c.id]: `실패: ${String(err2)}` }));
+                  }
+                }, 700);
+              }} />
+          ))}
+        </span>
+      );
+    }
     if (c.type === 'int' || c.type === 'int64') {
       if (c.read_only) {
         return <span style={{ fontSize: 12, color: TEXT_SECONDARY }}>{String(c.value ?? '—')}</span>;
@@ -531,7 +586,7 @@ function ParametersTab() {
                 {String(c.value ?? '—')} <span style={{ color: '#64748b' }}>[{c.min}–{c.max}]</span>
               </span>
             )}
-            <span style={{ fontSize: 11, color: '#60a5fa' }}>{controlHint(c.name, c.value)}</span>
+            <span style={{ fontSize: 11, color: '#60a5fa' }}>{Array.isArray(c.value) ? '' : controlHint(c.name, c.value)}</span>
             <span style={{ fontSize: 11, color: TEXT_MUTED, marginLeft: 'auto' }}>{rowMsg[c.id] ?? ''}</span>
           </div>
         ))}
@@ -689,7 +744,8 @@ export function CameraPage() {
   const [panelOpen, setPanelOpen] = usePersistentState('camera.panel.open', true);
   const [panelW, setPanelW] = usePersistentState('camera.panel.w', 430);
   const [sections, setSections] = usePersistentState<Record<string, boolean>>(
-    'camera.panel.sections', { acquisition: true, params: false, processing: false, gallery: false });
+    'camera.panel.sections.v2',
+    { tuning: true, acquisition: false, params: false, processing: false, gallery: false });
   const [dragging, setDragging] = useState(false);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
 
@@ -714,6 +770,7 @@ export function CameraPage() {
 
   const sectionBody = (id: PanelSectionId) => {
     switch (id) {
+      case 'tuning':      return <LiveTuningCard status={status} onApply={refreshStatus} />;
       case 'acquisition': return (<>
         <RoiCard onApply={refreshStatus} />
         <Acquisition status={status} onApply={refreshStatus} />
@@ -747,10 +804,12 @@ export function CameraPage() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'stretch', flexWrap: 'wrap', gap: 0 }}>
+      {/* nowrap: the settings panel stays on the right at every viewport
+          width — the live view shrinks instead of the panel dropping below. */}
+      <div style={{ display: 'flex', alignItems: 'stretch', flexWrap: 'nowrap', gap: 0 }}>
         {/* Live view — always visible while tuning */}
-        <div style={{ flex: '1 1 480px', minWidth: 340 }}>
-          <LiveCapture status={status} onApply={refreshStatus} />
+        <div style={{ flex: '1 1 0', minWidth: 200 }}>
+          <LiveCapture status={status} />
         </div>
 
         {/* Resize divider */}

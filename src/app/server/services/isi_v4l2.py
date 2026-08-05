@@ -60,6 +60,8 @@ VIDIOC_QUERY_EXT_CTRL = 0xC0E85667
 VIDIOC_QUERYMENU = 0xC02C5625
 VIDIOC_SUBDEV_G_SELECTION = 0xC040563D
 VIDIOC_SUBDEV_S_SELECTION = 0xC040563E
+VIDIOC_SUBDEV_G_FRAME_INTERVAL = 0xC0305615
+VIDIOC_SUBDEV_S_FRAME_INTERVAL = 0xC0305616
 
 SEL_TGT_CROP = 0x0000
 SEL_TGT_CROP_DEFAULT = 0x0001
@@ -68,7 +70,9 @@ SUBDEV_FMT_ACTIVE = 1
 
 CTRL_FLAG_NEXT = 0x80000000 | 0x40000000   # NEXT_CTRL | NEXT_COMPOUND
 CTRL_TYPE_NAMES = {1: "int", 2: "bool", 3: "menu", 4: "button", 5: "int64",
-                   6: "ctrl_class", 7: "string", 9: "int_menu"}
+                   6: "ctrl_class", 7: "string", 9: "int_menu",
+                   0x0100: "u8", 0x0101: "u16", 0x0102: "u32",
+                   0x0106: "area"}
 CTRL_FLAG_READ_ONLY = 0x0004
 CTRL_FLAG_INACTIVE = 0x0010
 
@@ -174,6 +178,14 @@ class _Rect(ctypes.Structure):
 class _SubdevSelection(ctypes.Structure):
     _fields_ = [("which", _u32), ("pad", _u32), ("target", _u32),
                 ("flags", _u32), ("r", _Rect), ("reserved", _u32 * 8)]
+
+
+class _Fract(ctypes.Structure):
+    _fields_ = [("numerator", _u32), ("denominator", _u32)]
+
+
+class _SubdevFrameInterval(ctypes.Structure):
+    _fields_ = [("pad", _u32), ("interval", _Fract), ("reserved", _u32 * 9)]
 
 
 class _ExtControls(ctypes.Structure):
@@ -291,8 +303,16 @@ class AvtSubdevControls:
                 entry["value"] = None
             elif ctype == "string":
                 entry["value"] = self._get_string(q.id, int(q.maximum))
-            elif ctype == "button" or ctype.startswith("type"):
-                entry["value"] = None      # buttons/compound have no scalar
+            elif ctype in ("u8", "u16", "u32", "area") or ctype.startswith("type"):
+                # Compound/array controls (e.g. "Binning Setting" is an
+                # AREA = width x height pair) — read as a u32 list.
+                n = max(1, (q.elem_size * max(1, q.elems)) // 4)
+                try:
+                    entry["value"] = self._get_compound_u32(q.id, n)
+                except OSError:
+                    entry["value"] = None
+            elif ctype == "button":
+                entry["value"] = None
             else:
                 try:
                     entry["value"] = self._get(q.id)
@@ -313,18 +333,83 @@ class AvtSubdevControls:
             out.append(entry)
         return out
 
-    def set_control(self, cid: int, value: int) -> int | None:
+    def set_control(self, cid: int, value):
         """Set one control by numeric id; returns the read-back value.
 
-        Buttons fire on any write and read back as None.
+        Scalar controls take an int; compound controls (u8/u16/u32/area)
+        take a list of ints. Buttons fire on any write, read back None.
         """
         q = self._query_one(cid)
         if q.flags & CTRL_FLAG_READ_ONLY:
             raise PermissionError(f"control {q.name.decode()!r} is read-only")
+        if isinstance(value, (list, tuple)):
+            n = max(1, (q.elem_size * max(1, q.elems)) // 4)
+            buf = (ctypes.c_uint32 * n)(*([int(v) for v in value] + [0] * n)[:n])
+            ec = _ExtControlPtr()
+            ec.id = cid
+            ec.size = 4 * n
+            ec.ptr = ctypes.addressof(buf)
+            cs = _ExtControls()
+            cs.which = 0
+            cs.count = 1
+            cs.controls = ctypes.addressof(ec)
+            fcntl.ioctl(self._fd, VIDIOC_S_EXT_CTRLS, cs)
+            return self._get_compound_u32(cid, n)
         self._set(cid, int(value))
         if CTRL_TYPE_NAMES.get(q.type) == "button":
             return None
         return self._get(cid)
+
+    # -- compound (array) controls, e.g. "Binning Setting" --------------
+    def _get_compound_u32(self, cid: int, elems: int) -> list[int]:
+        buf = (ctypes.c_uint32 * elems)()
+        ec = _ExtControlPtr()
+        ec.id = cid
+        ec.size = 4 * elems
+        ec.ptr = ctypes.addressof(buf)
+        cs = _ExtControls()
+        cs.which = 0
+        cs.count = 1
+        cs.controls = ctypes.addressof(ec)
+        fcntl.ioctl(self._fd, VIDIOC_G_EXT_CTRLS, cs)
+        return list(buf)
+
+    def set_compound_u32(self, cid: int, values: list[int]) -> list[int]:
+        q = self._query_one(cid)
+        if q.flags & CTRL_FLAG_READ_ONLY:
+            raise PermissionError(f"control {q.name.decode()!r} is read-only")
+        elems = max(1, q.elems)
+        buf = (ctypes.c_uint32 * elems)(*([int(v) for v in values] + [0] * elems)[:elems])
+        ec = _ExtControlPtr()
+        ec.id = cid
+        ec.size = 4 * elems
+        ec.ptr = ctypes.addressof(buf)
+        cs = _ExtControls()
+        cs.which = 0
+        cs.count = 1
+        cs.controls = ctypes.addressof(ec)
+        fcntl.ioctl(self._fd, VIDIOC_S_EXT_CTRLS, cs)
+        return self._get_compound_u32(cid, elems)
+
+    # -- sensor frame rate via the subdev frame-interval API ------------
+    def get_frame_rate(self) -> float | None:
+        fi = _SubdevFrameInterval()
+        fi.pad = 0
+        try:
+            fcntl.ioctl(self._fd, VIDIOC_SUBDEV_G_FRAME_INTERVAL, fi)
+        except OSError:
+            return None
+        if fi.interval.numerator == 0:
+            return None
+        return fi.interval.denominator / fi.interval.numerator
+
+    def set_frame_rate(self, fps: float) -> float | None:
+        fi = _SubdevFrameInterval()
+        fi.pad = 0
+        fi.interval.numerator = 1000
+        fi.interval.denominator = max(1, int(round(fps * 1000)))
+        fcntl.ioctl(self._fd, VIDIOC_SUBDEV_S_FRAME_INTERVAL, fi)
+        return self.get_frame_rate()
 
     # -- ROI (sensor crop) via the subdev selection API -----------------
     def get_selection(self, target: int = SEL_TGT_CROP) -> dict:
@@ -516,6 +601,16 @@ class IsiV4l2Capture:
         except OSError:
             pass
 
+    # -- sensor frame rate (needs the stream stopped: driver EBUSYs) ----
+    def set_sensor_fps(self, fps: float) -> float | None:
+        self._teardown_stream()
+        try:
+            actual = self.ctrl.set_frame_rate(fps)
+        finally:
+            self._width, self._height = self._setup(self._width, self._height)
+        log.info("IsiV4l2Capture: sensor frame rate -> %s fps", actual)
+        return actual
+
     # -- ROI ------------------------------------------------------------
     def get_roi(self) -> dict:
         return {
@@ -604,7 +699,10 @@ class IsiV4l2Capture:
         if prop == PROP_HEIGHT:
             return float(self._height)
         if prop == PROP_FPS:
-            return self.NOMINAL_FPS
+            try:
+                return self.ctrl.get_frame_rate() or self.NOMINAL_FPS
+            except OSError:
+                return self.NOMINAL_FPS
         if prop == PROP_EXPOSURE:
             try:
                 return self.ctrl.get_exposure_us() / 1_000_000.0  # seconds

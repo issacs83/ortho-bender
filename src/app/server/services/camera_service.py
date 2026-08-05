@@ -507,6 +507,27 @@ class CameraService:
             pass
         return result
 
+    async def get_sensor_frame_rate(self) -> float | None:
+        """Sensor-side acquisition frame rate (subdev frame-interval API)."""
+        if self._backend != CameraBackend.ISI or self._cap is None:
+            raise RuntimeError(
+                f"Frame rate control not supported on backend {self._backend.value!r}")
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._cap.ctrl.get_frame_rate)
+
+    async def set_sensor_frame_rate(self, fps: float) -> float | None:
+        if self._backend != CameraBackend.ISI or self._cap is None:
+            raise RuntimeError(
+                f"Frame rate control not supported on backend {self._backend.value!r}")
+        loop = asyncio.get_running_loop()
+        # The avt3 driver rejects frame-interval changes while streaming
+        # (EBUSY), so the capture pipeline pauses and restarts around it.
+        async with self._frame_lock:
+            actual = await loop.run_in_executor(None, self._cap.set_sensor_fps, fps)
+        if actual:
+            self._fps = actual
+        return actual
+
     async def get_roi(self) -> dict:
         """Current sensor crop + bounds (isi_csi2 backend)."""
         if self._backend != CameraBackend.ISI or self._cap is None:

@@ -192,8 +192,11 @@ async def list_camera_controls(
 
 class CameraControlRequest(BaseModel):
     id: int = Field(..., description="Numeric control id from GET /controls")
-    value: int = Field(
-        0, description="Raw driver-unit value; ignored for button controls")
+    value: int | list[int] = Field(
+        0, description="Raw driver-unit value (int), or an int list for "
+                       "compound controls such as the AREA-typed "
+                       "'Binning Setting' (width, height); ignored for "
+                       "button controls")
 
 
 @router.post("/controls", response_model=ApiResponse)
@@ -213,6 +216,42 @@ async def set_camera_control(
         return err(str(exc), "CAMERA_CONTROL_READ_ONLY")
     except (RuntimeError, OSError) as exc:
         return err(str(exc), "CAMERA_CONTROL_ERROR")
+
+
+# ---------------------------------------------------------------------------
+# GET/POST /api/camera/framerate — sensor acquisition rate
+# ---------------------------------------------------------------------------
+
+@router.get("/framerate", response_model=ApiResponse)
+async def get_camera_framerate(
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Sensor-side acquisition frame rate (fps).
+
+    Lives on the V4L2 subdev *frame-interval* API — another feature that
+    is not part of GET /controls. Lowering it raises the exposure-time
+    ceiling; the MJPEG ?fps= parameter only paces delivery.
+    """
+    try:
+        return ok({"fps": await svc.get_sensor_frame_rate()})
+    except (RuntimeError, OSError) as exc:
+        return err(str(exc), "CAMERA_FRAMERATE_ERROR")
+
+
+class CameraFramerateRequest(BaseModel):
+    fps: float = Field(..., gt=0, le=500, description="Target sensor fps")
+
+
+@router.post("/framerate", response_model=ApiResponse)
+async def set_camera_framerate(
+    body: CameraFramerateRequest,
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Set the sensor acquisition frame rate; returns the applied value."""
+    try:
+        return ok({"fps": await svc.set_sensor_frame_rate(body.fps)})
+    except (RuntimeError, OSError) as exc:
+        return err(str(exc), "CAMERA_FRAMERATE_ERROR")
 
 
 # ---------------------------------------------------------------------------
