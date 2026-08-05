@@ -67,6 +67,7 @@ export interface CameraStatus {
   format?: string | null;
   fps?: number | null;
   backend?: string | null;
+  temperature_c?: number | null;
   device: CameraDeviceInfo | null;
   current_exposure_us: number | null;
   current_gain_db: number | null;
@@ -270,6 +271,18 @@ export const cameraApi = {
       body: JSON.stringify({ id, value }),
     }),
 
+  presets: (): Promise<{ presets: Record<string, CameraPreset> }> =>
+    request("/api/camera/presets"),
+
+  savePreset: (name: string): Promise<Record<string, CameraPreset>> =>
+    request("/api/camera/presets", { method: "POST", body: JSON.stringify({ name }) }),
+
+  applyPreset: (name: string): Promise<{ applied: string; errors: Record<string, string> }> =>
+    request(`/api/camera/presets/${encodeURIComponent(name)}/apply`, { method: "POST" }),
+
+  deletePreset: (name: string): Promise<{ deleted: string }> =>
+    request(`/api/camera/presets/${encodeURIComponent(name)}`, { method: "DELETE" }),
+
   framerate: (): Promise<{ fps: number | null }> =>
     request("/api/camera/framerate"),
 
@@ -278,6 +291,14 @@ export const cameraApi = {
 };
 
 export interface CameraRect { left: number; top: number; width: number; height: number }
+
+/** Server-side named camera preset (controls + ROI + sensor fps). */
+export interface CameraPreset {
+  controls: Record<string, number | number[]>;
+  roi: CameraRect;
+  fps: number | null;
+  saved_at: string;
+}
 
 /** Sensor crop info from GET /api/camera/roi. */
 export interface CameraRoiInfo {

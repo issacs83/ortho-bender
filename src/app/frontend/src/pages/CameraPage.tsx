@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { cameraApi, type CameraControl, type CameraRoiInfo, type CameraStatus } from '../api/client';
+import { cameraApi, type CameraControl, type CameraPreset, type CameraRoiInfo, type CameraStatus } from '../api/client';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { ConnectionControl } from '../components/ui/ConnectionControl';
 import { SliderInput } from '../components/ui/SliderInput';
@@ -12,13 +12,13 @@ import { useCameraWs } from '../hooks/useCameraWs';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { BG_PANEL, BG_PRIMARY, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED } from '../constants';
 
-type PanelSectionId = 'tuning' | 'acquisition' | 'params' | 'processing' | 'gallery';
+type PanelSectionId = 'tuning' | 'acquisition' | 'params' | 'presets' | 'gallery';
 
 const PANEL_SECTIONS: { id: PanelSectionId; label: string; icon: string }[] = [
   { id: 'tuning',      label: 'Live Tuning',      icon: '🎚' },
   { id: 'acquisition', label: 'Acquisition',      icon: '📷' },
   { id: 'params',      label: 'Parameters',       icon: '🎛' },
-  { id: 'processing',  label: 'Image Processing', icon: '🖼' },
+  { id: 'presets',     label: 'Presets',          icon: '💾' },
   { id: 'gallery',     label: 'Gallery',          icon: '🗂' },
 ];
 
@@ -135,7 +135,6 @@ function LiveCapture({ status }: { status: CameraStatus | null }) {
   const [useWs, setUseWs] = usePersistentState('camera.useWs.v2', false);
   const [zoom, setZoom] = usePersistentState('camera.zoom', 1);
   const [showCrosshair, setShowCrosshair] = usePersistentState('camera.showCrosshair', false);
-  const [recording, setRecording] = useState(false);
   const [frameCount, setFrameCount] = useState(0);
   const [streamRetry, setStreamRetry] = useState(0);
   const wsFrame = useCameraWs(useWs);
@@ -202,11 +201,12 @@ function LiveCapture({ status }: { status: CameraStatus | null }) {
         {status && (() => {
           const exp = status.exposure_us ?? status.current_exposure_us;
           const gain = status.gain_db ?? status.current_gain_db;
+          const temp = status.temperature_c ?? status.current_temperature_c;
           return (
             <div style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.6)', borderRadius: 4, padding: '4px 8px', fontSize: 11, color: TEXT_PRIMARY, textAlign: 'right' as const }}>
               Exp: {exp != null ? (exp >= 1000 ? `${(exp / 1000).toFixed(1)} ms` : `${exp.toFixed(0)} μs`) : '—'}
               &nbsp;|&nbsp; Gain: {gain?.toFixed(1) ?? '—'} dB
-              {status.current_temperature_c != null && <> &nbsp;|&nbsp; {status.current_temperature_c.toFixed(0)}°C</>}
+              {temp != null && <> &nbsp;|&nbsp; {temp.toFixed(1)}°C</>}
             </div>
           );
         })()}
@@ -232,12 +232,8 @@ function LiveCapture({ status }: { status: CameraStatus | null }) {
         <button onClick={capture} style={{ padding: '5px 14px', background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
           Capture
         </button>
-        <button
-          onClick={() => setRecording(!recording)}
-          style={{ padding: '5px 14px', background: recording ? '#7f1d1d' : '#1e293b', color: recording ? '#fca5a5' : TEXT_SECONDARY, border: `1px solid ${recording ? '#ef4444' : BORDER}`, borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
-        >
-          {recording ? 'Stop Recording' : 'Start Recording'}
-        </button>
+        {/* Recording removed — was a UI-only dummy; server-side recording is
+            tracked as a future feature. */}
       </div>
 
       {/* Status bar */}
@@ -602,68 +598,89 @@ function ParametersTab() {
 // Image Processing
 // ---------------------------------------------------------------------------
 
-function ImageProcessing() {
-  const [gamma, setGamma] = useState(1.0);
-  const [blackLevel, setBlackLevel] = useState(0);
-  const [sharpness, setSharpness] = useState(0);
-  const [pixelFormat, setPixelFormat] = useState('Mono8');
-  const [binH, setBinH] = useState(1);
-  const [binV, setBinV] = useState(1);
+function PresetsSection({ onApply }: { onApply: () => void }) {
+  const [presets, setPresets] = useState<Record<string, CameraPreset>>({});
+  const [newName, setNewName] = useState('');
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  // Fake histogram data
-  const histData = Array.from({ length: 32 }, (_, i) => ({
-    bin: i * 8,
-    count: Math.round(Math.random() * 1000 + 100),
-  }));
+  async function load() {
+    try { setPresets((await cameraApi.presets()).presets); }
+    catch (e) { setMsg(String(e)); }
+  }
+  useEffect(() => { load(); }, []);
 
-  const cardStyle = { background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 16, marginBottom: 16 };
+  async function save() {
+    if (!newName.trim()) return;
+    setBusy(true);
+    try {
+      await cameraApi.savePreset(newName.trim());
+      setMsg(`'${newName.trim()}' 저장됨 (현재 컨트롤+ROI+fps 스냅샷)`);
+      setNewName('');
+      await load();
+    } catch (e) { setMsg(`저장 실패: ${String(e)}`); }
+    finally { setBusy(false); }
+  }
 
+  async function apply(name: string) {
+    setBusy(true);
+    setMsg(`'${name}' 적용 중… (ROI 변경 시 스트림 재시작)`);
+    try {
+      const r = await cameraApi.applyPreset(name);
+      const errs = Object.keys(r.errors ?? {});
+      setMsg(errs.length ? `'${name}' 적용 — 일부 실패: ${errs.join(', ')}` : `'${name}' 적용됨`);
+      onApply();
+    } catch (e) { setMsg(`적용 실패: ${String(e)}`); }
+    finally { setBusy(false); }
+  }
+
+  async function remove(name: string) {
+    try { await cameraApi.deletePreset(name); await load(); }
+    catch (e) { setMsg(String(e)); }
+  }
+
+  const names = Object.keys(presets).sort();
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
-      <div style={cardStyle}>
-        <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Pixel Format</h3>
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>Format</label>
-          <select value={pixelFormat} onChange={(e) => setPixelFormat(e.target.value)} style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '6px 10px', borderRadius: 4, fontSize: 13, width: '100%' }}>
-            {['Mono8', 'Mono12', 'BayerRG8', 'BayerRG12', 'RGB8'].map((f) => <option key={f}>{f}</option>)}
-          </select>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          <div>
-            <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>Binning H</label>
-            <input type="number" min={1} max={4} value={binH} onChange={(e) => setBinH(Number(e.target.value))} style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '5px 8px', borderRadius: 4, fontSize: 13, width: '100%' }} />
-          </div>
-          <div>
-            <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>Binning V</label>
-            <input type="number" min={1} max={4} value={binV} onChange={(e) => setBinV(Number(e.target.value))} style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '5px 8px', borderRadius: 4, fontSize: 13, width: '100%' }} />
-          </div>
-        </div>
-        <button style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 600, marginTop: 12 }}>Apply</button>
+    <div>
+      <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 8 }}>
+        현재 카메라 상태(모든 쓰기 가능 컨트롤 + ROI + 센서 fps)를 이름으로 저장하고
+        한 번에 복원합니다. CSI-2 Alvium 은 온카메라 UserSet 이 없어 서버에 저장됩니다.
       </div>
-
-      <div style={cardStyle}>
-        <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Image Enhancement</h3>
-        <SliderInput label="Gamma" value={gamma} min={0.1} max={4.0} step={0.1} onChange={setGamma} style={{ marginBottom: 12 }} />
-        <SliderInput label="Black Level" value={blackLevel} min={0} max={255} onChange={setBlackLevel} style={{ marginBottom: 12 }} />
-        <SliderInput label="Sharpness" value={sharpness} min={0} max={100} onChange={setSharpness} />
-        <button style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 600, marginTop: 12 }}>Apply</button>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <input value={newName} placeholder="프리셋 이름 (예: backlight-wire)"
+          onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
+          style={{ flex: 1, background: '#0f172a', color: TEXT_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 4, padding: '6px 8px', fontSize: 12 }} />
+        <button onClick={save} disabled={busy || !newName.trim()}
+          style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: busy || !newName.trim() ? 0.5 : 1 }}>
+          현재 상태 저장
+        </button>
       </div>
-
-      <div style={{ ...cardStyle, gridColumn: '1 / -1' }}>
-        <h3 style={{ margin: '0 0 4px', fontSize: 14, color: TEXT_PRIMARY }}>Histogram</h3>
-        <div style={{ fontSize: 12, color: TEXT_MUTED, marginBottom: 8, display: 'flex', gap: 20 }}>
-          <span>Min: 12 &nbsp;|&nbsp; Max: 248 &nbsp;|&nbsp; Mean: 127</span>
-        </div>
-        <div style={{ height: 120 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={histData} barCategoryGap="0%">
-              <XAxis dataKey="bin" hide />
-              <YAxis hide />
-              <Tooltip contentStyle={{ background: BG_PANEL, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, fontSize: 11 }} />
-              <Bar dataKey="count" fill="#3b82f6" isAnimationActive={false} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+      {msg && <div style={{ fontSize: 11, color: msg.includes('실패') ? '#ef4444' : '#60a5fa', marginBottom: 8 }}>{msg}</div>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {names.length === 0 && <div style={{ fontSize: 12, color: TEXT_MUTED }}>저장된 프리셋이 없습니다.</div>}
+        {names.map((name) => {
+          const p = presets[name];
+          return (
+            <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8, background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 6, padding: '8px 10px' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, color: TEXT_PRIMARY, fontWeight: 600 }}>{name}</div>
+                <div style={{ fontSize: 10, color: TEXT_MUTED }}>
+                  {p.roi ? `ROI ${p.roi.width}×${p.roi.height}@(${p.roi.left},${p.roi.top})` : ''}
+                  {p.fps ? ` · ${p.fps.toFixed(0)}fps` : ''} · {Object.keys(p.controls ?? {}).length}개 컨트롤 · {p.saved_at}
+                </div>
+              </div>
+              <button onClick={() => apply(name)} disabled={busy}
+                style={{ background: '#166534', color: '#bbf7d0', border: 'none', borderRadius: 4, padding: '5px 12px', cursor: 'pointer', fontSize: 12 }}>
+                적용
+              </button>
+              <button onClick={() => remove(name)} disabled={busy}
+                style={{ background: '#1e293b', color: '#fca5a5', border: `1px solid ${BORDER}`, borderRadius: 4, padding: '5px 10px', cursor: 'pointer', fontSize: 12 }}>
+                삭제
+              </button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -776,7 +793,7 @@ export function CameraPage() {
         <Acquisition status={status} onApply={refreshStatus} />
       </>);
       case 'params':      return <ParametersTab />;
-      case 'processing':  return <ImageProcessing />;
+      case 'presets':     return <PresetsSection onApply={refreshStatus} />;
       case 'gallery':     return <Gallery />;
     }
   };
