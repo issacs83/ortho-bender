@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
 from ..models.schemas import (
@@ -56,9 +56,14 @@ async def camera_connect(
     svc: CameraService = Depends(_camera_service),
 ) -> ApiResponse:
     """
-    Open the camera via the Vimba X SDK (or fallback backend) and transition
-    power_state to 'on'. Idempotent — already-connected cameras return
-    the current status unchanged.
+    Open the camera and transition power_state to 'on'.
+
+    Backend chain, first match wins: native ISI/CSI-2 (`isi_csi2` — the
+    bench Alvium C on MIPI), VmbPy (USB Alvium), Vimba X GStreamer,
+    generic V4L2 GStreamer, UVC. Idempotent — an already-connected
+    camera returns the current status unchanged. Note the server also
+    retries this automatically in the background after boot until a
+    camera appears.
     """
     try:
         ok_ = await svc.connect()
@@ -79,10 +84,9 @@ async def camera_disconnect(
     svc: CameraService = Depends(_camera_service),
 ) -> ApiResponse:
     """
-    Gracefully shut the camera down via the Vimba X SDK native shutdown
-    sequence (frame release → camera __exit__ → VmbSystem __exit__) and
-    transition power_state to 'off'. Safe to call on an already-disconnected
-    camera.
+    Gracefully shut the camera down (stream off, buffers released — for
+    VmbPy backends via the SDK's native shutdown sequence) and transition
+    power_state to 'off'. Safe to call on an already-disconnected camera.
     """
     try:
         await svc.disconnect()
@@ -131,7 +135,12 @@ async def camera_capture(
 
 @router.get("/stream")
 async def camera_stream(
-    fps: float = 15.0,
+    fps: float = Query(
+        15.0, ge=1.0, le=50.0,
+        description="Target stream rate. Clamped to 1-50 fps (the bench "
+                    "Alvium C-052m sensor tops out at ~50 fps; JPEG "
+                    "encoding caps the effective rate around 25 fps).",
+    ),
     svc: CameraService = Depends(_camera_service),
 ) -> StreamingResponse:
     """
@@ -140,7 +149,7 @@ async def camera_stream(
     The response is a multipart/x-mixed-replace stream of JPEG frames.
     Open directly in an <img> tag or use fetch() with streaming:
 
-        <img src="/api/camera/stream" />
+        <img src="/api/camera/stream?fps=15" />
     """
     if svc._power_state != "on":
         from fastapi.responses import JSONResponse
