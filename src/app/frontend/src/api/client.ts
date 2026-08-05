@@ -254,7 +254,31 @@ export const cameraApi = {
 
   disconnect: (): Promise<CameraStatus> =>
     request("/api/camera/disconnect", { method: "POST" }),
+
+  controls: (): Promise<{ controls: CameraControl[] }> =>
+    request("/api/camera/controls"),
+
+  setControl: (id: number, value: number): Promise<{ id: number; value: number | null }> =>
+    request("/api/camera/controls", {
+      method: "POST",
+      body: JSON.stringify({ id, value }),
+    }),
 };
+
+/** One entry of the camera driver's dynamic control surface. */
+export interface CameraControl {
+  id: number;
+  name: string;
+  type: 'int' | 'bool' | 'menu' | 'button' | 'int64' | 'ctrl_class' | 'string' | 'int_menu' | string;
+  min: number;
+  max: number;
+  step: number;
+  default: number;
+  read_only: boolean;
+  inactive: boolean;
+  value: number | string | null;
+  menu?: Record<number, string>;
+}
 
 // ---------------------------------------------------------------------------
 // Bending API

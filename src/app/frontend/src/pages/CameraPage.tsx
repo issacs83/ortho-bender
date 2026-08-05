@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { cameraApi, type CameraStatus } from '../api/client';
+import { cameraApi, type CameraControl, type CameraStatus } from '../api/client';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { ConnectionControl } from '../components/ui/ConnectionControl';
 import { SliderInput } from '../components/ui/SliderInput';
@@ -12,11 +12,12 @@ import { useCameraWs } from '../hooks/useCameraWs';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { BG_PANEL, BG_PRIMARY, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED } from '../constants';
 
-type CameraSubTab = 'live' | 'acquisition' | 'processing' | 'gallery';
+type CameraSubTab = 'live' | 'acquisition' | 'params' | 'processing' | 'gallery';
 
 const SUB_TABS: { id: CameraSubTab; label: string }[] = [
   { id: 'live',        label: 'Live & Capture' },
   { id: 'acquisition', label: 'Acquisition' },
+  { id: 'params',      label: 'Parameters' },
   { id: 'processing',  label: 'Image Processing' },
   { id: 'gallery',     label: 'Gallery' },
 ];
@@ -318,6 +319,148 @@ function Acquisition({ status, onApply }: { status: CameraStatus | null; onApply
 }
 
 // ---------------------------------------------------------------------------
+// Parameters — full driver control surface, rendered dynamically
+// ---------------------------------------------------------------------------
+
+/** Human-readable unit conversions for known raw driver units. */
+function controlHint(name: string, value: number | string | null): string {
+  if (typeof value !== 'number') return '';
+  if (/^Exposure($| A)/.test(name)) return value >= 1e6 ? `= ${(value / 1e6).toFixed(1)} ms` : `= ${(value / 1e3).toFixed(1)} μs`;
+  if (/^Gain/.test(name)) return `= ${(value / 100).toFixed(1)} dB`;
+  if (name === 'Gamma') return `= ${(value / 100).toFixed(2)}`;
+  if (name === 'Device Temperature') return `= ${(value / 10).toFixed(1)} °C`;
+  return '';
+}
+
+function ParametersTab() {
+  const [controls, setControls] = useState<CameraControl[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [rowMsg, setRowMsg] = useState<Record<number, string>>({});
+  const timers = useRef<Record<number, number>>({});
+
+  async function load() {
+    setLoading(true);
+    try {
+      const r = await cameraApi.controls();
+      setControls(r.controls);
+      setError(null);
+    } catch (e) { setError(String(e)); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function applyNow(c: CameraControl, value: number) {
+    try {
+      const r = await cameraApi.setControl(c.id, value);
+      setRowMsg((m) => ({ ...m, [c.id]: r.value != null ? `→ ${r.value}` : '✓' }));
+      setControls((cs) => cs.map((x) => x.id === c.id && r.value != null ? { ...x, value: r.value } : x));
+    } catch (e) {
+      setRowMsg((m) => ({ ...m, [c.id]: `실패: ${String(e)}` }));
+    }
+  }
+
+  function queueApply(c: CameraControl, value: number, debounceMs = 400) {
+    setControls((cs) => cs.map((x) => (x.id === c.id ? { ...x, value } : x)));
+    if (timers.current[c.id]) window.clearTimeout(timers.current[c.id]);
+    timers.current[c.id] = window.setTimeout(() => applyNow(c, value), debounceMs);
+  }
+
+  function widget(c: CameraControl) {
+    const disabled = c.read_only || c.inactive;
+    if (c.type === 'string') {
+      return <span style={{ fontSize: 12, color: TEXT_SECONDARY }}>{String(c.value ?? '—')}</span>;
+    }
+    if (c.type === 'button') {
+      return (
+        <button disabled={disabled} onClick={() => applyNow(c, 1)}
+          style={{ padding: '4px 14px', background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12, opacity: disabled ? 0.5 : 1 }}>
+          실행
+        </button>
+      );
+    }
+    if (c.type === 'bool') {
+      return (
+        <input type="checkbox" disabled={disabled} checked={c.value === 1}
+          style={{ accentColor: '#3b82f6', width: 16, height: 16 }}
+          onChange={(e) => queueApply(c, e.target.checked ? 1 : 0, 0)} />
+      );
+    }
+    if ((c.type === 'menu' || c.type === 'int_menu') && c.menu) {
+      return (
+        <select disabled={disabled} value={Number(c.value ?? c.default)}
+          onChange={(e) => queueApply(c, Number(e.target.value), 0)}
+          style={{ background: '#0f172a', color: TEXT_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 4, padding: '4px 8px', fontSize: 12 }}>
+          {Object.entries(c.menu).map(([k, label]) => (
+            <option key={k} value={k}>{label}</option>
+          ))}
+        </select>
+      );
+    }
+    if (c.type === 'int' || c.type === 'int64') {
+      if (c.read_only) {
+        return <span style={{ fontSize: 12, color: TEXT_SECONDARY }}>{String(c.value ?? '—')}</span>;
+      }
+      const span = (c.max - c.min) / (c.step || 1);
+      if (span > 0 && span <= 5000) {
+        return (
+          <input type="range" min={c.min} max={c.max} step={c.step || 1}
+            value={Number(c.value ?? c.default)} disabled={disabled}
+            style={{ width: 180, accentColor: '#3b82f6' }}
+            onChange={(e) => queueApply(c, Number(e.target.value))} />
+        );
+      }
+      return (
+        <input type="number" min={c.min} max={c.max} step={c.step || 1}
+          value={Number(c.value ?? c.default)} disabled={disabled}
+          style={{ width: 130, background: '#0f172a', color: TEXT_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 4, padding: '4px 8px', fontSize: 12 }}
+          onChange={(e) => queueApply(c, Number(e.target.value), 700)} />
+      );
+    }
+    return <span style={{ fontSize: 11, color: TEXT_MUTED }}>(미지원 타입)</span>;
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <span style={{ fontSize: 12, color: TEXT_MUTED }}>
+          카메라 드라이버가 노출하는 전체 파라미터입니다 — 값 변경 시 즉시 적용됩니다 (원시 단위, 힌트 병기)
+        </span>
+        <button onClick={load} disabled={loading}
+          style={{ padding: '5px 14px', background: '#1e293b', border: `1px solid ${BORDER}`, color: TEXT_SECONDARY, borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>
+          {loading ? '갱신 중…' : '새로고침'}
+        </button>
+      </div>
+      {error && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 10 }}>{error}</div>}
+      <div style={{ background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, overflow: 'hidden' }}>
+        {controls.map((c) => c.type === 'ctrl_class' ? (
+          <div key={c.id} style={{ padding: '8px 16px', background: '#0f172a', fontSize: 12, fontWeight: 600, color: TEXT_PRIMARY, borderTop: `1px solid ${BORDER}` }}>
+            {c.name}
+          </div>
+        ) : (
+          <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '7px 16px', borderTop: `1px solid ${BORDER}`, opacity: c.inactive ? 0.45 : 1 }}>
+            <span style={{ flex: '0 0 220px', fontSize: 12, color: TEXT_SECONDARY }}>
+              {c.name}{c.read_only && <span style={{ color: TEXT_MUTED }}> (읽기전용)</span>}
+            </span>
+            <span style={{ flex: '0 0 auto' }}>{widget(c)}</span>
+            {(c.type === 'int' || c.type === 'int64') && !c.read_only && (
+              <span style={{ fontSize: 11, color: TEXT_MUTED, minWidth: 90 }}>
+                {String(c.value ?? '—')} <span style={{ color: '#64748b' }}>[{c.min}–{c.max}]</span>
+              </span>
+            )}
+            <span style={{ fontSize: 11, color: '#60a5fa' }}>{controlHint(c.name, c.value)}</span>
+            <span style={{ fontSize: 11, color: TEXT_MUTED, marginLeft: 'auto' }}>{rowMsg[c.id] ?? ''}</span>
+          </div>
+        ))}
+        {!controls.length && !error && (
+          <div style={{ padding: 20, fontSize: 12, color: TEXT_MUTED }}>불러오는 중…</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Image Processing
 // ---------------------------------------------------------------------------
 
@@ -491,6 +634,7 @@ export function CameraPage() {
 
       {subTab === 'live'        && <LiveCapture status={status} onApply={refreshStatus} />}
       {subTab === 'acquisition' && <Acquisition status={status} onApply={refreshStatus} />}
+      {subTab === 'params'      && <ParametersTab />}
       {subTab === 'processing'  && <ImageProcessing />}
       {subTab === 'gallery'     && <Gallery />}
     </div>

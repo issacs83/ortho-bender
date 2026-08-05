@@ -476,6 +476,38 @@ class CameraService:
         )
 
     # ------------------------------------------------------------------
+    # Generic camera controls (ISI/CSI-2 backend)
+    # ------------------------------------------------------------------
+
+    async def list_controls(self) -> list[dict]:
+        """Enumerate every control the camera driver exposes.
+
+        Only available on the isi_csi2 backend (the avt3 subdevice is
+        exclusive-open, so all access goes through this service).
+        """
+        if self._backend != CameraBackend.ISI or self._cap is None:
+            raise RuntimeError(
+                f"Camera controls not supported on backend {self._backend.value!r}")
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._cap.ctrl.enumerate_controls)
+
+    async def set_control(self, control_id: int, value: int):
+        """Set a single driver control by id; returns the read-back value."""
+        if self._backend != CameraBackend.ISI or self._cap is None:
+            raise RuntimeError(
+                f"Camera controls not supported on backend {self._backend.value!r}")
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, self._cap.ctrl.set_control, control_id, value)
+        # Keep the cached status fields coherent with direct control writes.
+        try:
+            self._exposure_us = self._cap.ctrl.get_exposure_us()
+            self._gain_db = self._cap.ctrl.get_gain_db()
+        except OSError:
+            pass
+        return result
+
+    # ------------------------------------------------------------------
     # MJPEG streaming generator
     # ------------------------------------------------------------------
 

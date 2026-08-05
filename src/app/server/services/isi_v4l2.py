@@ -57,6 +57,13 @@ VIDIOC_STREAMOFF = 0x40045613
 VIDIOC_G_EXT_CTRLS = 0xC0205647
 VIDIOC_S_EXT_CTRLS = 0xC0205648
 VIDIOC_QUERY_EXT_CTRL = 0xC0E85667
+VIDIOC_QUERYMENU = 0xC02C5625
+
+CTRL_FLAG_NEXT = 0x80000000 | 0x40000000   # NEXT_CTRL | NEXT_COMPOUND
+CTRL_TYPE_NAMES = {1: "int", 2: "bool", 3: "menu", 4: "button", 5: "int64",
+                   6: "ctrl_class", 7: "string", 9: "int_menu"}
+CTRL_FLAG_READ_ONLY = 0x0004
+CTRL_FLAG_INACTIVE = 0x0010
 
 BUF_TYPE_CAPTURE_MPLANE = 9
 MEM_MMAP = 1
@@ -140,6 +147,19 @@ class _ExtControl(ctypes.Structure):
                 ("value64", _s64)]
 
 
+class _ExtControlPtr(ctypes.Structure):
+    """v4l2_ext_control variant with the union used as a payload pointer
+    (string/compound controls)."""
+    _pack_ = 1
+    _fields_ = [("id", _u32), ("size", _u32), ("reserved2", _u32),
+                ("ptr", ctypes.c_void_p)]
+
+
+class _QueryMenu(ctypes.Structure):
+    _fields_ = [("id", _u32), ("index", _u32), ("name", ctypes.c_char * 32),
+                ("reserved", _u32)]
+
+
 class _ExtControls(ctypes.Structure):
     _fields_ = [("which", _u32), ("count", _u32), ("error_idx", _u32),
                 ("request_fd", _s32), ("reserved", _u32 * 1),
@@ -197,6 +217,98 @@ class AvtSubdevControls:
         cs.count = 1
         cs.controls = ctypes.addressof(ec)
         fcntl.ioctl(self._fd, VIDIOC_S_EXT_CTRLS, cs)
+
+    # -- generic control surface (drives the UI "Parameters" tab) -------
+    def _query_one(self, cid: int) -> _QueryExtCtrl:
+        q = _QueryExtCtrl()
+        q.id = cid
+        fcntl.ioctl(self._fd, VIDIOC_QUERY_EXT_CTRL, q)
+        return q
+
+    def _get_string(self, cid: int, max_len: int) -> str | None:
+        buf = ctypes.create_string_buffer(max_len + 1)
+        ec = _ExtControlPtr()
+        ec.id = cid
+        ec.size = max_len + 1
+        ec.ptr = ctypes.addressof(buf)
+        cs = _ExtControls()
+        cs.which = 0
+        cs.count = 1
+        cs.controls = ctypes.addressof(ec)
+        try:
+            fcntl.ioctl(self._fd, VIDIOC_G_EXT_CTRLS, cs)
+            return buf.value.decode(errors="replace")
+        except OSError:
+            return None
+
+    def enumerate_controls(self) -> list[dict]:
+        """Walk every control the sensor driver exposes (NEXT_CTRL walk).
+
+        Returns UI-ready dicts: id, name, type, min/max/step/default,
+        flags (read_only/inactive), current value, and menu item names.
+        The list is whatever the connected camera model supports, so a
+        different Alvium (e.g. the C-158m) shows its own set.
+        """
+        out: list[dict] = []
+        cid = 0
+        while True:
+            q = _QueryExtCtrl()
+            q.id = cid | CTRL_FLAG_NEXT
+            try:
+                fcntl.ioctl(self._fd, VIDIOC_QUERY_EXT_CTRL, q)
+            except OSError:
+                break
+            cid = q.id
+            ctype = CTRL_TYPE_NAMES.get(q.type, f"type{q.type}")
+            entry: dict = {
+                "id": q.id,
+                "name": q.name.decode(),
+                "type": ctype,
+                "min": q.minimum,
+                "max": q.maximum,
+                "step": q.step,
+                "default": q.default_value,
+                "read_only": bool(q.flags & CTRL_FLAG_READ_ONLY),
+                "inactive": bool(q.flags & CTRL_FLAG_INACTIVE),
+            }
+            if ctype == "ctrl_class":
+                entry["value"] = None
+            elif ctype == "string":
+                entry["value"] = self._get_string(q.id, int(q.maximum))
+            elif ctype == "button" or ctype.startswith("type"):
+                entry["value"] = None      # buttons/compound have no scalar
+            else:
+                try:
+                    entry["value"] = self._get(q.id)
+                except OSError:
+                    entry["value"] = None
+            if ctype in ("menu", "int_menu"):
+                items: dict[int, str] = {}
+                for i in range(int(q.minimum), int(q.maximum) + 1):
+                    m = _QueryMenu()
+                    m.id = q.id
+                    m.index = i
+                    try:
+                        fcntl.ioctl(self._fd, VIDIOC_QUERYMENU, m)
+                        items[i] = m.name.decode()
+                    except OSError:
+                        pass
+                entry["menu"] = items
+            out.append(entry)
+        return out
+
+    def set_control(self, cid: int, value: int) -> int | None:
+        """Set one control by numeric id; returns the read-back value.
+
+        Buttons fire on any write and read back as None.
+        """
+        q = self._query_one(cid)
+        if q.flags & CTRL_FLAG_READ_ONLY:
+            raise PermissionError(f"control {q.name.decode()!r} is read-only")
+        self._set(cid, int(value))
+        if CTRL_TYPE_NAMES.get(q.type) == "button":
+            return None
+        return self._get(cid)
 
     # -- public, in CameraService units ---------------------------------
     def get_exposure_us(self) -> float:

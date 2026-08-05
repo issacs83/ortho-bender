@@ -16,6 +16,7 @@ import logging
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, Field
 
 from ..models.schemas import (
     ApiResponse,
@@ -165,6 +166,53 @@ async def camera_stream(
         svc.mjpeg_generator(fps=fps),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
+
+
+# ---------------------------------------------------------------------------
+# GET/POST /api/camera/controls — full driver control surface
+# ---------------------------------------------------------------------------
+
+@router.get("/controls", response_model=ApiResponse)
+async def list_camera_controls(
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Enumerate every parameter the connected camera exposes.
+
+    The list is read live from the sensor driver (exposure/gain with
+    auto-windows, gamma, black level, flips, binning, the full trigger
+    suite, device temperature, firmware/serial, ...) so it always matches
+    the attached camera model. Value units are the driver's raw units
+    (exposure ns, gain millibel, gamma x100, temperature 0.1 degC).
+    """
+    try:
+        return ok({"controls": await svc.list_controls()})
+    except RuntimeError as exc:
+        return err(str(exc), "CAMERA_CONTROLS_UNSUPPORTED")
+
+
+class CameraControlRequest(BaseModel):
+    id: int = Field(..., description="Numeric control id from GET /controls")
+    value: int = Field(
+        0, description="Raw driver-unit value; ignored for button controls")
+
+
+@router.post("/controls", response_model=ApiResponse)
+async def set_camera_control(
+    body: CameraControlRequest,
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Set one camera control by id (buttons fire on any write).
+
+    Returns the read-back value so the UI can display what the camera
+    actually accepted (values are clamped by the hardware).
+    """
+    try:
+        value = await svc.set_control(body.id, body.value)
+        return ok({"id": body.id, "value": value})
+    except PermissionError as exc:
+        return err(str(exc), "CAMERA_CONTROL_READ_ONLY")
+    except (RuntimeError, OSError) as exc:
+        return err(str(exc), "CAMERA_CONTROL_ERROR")
 
 
 # ---------------------------------------------------------------------------
