@@ -40,7 +40,7 @@ function SubTabBar({ active, onChange }: { active: CameraSubTab; onChange: (t: C
 // Live & Capture
 // ---------------------------------------------------------------------------
 
-function LiveCapture({ status }: { status: CameraStatus | null }) {
+function LiveCapture({ status, onApply }: { status: CameraStatus | null; onApply: () => void }) {
   // Key is versioned: the old 'camera.useWs' could get stuck true forever
   // after a single MJPEG error (e.g. a server restart mid-stream).
   const [useWs, setUseWs] = usePersistentState('camera.useWs.v2', false);
@@ -50,6 +50,42 @@ function LiveCapture({ status }: { status: CameraStatus | null }) {
   const [frameCount, setFrameCount] = useState(0);
   const [streamRetry, setStreamRetry] = useState(0);
   const wsFrame = useCameraWs(useWs);
+
+  // Live tuning — sliders auto-apply (debounced) so exposure/gain can be
+  // judged against the stream without leaving this view.
+  const [liveExp, setLiveExp] = useState(20000);
+  const [liveGain, setLiveGain] = useState(0);
+  const [tuneMsg, setTuneMsg] = useState('');
+  const tuneTimer = useRef<number | null>(null);
+  const lastTouch = useRef(0);
+  const pending = useRef<{ exposure_us?: number; gain_db?: number }>({});
+
+  // Follow the camera's real values unless the user touched a slider
+  // in the last few seconds (the 3 s status poll would fight the drag).
+  useEffect(() => {
+    if (Date.now() - lastTouch.current < 4000) return;
+    const exp = status?.exposure_us ?? status?.current_exposure_us;
+    const gain = status?.gain_db ?? status?.current_gain_db;
+    if (exp != null) setLiveExp(Math.round(exp));
+    if (gain != null) setLiveGain(gain);
+  }, [status]);
+
+  function queueTune(patch: { exposure_us?: number; gain_db?: number }) {
+    lastTouch.current = Date.now();
+    pending.current = { ...pending.current, ...patch };
+    if (tuneTimer.current != null) window.clearTimeout(tuneTimer.current);
+    tuneTimer.current = window.setTimeout(async () => {
+      const body = pending.current;
+      pending.current = {};
+      try {
+        await cameraApi.settings(body);
+        setTuneMsg(`적용됨 ${new Date().toLocaleTimeString()}`);
+        onApply();
+      } catch (e) {
+        setTuneMsg(`적용 실패: ${String(e)}`);
+      }
+    }, 400);
+  }
 
   useEffect(() => { if (wsFrame) setFrameCount((c) => c + 1); }, [wsFrame]);
 
@@ -99,19 +135,28 @@ function LiveCapture({ status }: { status: CameraStatus | null }) {
           </div>
         )}
 
-        {/* HUD - top-left */}
+        {/* HUD - top-left (flat bench schema with premium-shape fallback) */}
         {status && (
           <div style={{ position: 'absolute', top: 8, left: 8, background: 'rgba(0,0,0,0.6)', borderRadius: 4, padding: '4px 8px', fontSize: 11, color: TEXT_PRIMARY }}>
-            {status.current_roi ? `${status.current_roi.width}×${status.current_roi.height}` : '—'} &nbsp;|&nbsp; {status.current_fps?.toFixed(1) ?? '—'} fps &nbsp;|&nbsp; {status.current_pixel_format ?? '—'}
+            {status.width && status.height ? `${status.width}×${status.height}`
+              : status.current_roi ? `${status.current_roi.width}×${status.current_roi.height}` : '—'}
+            &nbsp;|&nbsp; {(status.fps ?? status.current_fps)?.toFixed(1) ?? '—'} fps
+            &nbsp;|&nbsp; {status.format ?? status.current_pixel_format ?? '—'}
           </div>
         )}
 
         {/* HUD - top-right */}
-        {status && (
-          <div style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.6)', borderRadius: 4, padding: '4px 8px', fontSize: 11, color: TEXT_PRIMARY, textAlign: 'right' as const }}>
-            Exp: {status.current_exposure_us != null ? `${status.current_exposure_us.toFixed(0)} μs` : '—'} &nbsp;|&nbsp; Gain: {status.current_gain_db?.toFixed(1) ?? '—'} dB &nbsp;|&nbsp; {status.current_temperature_c?.toFixed(0) ?? '—'}°C
-          </div>
-        )}
+        {status && (() => {
+          const exp = status.exposure_us ?? status.current_exposure_us;
+          const gain = status.gain_db ?? status.current_gain_db;
+          return (
+            <div style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.6)', borderRadius: 4, padding: '4px 8px', fontSize: 11, color: TEXT_PRIMARY, textAlign: 'right' as const }}>
+              Exp: {exp != null ? (exp >= 1000 ? `${(exp / 1000).toFixed(1)} ms` : `${exp.toFixed(0)} μs`) : '—'}
+              &nbsp;|&nbsp; Gain: {gain?.toFixed(1) ?? '—'} dB
+              {status.current_temperature_c != null && <> &nbsp;|&nbsp; {status.current_temperature_c.toFixed(0)}°C</>}
+            </div>
+          );
+        })()}
 
         {/* HUD - bottom-right */}
         <div style={{ position: 'absolute', bottom: 8, right: 8, background: 'rgba(0,0,0,0.6)', borderRadius: 4, padding: '4px 8px', fontSize: 10, color: '#94a3b8' }}>
@@ -142,10 +187,24 @@ function LiveCapture({ status }: { status: CameraStatus | null }) {
         </button>
       </div>
 
+      {/* Live tuning — adjust while watching the stream */}
+      <div style={{ background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '12px 16px', marginBottom: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 13, color: TEXT_PRIMARY }}>Live Tuning</h3>
+          <span style={{ fontSize: 11, color: tuneMsg.startsWith('적용 실패') ? '#ef4444' : TEXT_MUTED }}>{tuneMsg || '슬라이더를 움직이면 자동 적용됩니다'}</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '4px 24px' }}>
+          <SliderInput label="Exposure" value={liveExp} min={20} max={100000} step={100} unit="μs"
+            onChange={(v: number) => { setLiveExp(v); queueTune({ exposure_us: v }); }} />
+          <SliderInput label="Gain" value={liveGain} min={0} max={48} step={0.5} unit="dB"
+            onChange={(v: number) => { setLiveGain(v); queueTune({ gain_db: v }); }} />
+        </div>
+      </div>
+
       {/* Status bar */}
       <div style={{ display: 'flex', gap: 14, fontSize: 12, color: TEXT_MUTED }}>
         <StatusBadge variant={status?.connected ? 'success' : 'error'} label={status?.connected ? 'Connected' : 'Disconnected'} />
-        <span>{status?.device ? `${status.device.vendor} ${status.device.model}` : 'VimbaX'}</span>
+        <span>{status?.device_id ?? (status?.device ? `${status.device.vendor} ${status.device.model}` : '—')}</span>
         <span>Frames: {frameCount}</span>
       </div>
     </div>
@@ -157,10 +216,23 @@ function LiveCapture({ status }: { status: CameraStatus | null }) {
 // ---------------------------------------------------------------------------
 
 function Acquisition({ status, onApply }: { status: CameraStatus | null; onApply: () => void }) {
-  const [exposureUs, setExposureUs] = useState(status?.current_exposure_us ?? 5000);
+  const [exposureUs, setExposureUs] = useState(
+    status?.exposure_us ?? status?.current_exposure_us ?? 5000);
   const [exposureAuto, setExposureAuto] = useState(false);
-  const [gainDb, setGainDb] = useState(status?.current_gain_db ?? 0);
+  const [gainDb, setGainDb] = useState(status?.gain_db ?? status?.current_gain_db ?? 0);
   const [gainAuto, setGainAuto] = useState(false);
+  const dirty = useRef(false);
+
+  // Track the camera's real values so remounting this tab (or another
+  // view changing settings) doesn't silently reset the controls to
+  // defaults. User edits win until the next Apply.
+  useEffect(() => {
+    if (dirty.current) return;
+    const exp = status?.exposure_us ?? status?.current_exposure_us;
+    const gain = status?.gain_db ?? status?.current_gain_db;
+    if (exp != null) setExposureUs(Math.round(exp));
+    if (gain != null) setGainDb(gain);
+  }, [status]);
   const [trigger, setTrigger] = useState<'freerun' | 'software' | 'external'>('freerun');
   const [fpsEnabled, setFpsEnabled] = useState(false);
   const [fps, setFps] = useState(15);
@@ -171,6 +243,7 @@ function Acquisition({ status, onApply }: { status: CameraStatus | null; onApply
     setApplying(true);
     try {
       await cameraApi.settings({ exposure_us: exposureAuto ? undefined : exposureUs, gain_db: gainAuto ? undefined : gainDb });
+      dirty.current = false;
       onApply();
     } catch (e) { setError(String(e)); }
     finally { setApplying(false); }
@@ -192,7 +265,7 @@ function Acquisition({ status, onApply }: { status: CameraStatus | null; onApply
             </label>
           ))}
         </div>
-        {!exposureAuto && <SliderInput label="ExposureTime" value={exposureUs} min={20} max={100000} step={100} unit="μs" onChange={setExposureUs} />}
+        {!exposureAuto && <SliderInput label="ExposureTime" value={exposureUs} min={20} max={100000} step={100} unit="μs" onChange={(v: number) => { dirty.current = true; setExposureUs(v); }} />}
         <button onClick={apply} disabled={applying} style={{ ...applyBtn, display: 'flex', alignItems: 'center', gap: 6, opacity: applying ? 0.7 : 1 }}>
           {applying && <span style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid rgba(255,255,255,0.3)', borderTop: '2px solid #fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />}
           Apply
@@ -210,7 +283,7 @@ function Acquisition({ status, onApply }: { status: CameraStatus | null; onApply
             </label>
           ))}
         </div>
-        {!gainAuto && <SliderInput label="Gain" value={gainDb} min={0} max={24} step={0.5} unit="dB" onChange={setGainDb} />}
+        {!gainAuto && <SliderInput label="Gain" value={gainDb} min={0} max={48} step={0.5} unit="dB" onChange={(v: number) => { dirty.current = true; setGainDb(v); }} />}
         <button onClick={apply} disabled={applying} style={applyBtn}>Apply</button>
       </div>
 
@@ -416,7 +489,7 @@ export function CameraPage() {
 
       <SubTabBar active={subTab} onChange={setSubTab} />
 
-      {subTab === 'live'        && <LiveCapture status={status} />}
+      {subTab === 'live'        && <LiveCapture status={status} onApply={refreshStatus} />}
       {subTab === 'acquisition' && <Acquisition status={status} onApply={refreshStatus} />}
       {subTab === 'processing'  && <ImageProcessing />}
       {subTab === 'gallery'     && <Gallery />}
