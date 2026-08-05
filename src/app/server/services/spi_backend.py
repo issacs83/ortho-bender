@@ -79,9 +79,11 @@ _SILENCE_CYCLES = 5             # chopper-off cycles between jogs.
 # sweep, so a small speed step reaches target almost immediately while a
 # 200 → 8000 Hz jump still ramps over ~1 s. At DRVCTRL 1/16 + DEDGE,
 # 8000 Hz/s ≈ 0 → 300 RPM in one second — bench-tune if an axis stalls
-# during acceleration.
+# during acceleration. These are the DEFAULTS; per-axis motion profiles
+# (services/motion_profiles.py) override them via pulse_step(profile=).
 _RAMP_ACCEL_HZ_PER_S = 8000
 _RAMP_TICK_S = 0.03
+_RAMP_DOWN_MAX_S = 1.0     # cap on decel ramp duration (stop responsiveness)
 
 # Bench convention: ▶ button (direction=+1) must rotate the motor
 # clockwise (forward), ◀ button (direction=-1) counter-clockwise.
@@ -484,7 +486,8 @@ class SpidevMotorBackend(MotorBackend):
             self.positions[a] = self.positions.get(a, 0) + (count * direction)
 
     async def pulse_step(
-        self, axis: int, count: int, freq_hz: int, direction: int
+        self, axis: int, count: int, freq_hz: int, direction: int,
+        profile: dict | None = None,
     ) -> None:
         """Generate `count` STEP pulses at `freq_hz` for `axis`.
 
@@ -532,20 +535,19 @@ class SpidevMotorBackend(MotorBackend):
                 raise RuntimeError(f"axis {axis} fault detected (0x{status:05X})")
 
             # PWM4 setup — STEP signal goes live now.
-            # Acceleration-limited soft start from 200 Hz so high-inertia
-            # axes (FEED via lead screw) don't stall on the first STEP.
-            # Unlike the previous fixed 12-step/0.36 s sweep, ramp time is
-            # proportional to the frequency jump: a small speed change
-            # reaches target in one tick (~30 ms) while 200 → 8000 Hz
-            # takes ~1 s at _RAMP_ACCEL_HZ_PER_S.
+            # Acceleration-limited soft start (per-axis motion profile:
+            # start floor, accel rate, linear vs S-curve shape). A small
+            # speed change reaches target in ~one tick while a full jump
+            # ramps at the configured acceleration.
+            p = profile or {}
+            start_hz = int(p.get("start_hz", 200))
+            accel = float(p.get("accel_hz_s", _RAMP_ACCEL_HZ_PER_S))
+            decel = float(p.get("decel_hz_s", _RAMP_ACCEL_HZ_PER_S))
+            shape = p.get("shape", "linear")
             await self._pwm_ensure_exported()
-            START_HZ = 200
-            h = min(START_HZ, freq_hz)
+            h = min(start_hz, freq_hz)
             await self._pwm_set_hz(h)
-            while h < freq_hz:
-                await asyncio.sleep(_RAMP_TICK_S)
-                h = min(freq_hz, h + int(_RAMP_ACCEL_HZ_PER_S * _RAMP_TICK_S))
-                await self._pwm_set_hz(h)
+            await self._ramp(h, freq_hz, accel, shape)
             t0 = time.monotonic()
 
             # Run + fault/stall monitoring with 100 ms polling.
@@ -553,26 +555,52 @@ class SpidevMotorBackend(MotorBackend):
             # broadcast (also at 100 ms) shows real-time progress.
             stall_since: float | None = None
             STALL_TIMEOUT_S = 0.6
-            while time.monotonic() - t0 < duration_s:
-                await asyncio.sleep(0.1)
-                elapsed = time.monotonic() - t0
-                steps_so_far = min(int(elapsed * freq_hz), count)
-                self.positions[axis] = pos_before + (steps_so_far * direction)
+            clean_end = True
+            # Decel rate: honour the profile but never take longer than
+            # _RAMP_DOWN_MAX_S so a stop always feels responsive.
+            span = max(0, freq_hz - min(start_hz, freq_hz))
+            eff_decel = max(decel, span / _RAMP_DOWN_MAX_S) if span else decel
+            try:
+                while time.monotonic() - t0 < duration_s:
+                    await asyncio.sleep(0.1)
+                    elapsed = time.monotonic() - t0
+                    steps_so_far = min(int(elapsed * freq_hz), count)
+                    self.positions[axis] = pos_before + (steps_so_far * direction)
 
-                status = await self._read_status(axis)
-                if self._has_fault(status):
-                    log.error("axis %d fault during run: 0x%05X — aborting", axis, status)
-                    break
-                if self._is_stall(status):
-                    if stall_since is None:
-                        stall_since = time.monotonic()
-                        log.warning("axis %d stall (SG=1) — monitoring", axis)
-                    elif time.monotonic() - stall_since >= STALL_TIMEOUT_S:
-                        log.error("axis %d persistent stall (>%.1fs) — aborting",
-                                  axis, STALL_TIMEOUT_S)
+                    status = await self._read_status(axis)
+                    if self._has_fault(status):
+                        log.error("axis %d fault during run: 0x%05X — aborting", axis, status)
+                        clean_end = False   # faults halt hard, no decel
                         break
-                else:
-                    stall_since = None
+                    if self._is_stall(status):
+                        if stall_since is None:
+                            stall_since = time.monotonic()
+                            log.warning("axis %d stall (SG=1) — monitoring", axis)
+                        elif time.monotonic() - stall_since >= STALL_TIMEOUT_S:
+                            log.error("axis %d persistent stall (>%.1fs) — aborting",
+                                      axis, STALL_TIMEOUT_S)
+                            clean_end = False
+                            break
+                    else:
+                        stall_since = None
+            except asyncio.CancelledError:
+                # Graceful stop (jog_stop / task cancel): decelerate before
+                # the finally block silences the chopper — UNLESS E-STOP
+                # already killed the PWM (self._pwm_active False), in which
+                # case the motor is electrically stopped and any ramp here
+                # would delay the safety path.
+                if self._pwm_active:
+                    try:
+                        await self._ramp(freq_hz, min(start_hz, freq_hz),
+                                         eff_decel, shape)
+                    except Exception:
+                        pass
+                raise
+            # Natural end of travel: decelerate to the floor before stopping
+            # so high-speed jogs don't slam to zero (missed-step/resonance
+            # risk at 1/16 microstep speeds).
+            if clean_end and self._pwm_active:
+                await self._ramp(freq_hz, min(start_hz, freq_hz), eff_decel, shape)
         finally:
             # Ensure motor is silenced no matter how we exit (success,
             # cancellation, fault, exception during init).
@@ -770,6 +798,34 @@ class SpidevMotorBackend(MotorBackend):
     # -------------------------------------------------------------------
     # PWM4 control (STEP signal, parallel to all 3 chips)
     # -------------------------------------------------------------------
+    async def _ramp(self, f_from: int, f_to: int, rate_hz_s: float,
+                    shape: str = "linear") -> None:
+        """Slew the PWM frequency f_from → f_to.
+
+        linear: constant slope = rate_hz_s (trapezoidal velocity).
+        scurve: smoothstep schedule f(τ) = f0 + Δf·(3τ²−2τ³) — jerk-
+        limited with C1-continuous acceleration; T is chosen so the PEAK
+        slope equals rate_hz_s (smoothness never exceeds the configured
+        acceleration). At the ~30 ms tick this is a frequency schedule,
+        not per-step shaping — adequate for the bench PWM path.
+        """
+        span = abs(f_to - f_from)
+        if span == 0 or rate_hz_s <= 0:
+            await self._pwm_set_hz(f_to)
+            return
+        if shape == "scurve":
+            total_s = 1.5 * span / rate_hz_s   # smoothstep peak slope = 1.5·Δf/T
+        else:
+            total_s = span / rate_hz_s
+        total_s = max(total_s, _RAMP_TICK_S)
+        t = 0.0
+        while t < total_s:
+            await asyncio.sleep(_RAMP_TICK_S)
+            t = min(total_s, t + _RAMP_TICK_S)
+            tau = t / total_s
+            s = tau * tau * (3.0 - 2.0 * tau) if shape == "scurve" else tau
+            await self._pwm_set_hz(int(round(f_from + (f_to - f_from) * s)))
+
     async def _pwm_ensure_exported(self) -> None:
         if not os.path.isdir(self._pwm_path):
             try:

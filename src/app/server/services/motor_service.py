@@ -91,6 +91,14 @@ class MotorService:
         """Inject the CalibrationService used for axis steps/unit conversion."""
         self._calibration = cal
 
+    def set_motion_profiles(self, profiles) -> None:
+        """Inject the MotionProfileService (per-axis accel/decel/shape)."""
+        self._motion_profiles = profiles
+
+    def _profile_for(self, axis: int) -> dict | None:
+        mp = getattr(self, "_motion_profiles", None)
+        return mp.get(axis) if mp is not None else None
+
     def _ensure_not_estop(self, action: str) -> None:
         """HARD GATE — refuse motion commands while bench E-STOP is latched.
 
@@ -156,7 +164,8 @@ class MotorService:
         log.info("jog_start axis=%d cs=%d freq=%dHz dir=%+d (max %ds, continuous=%s)",
                  axis, cs, freq, dir_sign, max_duration_s, continuous)
         self._bench_jog_task = self._asyncio.create_task(
-            self._spi_backend.pulse_step(cs, steps, freq, dir_sign)
+            self._spi_backend.pulse_step(cs, steps, freq, dir_sign,
+                                         profile=self._profile_for(axis))
         )
         return {
             "status": "jog_started",
@@ -231,7 +240,8 @@ class MotorService:
             "bench jog axis=%d cs=%d steps=%d freq=%dHz dir=%+d (req dist=%.3f speed=%.3f)",
             axis, cs, steps, freq, direction, distance, speed,
         )
-        await self._spi_backend.pulse_step(cs, steps, freq, direction)
+        await self._spi_backend.pulse_step(cs, steps, freq, direction,
+                                           profile=self._profile_for(axis))
 
     # ------------------------------------------------------------------
     # Status

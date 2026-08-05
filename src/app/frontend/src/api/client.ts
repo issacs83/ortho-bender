@@ -32,6 +32,16 @@ export interface AxisStatus {
   signals?: AxisSignals | null;
 }
 
+/** Per-axis motion profile (jog defaults + acceleration shaping). */
+export interface MotionProfile {
+  jog_speed: number;    // units/s (mm/s or deg/s)
+  step_size: number;    // units per incremental jog
+  start_hz: number;     // ramp floor frequency
+  accel_hz_s: number;   // acceleration (Hz/s)
+  decel_hz_s: number;   // deceleration (Hz/s)
+  shape: 'linear' | 'scurve';
+}
+
 export interface MotorStatus {
   state: number;
   axes: AxisStatus[];
@@ -219,6 +229,15 @@ export const motorApi = {
     request("/api/motor/zero", {
       method: "POST",
       body: JSON.stringify({ axis, value }),
+    }),
+
+  motionProfiles: (): Promise<{ profiles: Record<number, MotionProfile> }> =>
+    request("/api/motor/profiles"),
+
+  updateMotionProfile: (axis: number, patch: Partial<MotionProfile>): Promise<{ axis: number; profile: MotionProfile }> =>
+    request(`/api/motor/profiles/${axis}`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
     }),
 
   stop: (): Promise<MotorStatus> =>

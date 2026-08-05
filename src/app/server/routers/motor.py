@@ -168,6 +168,55 @@ async def motor_jog_stop(
 # POST /api/motor/home
 # ---------------------------------------------------------------------------
 
+from pydantic import BaseModel, Field
+
+
+class MotionProfileUpdate(BaseModel):
+    """Partial per-axis motion profile update — omitted fields keep their value."""
+    jog_speed: float | None = Field(None, gt=0, le=40,
+                                    description="Default jog rate (mm/s or deg/s)")
+    step_size: float | None = Field(None, gt=0, le=360,
+                                    description="Incremental jog distance (mm or deg)")
+    start_hz: int | None = Field(None, ge=50, le=2000,
+                                 description="Ramp floor frequency (Hz)")
+    accel_hz_s: int | None = Field(None, ge=200, le=40000,
+                                   description="Acceleration (Hz/s PWM slew)")
+    decel_hz_s: int | None = Field(None, ge=200, le=40000,
+                                   description="Deceleration for stop/finish ramps (Hz/s)")
+    shape: str | None = Field(None, pattern="^(linear|scurve)$",
+                              description="Velocity profile: trapezoidal 'linear' "
+                                          "or jerk-limited 'scurve'")
+
+
+def _profiles(request: Request):
+    return request.app.state.motion_profiles
+
+
+@router.get("/profiles", response_model=ApiResponse)
+async def get_motion_profiles(request: Request) -> ApiResponse:
+    """Per-axis motion profiles (jog defaults + acceleration shaping).
+
+    S-curve uses a smoothstep frequency schedule whose peak slope equals
+    accel_hz_s, so switching shape never exceeds the configured
+    acceleration. Applied by the bench to every jog/move ramp, including
+    the deceleration ramp on stop and end-of-travel.
+    """
+    return ok({"profiles": _profiles(request).all()})
+
+
+@router.put("/profiles/{axis}", response_model=ApiResponse)
+async def update_motion_profile(
+    axis: int, body: MotionProfileUpdate, request: Request,
+) -> ApiResponse:
+    """Update one axis' motion profile (partial; persisted on the board)."""
+    try:
+        updated = _profiles(request).update(
+            axis, body.model_dump(exclude_none=True))
+        return ok({"axis": axis, "profile": updated})
+    except ValueError as exc:
+        return err(str(exc), "MOTOR_PROFILE_ERROR")
+
+
 @router.post("/zero", response_model=ApiResponse)
 async def motor_set_zero(
     body: MotorZeroRequest,

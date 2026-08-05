@@ -189,6 +189,10 @@ async def lifespan(app: FastAPI):
     # Per-axis steps/unit calibration so jog/move convert mm/deg → step rate
     # using the actual mechanical ratios. Defaults match the legacy "200
     # microsteps = 1 unit" behaviour but are overridable from Settings.
+    from .services.motion_profiles import MotionProfileService
+    mp_svc = MotionProfileService()
+    motor_svc.set_motion_profiles(mp_svc)
+    app.state.motion_profiles = mp_svc
     from .services.calibration_service import CalibrationService
     cal_svc = CalibrationService()
     motor_svc.set_calibration(cal_svc)

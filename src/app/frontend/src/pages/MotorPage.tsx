@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
-import { motorApi, diagApi, type MotorStatus, type AxisStatus, type DriverProbeResult } from '../api/client';
+import { motorApi, diagApi, type MotorStatus, type AxisStatus, type DriverProbeResult, type MotionProfile } from '../api/client';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { SliderInput } from '../components/ui/SliderInput';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -77,8 +77,31 @@ function SubTabBar({ active, onChange }: { active: MotorSubTab; onChange: (t: Mo
 
 function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   // Persisted (survives reload): user-chosen jog parameters, target positions
-  const [jogSpeed, setJogSpeed] = usePersistentState('motor.jogSpeed', 10);
-  const [stepSize, setStepSize] = usePersistentState('motor.stepSize', 1);
+  const [jogSpeed] = usePersistentState('motor.jogSpeed', 10);   // legacy fallback
+  const [stepSize] = usePersistentState('motor.stepSize', 1);    // legacy fallback
+
+  // Per-axis motion profiles (server-persisted): jog speed / step size /
+  // accel / decel / linear-vs-S-curve. Edits auto-save (debounced).
+  const [profiles, setProfiles] = useState<Record<number, MotionProfile>>({});
+  const profTimers = useRef<Record<number, number>>({});
+  const profPending = useRef<Record<number, Partial<MotionProfile>>>({});
+  useEffect(() => {
+    motorApi.motionProfiles().then((r) => setProfiles(r.profiles)).catch(() => null);
+  }, []);
+  const axisSpeed = (axis: number) => profiles[axis]?.jog_speed ?? jogSpeed;
+  const axisStep = (axis: number) => profiles[axis]?.step_size ?? stepSize;
+  function patchProfile(axis: number, patch: Partial<MotionProfile>) {
+    setProfiles((p) => ({ ...p, [axis]: { ...(p[axis] as MotionProfile), ...patch } }));
+    profPending.current[axis] = { ...profPending.current[axis], ...patch };
+    if (profTimers.current[axis]) window.clearTimeout(profTimers.current[axis]);
+    profTimers.current[axis] = window.setTimeout(() => {
+      const body = profPending.current[axis];
+      profPending.current[axis] = {};
+      motorApi.updateMotionProfile(axis, body)
+        .then((r) => setProfiles((p) => ({ ...p, [axis]: r.profile })))
+        .catch(() => null);
+    }, 500);
+  }
   const [targetAxis, setTargetAxis] = usePersistentState('motor.targetAxis', 0);
   const [targetPos, setTargetPos] = usePersistentState('motor.targetPos', 0);
   const [multiTarget, setMultiTarget] = usePersistentState<number[]>('motor.multiTarget', [0, 0, 0, 0]);
@@ -114,7 +137,7 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
 
   async function jog(axis: number, direction: 1 | -1) {
     setError(null);
-    try { await motorApi.jog(axis, direction, jogSpeed, stepSize); } catch (e) { setError(String(e)); }
+    try { await motorApi.jog(axis, direction, axisSpeed(axis), axisStep(axis)); } catch (e) { setError(String(e)); }
   }
 
   // Long-press jog with reliable release: button DOM only registers the
@@ -150,14 +173,14 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   function startContinuousJog(axis: number, dir: 1 | -1) {
     // Long-press jog: 5 s backend fallback, frontend stops on pointerup.
     setError(null);
-    motorApi.jogStart(axis, dir, jogSpeed).catch((e) => setError(String(e)));
+    motorApi.jogStart(axis, dir, axisSpeed(axis)).catch((e) => setError(String(e)));
     attachReleaseHandlers();
   }
   function startSingleClickRun(axis: number, dir: 1 | -1) {
     // Single-click continuous run: 60 s backend fallback, user stops with
     // the row's STOP button. No window-release listener attached.
     setError(null);
-    motorApi.jogStart(axis, dir, jogSpeed, { continuous: true })
+    motorApi.jogStart(axis, dir, axisSpeed(axis), { continuous: true })
       .catch((e) => setError(String(e)));
   }
   function stopContinuousJog() {
@@ -168,12 +191,12 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
 
   async function moveTo() {
     setError(null);
-    try { await motorApi.move(targetAxis, targetPos, jogSpeed); } catch (e) { setError(String(e)); }
+    try { await motorApi.move(targetAxis, targetPos, axisSpeed(targetAxis)); } catch (e) { setError(String(e)); }
   }
   async function moveAll() {
     setShowMoveAllModal(false);
     for (let i = 0; i < 4; i++) {
-      try { await motorApi.move(i, multiTarget[i], jogSpeed); } catch { /* continue */ }
+      try { await motorApi.move(i, multiTarget[i], axisSpeed(i)); } catch { /* continue */ }
     }
   }
 
@@ -379,32 +402,74 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, marginBottom: 16 }}>
-        <div style={cardStyle}>
-          {/* Slider applies to whichever axis the operator jogs next, so
-              the unit is axis-native: mm/s for FEED/LIFT, deg/s for
-              BEND/ROTATE. We label it generically and let the per-axis
-              calibration in Settings translate units → step rate. */}
-          <SliderInput
-            label="Jog Speed"
-            value={jogSpeed}
-            min={1}
-            max={40}
-            step={0.5}
-            unit="units/s"
-            help="Speed in axis-native units (FEED/LIFT = mm/s, BEND/ROTATE = deg/s). Axis Calibration (Settings) converts this to motor STEP rate. Bench cap is 8000 Hz STEP rate (≈ 2400 RPM at 200 step/rev) — slider max 40 matches that cap with the default calibration."
-            onChange={setJogSpeed}
-            style={{ marginBottom: 12 }}
-          />
-          <SliderInput
-            label="Step Size"
-            value={stepSize}
-            min={0.1}
-            max={50}
-            step={0.1}
-            unit="units"
-            help="Single jog distance in axis-native units (mm for FEED/LIFT, deg for BEND/ROTATE). Per-axis safety cap (mm: 100, deg: 360) is enforced by the backend."
-            onChange={setStepSize}
-          />
+        <div style={{ ...cardStyle, gridColumn: '1 / -1' }}>
+          <h3 style={{ margin: '0 0 4px', fontSize: 14, color: TEXT_PRIMARY }}>Per-Axis Motion Profile</h3>
+          <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 10 }}>
+            Speed/step in axis-native units (FEED/LIFT = mm, BEND/ROTATE = deg).
+            Accel/Decel shape the STEP-rate ramp; S-curve runs a jerk-limited
+            smoothstep with the same peak acceleration. Saved on the board.
+          </div>
+          {Object.keys(profiles).length === 0 && (
+            <div style={{ fontSize: 12, color: TEXT_MUTED }}>Loading profiles…</div>
+          )}
+          <div style={{ display: 'grid', gap: 6 }}>
+            {(motorStatus?.axes ?? []).map((ax) => {
+              const p = profiles[ax.axis];
+              if (!p) return null;
+              const unit = AXIS_PHYSICAL_UNIT[ax.axis] ?? 'units';
+              const numBox = (
+                value: number, min: number, max: number, step: number,
+                onVal: (v: number) => void, width = 64,
+              ) => (
+                <input
+                  type="number" value={value} min={min} max={max} step={step}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    if (Number.isFinite(v) && v >= min && v <= max) onVal(v);
+                  }}
+                  style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '4px 6px', borderRadius: 4, fontSize: 12, width }}
+                />
+              );
+              return (
+                <div key={ax.axis} style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', padding: '6px 8px', background: BG_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 6 }}>
+                  <span style={{ color: AXIS_COLORS[ax.axis], fontWeight: 600, fontSize: 12, width: 58 }}>{AXIS_NAMES[ax.axis]}</span>
+                  <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
+                    Speed {numBox(p.jog_speed, 0.1, 40, 0.5, (v) => patchProfile(ax.axis, { jog_speed: v }))} {unit}/s
+                  </label>
+                  <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
+                    Step {numBox(p.step_size, 0.01, 360, 0.1, (v) => patchProfile(ax.axis, { step_size: v }))} {unit}
+                  </label>
+                  <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
+                    Accel {numBox(p.accel_hz_s, 200, 40000, 100, (v) => patchProfile(ax.axis, { accel_hz_s: v }), 72)} Hz/s
+                  </label>
+                  <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
+                    Decel {numBox(p.decel_hz_s, 200, 40000, 100, (v) => patchProfile(ax.axis, { decel_hz_s: v }), 72)} Hz/s
+                  </label>
+                  <div style={{ display: 'flex', gap: 0, marginLeft: 'auto' }}>
+                    {(['linear', 'scurve'] as const).map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => patchProfile(ax.axis, { shape: s })}
+                        title={s === 'linear'
+                          ? 'Trapezoidal: constant acceleration ramp'
+                          : 'S-curve: jerk-limited smoothstep ramp (same peak accel, gentler start/end)'}
+                        style={{
+                          padding: '4px 10px', fontSize: 11, cursor: 'pointer',
+                          border: `1px solid ${BORDER}`,
+                          borderRadius: s === 'linear' ? '4px 0 0 4px' : '0 4px 4px 0',
+                          background: p.shape === s ? '#1d4ed8' : '#1e293b',
+                          color: p.shape === s ? '#fff' : TEXT_SECONDARY,
+                          fontWeight: p.shape === s ? 600 : 400,
+                        }}
+                      >
+                        {s === 'linear' ? 'Linear' : 'S-curve'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
         <div style={cardStyle}>
           <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Move To Position</h3>
