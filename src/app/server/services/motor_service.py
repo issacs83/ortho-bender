@@ -96,18 +96,36 @@ class MotorService:
         self._motion_profiles = profiles
 
     def _profile_for(self, axis: int) -> dict | None:
+        """Backend-facing ramp profile for `axis`.
+
+        Profiles store accel/decel in physical units (mm/s² or deg/s²);
+        the ramp engine consumes STEP-frequency slew (Hz/s). Convert here
+        with the same per-axis steps_per_unit calibration used for speed,
+        clamped to the range the bench PWM path was validated for.
+        """
         mp = getattr(self, "_motion_profiles", None)
-        return mp.get(axis) if mp is not None else None
+        if mp is None:
+            return None
+        p = mp.get(axis)
+        cal = self._calibration
+        spu = cal.steps_per_unit(axis) if cal else 200.0
+        out = {"start_hz": p["start_hz"], "shape": p["shape"]}
+        for phys, hz in (("accel", "accel_hz_s"), ("decel", "decel_hz_s")):
+            out[hz] = int(max(200, min(40000, float(p[phys]) * spu)))
+        return out
 
     def _max_speed_for(self, axis: int) -> float:
         """Per-axis machine velocity limit (profile max_speed).
 
         Command-time clamp, GRBL $110-112 style: a machine limit distinct
         from the operator's jog_speed default — direct API callers cannot
-        exceed it either.
+        exceed it either. Reads the stored profile, NOT _profile_for's
+        backend dict (which carries only ramp parameters).
         """
-        p = self._profile_for(axis)
-        return float(p["max_speed"]) if p and "max_speed" in p else 40.0
+        mp = getattr(self, "_motion_profiles", None)
+        if mp is None:
+            return 40.0
+        return float(mp.get(axis).get("max_speed", 40.0))
 
     def _ensure_not_estop(self, action: str) -> None:
         """HARD GATE — refuse motion commands while bench E-STOP is latched.
@@ -481,7 +499,9 @@ class MotorService:
             # 1) Kill PWM + silence chips immediately. Coils dead first so the
             #    motor is mechanically safe even if step 2 raises.
             try:
-                await self._spi_backend._pwm_disable()
+                # kill=True latches the PWM off — an in-flight ramp tick
+                # must not be able to re-enable STEP before the cancel lands.
+                await self._spi_backend._pwm_disable(kill=True)
             except Exception as exc:
                 log.warning("E-STOP PWM disable failed: %s", exc)
             for cs in (0, 1, 2):

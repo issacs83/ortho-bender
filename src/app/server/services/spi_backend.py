@@ -183,6 +183,12 @@ class SpidevMotorBackend(MotorBackend):
         self._last_sg: dict[int, bool] = {0: False, 1: False, 2: False}
         self._last_dir: int = 0   # 0 = unknown / not driven yet
         self._pwm_active: bool = False
+        # E-STOP kill latch: once set, _pwm_set_hz refuses to touch the PWM
+        # (an in-flight ramp tick would otherwise re-enable STEP output
+        # ≤30 ms after E-STOP killed it, until the task cancel lands).
+        # Cleared only when a new legitimate motion begins in pulse_step —
+        # and motion commands are gated on E-STOP reset upstream.
+        self._pwm_killed: bool = False
         self._active_axis: Optional[int] = None
 
         # Single SPI bus → serialise all transfers to prevent concurrent
@@ -439,6 +445,7 @@ class SpidevMotorBackend(MotorBackend):
             duration_s = 30.0
             count = int(duration_s * freq_hz)
 
+        self._pwm_killed = False   # new motion — clear E-STOP kill latch
         self._gpio_set('dir', (direction > 0) != _DIR_INVERT)
         await asyncio.sleep(_DIR_SETUP_S)
 
@@ -523,6 +530,7 @@ class SpidevMotorBackend(MotorBackend):
             # All init/PWM setup INSIDE the try so a cancellation during
             # init still triggers the finally block (silence + position
             # snapshot). This makes the 750 ms init phase cancellable.
+            self._pwm_killed = False   # new motion — clear E-STOP kill latch
             self._active_axis = axis
             self._gpio_set('dir', (direction > 0) != _DIR_INVERT)
             await asyncio.sleep(_DIR_SETUP_S)
@@ -849,6 +857,8 @@ class SpidevMotorBackend(MotorBackend):
         every ramp tick — up to one dead STEP period per tick, i.e. lost
         steps 12× per soft-start.
         """
+        if self._pwm_killed:
+            return   # E-STOP killed the PWM; ignore ramp ticks until cancel lands
         period = int(1e9 / hz)
         duty   = period // 2
         try:
@@ -871,7 +881,11 @@ class SpidevMotorBackend(MotorBackend):
             self._pwm_enabled = False
             raise
 
-    async def _pwm_disable(self) -> None:
+    async def _pwm_disable(self, kill: bool = False) -> None:
+        """Stop STEP output. kill=True (E-STOP path) also latches the PWM
+        off so concurrent ramp ticks cannot re-enable it."""
+        if kill:
+            self._pwm_killed = True
         try:
             with open(f"{self._pwm_path}/enable", 'w') as f:
                 f.write('0\n')

@@ -405,9 +405,10 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
         <div style={{ ...cardStyle, gridColumn: '1 / -1' }}>
           <h3 style={{ margin: '0 0 4px', fontSize: 14, color: TEXT_PRIMARY }}>Per-Axis Motion Profile</h3>
           <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 10 }}>
-            Speed/step in axis-native units (FEED/LIFT = mm, BEND/ROTATE = deg).
-            Accel/Decel shape the STEP-rate ramp; S-curve runs a jerk-limited
-            smoothstep with the same peak acceleration. Saved on the board.
+            All values in axis-native units (FEED/LIFT = mm, BEND/ROTATE = deg).
+            Vmax is the machine velocity limit; Accel/Decel shape the ramp;
+            S-curve runs a jerk-limited smoothstep with the same peak
+            acceleration. Saved on the board.
           </div>
           {Object.keys(profiles).length === 0 && (
             <div style={{ fontSize: 12, color: TEXT_MUTED }}>Loading profiles…</div>
@@ -424,8 +425,11 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                 <input
                   type="number" value={value} min={min} max={max} step={step}
                   onChange={(e) => {
+                    if (e.target.value === '') return;
                     const v = Number(e.target.value);
-                    if (Number.isFinite(v) && v >= min && v <= max) onVal(v);
+                    // Clamp instead of reject: typing "250" must not
+                    // silently persist the "25" prefix.
+                    if (Number.isFinite(v)) onVal(Math.min(max, Math.max(min, v)));
                   }}
                   style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '4px 6px', borderRadius: 4, fontSize: 12, width }}
                 />
@@ -443,10 +447,10 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                     Step {numBox(p.step_size, 0.01, 360, 0.1, (v) => patchProfile(ax.axis, { step_size: v }))} {unit}
                   </label>
                   <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
-                    Accel {numBox(p.accel_hz_s, 200, 40000, 100, (v) => patchProfile(ax.axis, { accel_hz_s: v }), 72)} Hz/s
+                    Accel {numBox(p.accel, 1, 200, 1, (v) => patchProfile(ax.axis, { accel: v }), 60)} {unit}/s²
                   </label>
                   <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
-                    Decel {numBox(p.decel_hz_s, 200, 40000, 100, (v) => patchProfile(ax.axis, { decel_hz_s: v }), 72)} Hz/s
+                    Decel {numBox(p.decel, 1, 200, 1, (v) => patchProfile(ax.axis, { decel: v }), 60)} {unit}/s²
                   </label>
                   <div style={{ display: 'flex', gap: 0, marginLeft: 'auto' }}>
                     {(['linear', 'scurve'] as const).map((s) => (

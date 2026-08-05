@@ -102,8 +102,8 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
 ### GET `/api/motor/profiles`
 **Response (data)**
 ```json
-{ "profiles": { "0": { "jog_speed": 10.0, "step_size": 1.0,
-  "start_hz": 200, "accel_hz_s": 8000, "decel_hz_s": 8000,
+{ "profiles": { "0": { "jog_speed": 10.0, "max_speed": 40.0,
+  "step_size": 1.0, "start_hz": 200, "accel": 40.0, "decel": 40.0,
   "shape": "linear" }, "1": { ... } } }
 ```
 축별 모션 프로파일 (조그 기본값 + 가감속 형상). 보드에
@@ -119,12 +119,15 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
   jog/move 등 모든 모션 명령의 speed 가 커맨드 시점에 이 값으로 클램프됨.
   `jog_speed` 는 이 값을 넘을 수 없음
 - `start_hz` (50–2000): 램프 시작(플로어) STEP 주파수
-- `accel_hz_s` / `decel_hz_s` (200–40000): STEP 주파수 슬루율
+- `accel` / `decel` (1–200): 가감속, **물리 단위 (mm/s² 또는 °/s²)** —
+  GRBL `$120-122` / LinuxCNC `MAX_ACCELERATION` 상당. 커맨드 시점에 축
+  캘리브레이션(steps_per_unit)으로 STEP 슬루율(Hz/s, 200–40000 클램프)로
+  환산되므로 마이크로스텝/캘리브레이션이 바뀌어도 의미가 유지됨
 - `shape`: `"linear"`(사다리꼴) 또는 `"scurve"`(저크 제한 smoothstep —
-  피크 기울기가 `accel_hz_s` 와 같아, S-curve 전환 시에도 설정 가속도를
+  피크 가속도가 `accel` 설정값과 같아, S-curve 전환 시에도 설정 가속도를
   초과하지 않음)
 - 감속 램프는 조그 정지/자연 종료 시 적용. 폴트·스톨·E-STOP 은 하드 스톱 유지
-- 참고: S-curve 감속은 같은 `decel_hz_s` 에서 linear 대비 **정지 시간·거리가
+- 참고: S-curve 감속은 같은 `decel` 에서 linear 대비 **정지 시간·거리가
   1.5배** (피크 가속도를 유지하는 대가). 정밀 정지 위치가 중요하면 linear 사용
 
 ### POST `/api/motor/stop`

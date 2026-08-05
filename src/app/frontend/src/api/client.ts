@@ -38,8 +38,8 @@ export interface MotionProfile {
   max_speed: number;    // machine velocity limit (units/s) — commands clamped
   step_size: number;    // units per incremental jog
   start_hz: number;     // ramp floor frequency
-  accel_hz_s: number;   // acceleration (Hz/s)
-  decel_hz_s: number;   // deceleration (Hz/s)
+  accel: number;        // acceleration (mm/s² or deg/s²)
+  decel: number;        // deceleration (mm/s² or deg/s²)
   shape: 'linear' | 'scurve';
 }
 

@@ -83,7 +83,7 @@ async def test_system_version_sdk_version_present(client):
     resp = await client.get("/api/system/version")
     data = resp.json()["data"]
     assert "sdk_version" in data
-    assert data["sdk_version"] == "0.1.0"
+    assert data["sdk_version"] == "0.3.0"
 
 
 async def test_system_version_m7_firmware_in_mock(client):

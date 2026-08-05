@@ -9,14 +9,20 @@ spirit of GRBL's $-settings / Klipper's printer.cfg:
                         (GRBL $110-112 / LinuxCNC MAX_VELOCITY analog)
   step_size   units     incremental-jog distance
   start_hz    Hz        ramp floor — first commanded step frequency
-  accel_hz_s  Hz/s      acceleration (PWM frequency slew rate)
-  decel_hz_s  Hz/s      deceleration used for ramp-down on stop/finish
+  accel       units/s²  acceleration (GRBL $120-122 / LinuxCNC
+                        MAX_ACCELERATION analog)
+  decel       units/s²  deceleration used for ramp-down on stop/finish
   shape       str       "linear" (trapezoidal velocity) | "scurve"
                         (jerk-limited smoothstep — C1-continuous accel)
 
+accel/decel are physical (mm/s² or deg/s²) so their meaning survives
+microstep/calibration changes; MotorService converts them to the STEP
+frequency slew (Hz/s) the ramp engine consumes, via the same per-axis
+steps_per_unit calibration used for speed.
+
 The S-curve is a smoothstep frequency schedule f(τ)=S+(F−S)(3τ²−2τ³)
-whose peak slope equals accel_hz_s, so `shape` changes smoothness
-without changing the configured peak acceleration.
+whose peak slope equals the configured accel, so `shape` changes
+smoothness without changing the configured peak acceleration.
 
 State file: /var/lib/ortho-bender/motion_profiles.json
 IEC 62304 SW Class: B
@@ -26,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import tempfile
 
@@ -40,10 +47,14 @@ DEFAULT_PROFILE: dict = {
     "max_speed": 40.0,
     "step_size": 1.0,
     "start_hz": 200,
-    "accel_hz_s": 8000,
-    "decel_hz_s": 8000,
+    "accel": 40.0,   # units/s² — 8000 Hz/s at the default 200 steps/unit
+    "decel": 40.0,
     "shape": "linear",
 }
+
+# Default calibration assumption for migrating pre-physical-unit state
+# files (accel_hz_s → accel). Matches CalibrationService's default.
+_LEGACY_STEPS_PER_UNIT = 200.0
 
 # Hard bounds — keep profiles inside what the bench PWM path was
 # validated for. Speed itself is additionally capped by the per-axis
@@ -53,8 +64,8 @@ _BOUNDS = {
     "max_speed":  (0.1, 40.0),
     "step_size":  (0.01, 360.0),
     "start_hz":   (50, 2000),
-    "accel_hz_s": (200, 40000),
-    "decel_hz_s": (200, 40000),
+    "accel":      (1.0, 200.0),   # units/s² (200–40000 Hz/s at 200 steps/unit)
+    "decel":      (1.0, 200.0),
 }
 
 AXES = (0, 1, 2, 3)  # FEED, BEND, ROTATE, LIFT
@@ -79,10 +90,24 @@ class MotionProfileService:
                 except ValueError:
                     continue
                 if axis in self._profiles and isinstance(v, dict):
-                    merged = dict(DEFAULT_PROFILE)
-                    merged.update({kk: vv for kk, vv in v.items()
-                                   if kk in DEFAULT_PROFILE})
-                    self._profiles[axis] = self._validate(merged)
+                    # A hand-edited/corrupt entry must degrade THIS axis to
+                    # defaults, never abort startup (this service is in the
+                    # lifespan path — a crash here takes the whole SDK down).
+                    try:
+                        # Legacy state files stored accel in Hz/s; convert
+                        # to physical units with the default calibration.
+                        for old, new in (("accel_hz_s", "accel"),
+                                         ("decel_hz_s", "decel")):
+                            if old in v and new not in v:
+                                v[new] = float(v[old]) / _LEGACY_STEPS_PER_UNIT
+                        merged = dict(DEFAULT_PROFILE)
+                        merged.update({kk: vv for kk, vv in v.items()
+                                       if kk in DEFAULT_PROFILE})
+                        self._profiles[axis] = self._validate(merged)
+                    except (ValueError, TypeError) as exc:
+                        log.warning("Motion profile axis=%d invalid (%s) — "
+                                    "using defaults", axis, exc)
+                        self._profiles[axis] = dict(DEFAULT_PROFILE)
             log.info("MotionProfileService: loaded %s", self._state_file)
         except FileNotFoundError:
             log.info("MotionProfileService: no state file — using defaults")
@@ -109,11 +134,15 @@ class MotionProfileService:
     def _validate(p: dict) -> dict:
         out = dict(p)
         for key, (lo, hi) in _BOUNDS.items():
-            out[key] = max(lo, min(hi, float(out[key])))
+            val = float(out[key])
+            if not math.isfinite(val):
+                # NaN/inf would clamp to the UPPER bound (max/min with NaN
+                # is order-dependent) — fall back to the safe default.
+                val = float(DEFAULT_PROFILE[key])
+            out[key] = max(lo, min(hi, val))
         # jog default can never exceed the axis machine limit
         out["jog_speed"] = min(out["jog_speed"], out["max_speed"])
-        for key in ("start_hz", "accel_hz_s", "decel_hz_s"):
-            out[key] = int(out[key])
+        out["start_hz"] = int(out["start_hz"])
         if out.get("shape") not in PROFILE_SHAPES:
             out["shape"] = "linear"
         return out

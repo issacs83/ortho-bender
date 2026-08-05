@@ -172,7 +172,13 @@ from pydantic import BaseModel, Field
 
 
 class MotionProfileUpdate(BaseModel):
-    """Partial per-axis motion profile update — omitted fields keep their value."""
+    """Partial per-axis motion profile update — omitted fields keep their value.
+
+    Unknown fields are rejected (422) so a client still sending the
+    pre-0.3.0 `accel_hz_s`/`decel_hz_s` names fails loudly instead of
+    "succeeding" with no effect.
+    """
+    model_config = {"extra": "forbid"}
     jog_speed: float | None = Field(None, gt=0, le=40,
                                     description="Default jog rate (mm/s or deg/s)")
     max_speed: float | None = Field(None, gt=0, le=40,
@@ -183,10 +189,13 @@ class MotionProfileUpdate(BaseModel):
                                     description="Incremental jog distance (mm or deg)")
     start_hz: int | None = Field(None, ge=50, le=2000,
                                  description="Ramp floor frequency (Hz)")
-    accel_hz_s: int | None = Field(None, ge=200, le=40000,
-                                   description="Acceleration (Hz/s PWM slew)")
-    decel_hz_s: int | None = Field(None, ge=200, le=40000,
-                                   description="Deceleration for stop/finish ramps (Hz/s)")
+    accel: float | None = Field(None, ge=1, le=200,
+                                description="Acceleration in physical units "
+                                            "(mm/s² or deg/s²; converted to STEP "
+                                            "slew via axis calibration)")
+    decel: float | None = Field(None, ge=1, le=200,
+                                description="Deceleration for stop/finish ramps "
+                                            "(mm/s² or deg/s²)")
     shape: str | None = Field(None, pattern="^(linear|scurve)$",
                               description="Velocity profile: trapezoidal 'linear' "
                                           "or jerk-limited 'scurve'")
@@ -200,10 +209,12 @@ def _profiles(request: Request):
 async def get_motion_profiles(request: Request) -> ApiResponse:
     """Per-axis motion profiles (jog defaults + acceleration shaping).
 
-    S-curve uses a smoothstep frequency schedule whose peak slope equals
-    accel_hz_s, so switching shape never exceeds the configured
-    acceleration. Applied by the bench to every jog/move ramp, including
-    the deceleration ramp on stop and end-of-travel.
+    accel/decel are physical (mm/s² or deg/s²) and converted to STEP
+    slew via the axis calibration at command time. S-curve uses a
+    smoothstep frequency schedule whose peak slope equals the configured
+    accel, so switching shape never exceeds the configured acceleration.
+    Applied by the bench to every jog/move ramp, including the
+    deceleration ramp on stop and end-of-travel.
     """
     return ok({"profiles": _profiles(request).all()})
 
