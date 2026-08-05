@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, Field
 
 from ..models.schemas import (
     ApiResponse,
@@ -56,9 +57,14 @@ async def camera_connect(
     svc: CameraService = Depends(_camera_service),
 ) -> ApiResponse:
     """
-    Open the camera via the Vimba X SDK (or fallback backend) and transition
-    power_state to 'on'. Idempotent — already-connected cameras return
-    the current status unchanged.
+    Open the camera and transition power_state to 'on'.
+
+    Backend chain, first match wins: native ISI/CSI-2 (`isi_csi2` — the
+    bench Alvium C on MIPI), VmbPy (USB Alvium), Vimba X GStreamer,
+    generic V4L2 GStreamer, UVC. Idempotent — an already-connected
+    camera returns the current status unchanged. Note the server also
+    retries this automatically in the background after boot until a
+    camera appears.
     """
     try:
         ok_ = await svc.connect()
@@ -79,10 +85,9 @@ async def camera_disconnect(
     svc: CameraService = Depends(_camera_service),
 ) -> ApiResponse:
     """
-    Gracefully shut the camera down via the Vimba X SDK native shutdown
-    sequence (frame release → camera __exit__ → VmbSystem __exit__) and
-    transition power_state to 'off'. Safe to call on an already-disconnected
-    camera.
+    Gracefully shut the camera down (stream off, buffers released — for
+    VmbPy backends via the SDK's native shutdown sequence) and transition
+    power_state to 'off'. Safe to call on an already-disconnected camera.
     """
     try:
         await svc.disconnect()
@@ -131,7 +136,12 @@ async def camera_capture(
 
 @router.get("/stream")
 async def camera_stream(
-    fps: float = 15.0,
+    fps: float = Query(
+        15.0, ge=1.0, le=50.0,
+        description="Target stream rate. Clamped to 1-50 fps (the bench "
+                    "Alvium C-052m sensor tops out at ~50 fps; JPEG "
+                    "encoding caps the effective rate around 25 fps).",
+    ),
     svc: CameraService = Depends(_camera_service),
 ) -> StreamingResponse:
     """
@@ -140,7 +150,7 @@ async def camera_stream(
     The response is a multipart/x-mixed-replace stream of JPEG frames.
     Open directly in an <img> tag or use fetch() with streaming:
 
-        <img src="/api/camera/stream" />
+        <img src="/api/camera/stream?fps=15" />
     """
     if svc._power_state != "on":
         from fastapi.responses import JSONResponse
@@ -149,10 +159,139 @@ async def camera_stream(
             content={"success": False, "error": "Camera is offline", "code": "CAMERA_OFFLINE"},
         )
 
+    # Clamp: the bench sensor tops out at ~50 fps and an unbounded value
+    # would spin the capture loop; very low values still stream but slowly.
+    fps = max(1.0, min(fps, 50.0))
     return StreamingResponse(
         svc.mjpeg_generator(fps=fps),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
+
+
+# ---------------------------------------------------------------------------
+# GET/POST /api/camera/controls — full driver control surface
+# ---------------------------------------------------------------------------
+
+@router.get("/controls", response_model=ApiResponse)
+async def list_camera_controls(
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Enumerate every parameter the connected camera exposes.
+
+    The list is read live from the sensor driver (exposure/gain with
+    auto-windows, gamma, black level, flips, binning, the full trigger
+    suite, device temperature, firmware/serial, ...) so it always matches
+    the attached camera model. Value units are the driver's raw units
+    (exposure ns, gain millibel, gamma x100, temperature 0.1 degC).
+    """
+    try:
+        return ok({"controls": await svc.list_controls()})
+    except RuntimeError as exc:
+        return err(str(exc), "CAMERA_CONTROLS_UNSUPPORTED")
+
+
+class CameraControlRequest(BaseModel):
+    id: int = Field(..., description="Numeric control id from GET /controls")
+    value: int | list[int] = Field(
+        0, description="Raw driver-unit value (int), or an int list for "
+                       "compound controls such as the AREA-typed "
+                       "'Binning Setting' (width, height); ignored for "
+                       "button controls")
+
+
+@router.post("/controls", response_model=ApiResponse)
+async def set_camera_control(
+    body: CameraControlRequest,
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Set one camera control by id (buttons fire on any write).
+
+    Returns the read-back value so the UI can display what the camera
+    actually accepted (values are clamped by the hardware).
+    """
+    try:
+        value = await svc.set_control(body.id, body.value)
+        return ok({"id": body.id, "value": value})
+    except PermissionError as exc:
+        return err(str(exc), "CAMERA_CONTROL_READ_ONLY")
+    except (RuntimeError, OSError) as exc:
+        return err(str(exc), "CAMERA_CONTROL_ERROR")
+
+
+# ---------------------------------------------------------------------------
+# GET/POST /api/camera/framerate — sensor acquisition rate
+# ---------------------------------------------------------------------------
+
+@router.get("/framerate", response_model=ApiResponse)
+async def get_camera_framerate(
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Sensor-side acquisition frame rate (fps).
+
+    Lives on the V4L2 subdev *frame-interval* API — another feature that
+    is not part of GET /controls. Lowering it raises the exposure-time
+    ceiling; the MJPEG ?fps= parameter only paces delivery.
+    """
+    try:
+        return ok({"fps": await svc.get_sensor_frame_rate()})
+    except (RuntimeError, OSError) as exc:
+        return err(str(exc), "CAMERA_FRAMERATE_ERROR")
+
+
+class CameraFramerateRequest(BaseModel):
+    fps: float = Field(..., gt=0, le=500, description="Target sensor fps")
+
+
+@router.post("/framerate", response_model=ApiResponse)
+async def set_camera_framerate(
+    body: CameraFramerateRequest,
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Set the sensor acquisition frame rate; returns the applied value."""
+    try:
+        return ok({"fps": await svc.set_sensor_frame_rate(body.fps)})
+    except (RuntimeError, OSError) as exc:
+        return err(str(exc), "CAMERA_FRAMERATE_ERROR")
+
+
+# ---------------------------------------------------------------------------
+# GET/POST /api/camera/roi — sensor crop (region of interest)
+# ---------------------------------------------------------------------------
+
+@router.get("/roi", response_model=ApiResponse)
+async def get_camera_roi(
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Current sensor crop rectangle plus its bounds and default.
+
+    ROI lives on the V4L2 subdev *selection* API (not a control), which
+    is why it does not appear in GET /controls.
+    """
+    try:
+        return ok(await svc.get_roi())
+    except (RuntimeError, OSError) as exc:
+        return err(str(exc), "CAMERA_ROI_ERROR")
+
+
+class CameraRoiRequest(BaseModel):
+    left: int = Field(0, ge=0, description="X offset on the sensor (px)")
+    top: int = Field(0, ge=0, description="Y offset on the sensor (px)")
+    width: int = Field(..., gt=0, description="ROI width (px)")
+    height: int = Field(..., gt=0, description="ROI height (px)")
+
+
+@router.post("/roi", response_model=ApiResponse)
+async def set_camera_roi(
+    body: CameraRoiRequest,
+    svc: CameraService = Depends(_camera_service),
+) -> ApiResponse:
+    """Apply a sensor crop. The capture/stream restarts at the new size;
+    the driver may clamp or align the rectangle — the response carries
+    what was actually applied."""
+    try:
+        return ok(await svc.set_roi(body.left, body.top, body.width, body.height))
+    except (RuntimeError, OSError) as exc:
+        return err(str(exc), "CAMERA_ROI_ERROR")
 
 
 # ---------------------------------------------------------------------------

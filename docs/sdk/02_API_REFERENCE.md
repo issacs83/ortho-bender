@@ -116,16 +116,20 @@ body 없음.
 
 ## 3. `/api/camera` — 카메라
 
+> 2026-08 기준 벤치 카메라는 **Alvium 1800 C (MIPI CSI-2)** 이며 네이티브
+> `isi_csi2` 백엔드(raw V4L2 MPLANE + avt3 subdev)로 구동됩니다.
+> USB Alvium(VmbPy) 등은 폴백 체인으로 유지됩니다.
+
 ### GET `/api/camera/status`
 ```json
 {
   "connected": true,
-  "device_id": "1800 U-158m",
-  "width": 1456, "height": 1088,
-  "exposure_us": 5000.0, "gain_db": 0.0,
+  "device_id": "Alvium 1800 C (MIPI CSI-2)",
+  "width": 816, "height": 624,
+  "exposure_us": 20000.0, "gain_db": 0.0,
   "format": "mono8",
-  "backend": "vimba_x",
-  "fps": 30.0,
+  "backend": "isi_csi2",
+  "fps": 50.0,
   "power_state": "on"
 }
 ```
@@ -133,38 +137,67 @@ body 없음.
   `"off"` 일 때는 capture/stream/settings 호출이 `CAMERA_OFFLINE` 으로 거부됩니다.
 
 > **교체 투명성 주의사항**: `device_id`, `backend` 필드는 **참고/진단용**입니다.
-> 값은 하드웨어 세대/센서 교체/백엔드 전환(vimba_x → v4l2 → mock)에 따라 바뀔 수
-> 있습니다. **클라이언트 코드는 이 값에 조건 분기하지 마세요** —
+> 값은 하드웨어 세대/센서 교체/백엔드 전환(isi_csi2 → vimba_x → mock)에 따라
+> 바뀔 수 있습니다. **클라이언트 코드는 이 값에 조건 분기하지 마세요** —
 > 자세한 이유는 [HARDWARE_ABSTRACTION.md](../architecture/02_HARDWARE_ABSTRACTION.md) 를 참고하세요.
 
-
-### POST `/api/camera/capture`
-```json
-{ "quality": 85 }
-```
+### POST `/api/camera/capture?quality=85`
+단일 프레임을 **raw JPEG 바이너리**(`image/jpeg`)로 반환합니다.
 - `quality`: JPEG 품질 (1~100, 기본 85)
-- 응답: `{ "frame_b64": "...", "width", "height", "timestamp_us" }`
+- 카메라 오프라인 시 412 `CAMERA_OFFLINE`
+
+### GET `/api/camera/stream?fps=15`
+MJPEG 스트림 (`multipart/x-mixed-replace`). `<img src>` 로 바로 사용.
+- `fps`: 1~50 (스키마 강제 — 범위 밖은 422). 센서 ~50fps,
+  JPEG 인코드로 실효 ~25fps.
 
 ### POST `/api/camera/settings`
 ```json
 { "exposure_us": 3000, "gain_db": 6.0, "format": "mono8" }
 ```
-- `format`: `mono8 | mono12 | rgb8`
+- `exposure_us`: 18.9µs ~ 10s (하드웨어 클램프, 반영까지 2~3프레임)
+- `gain_db`: 0 ~ 48 dB (0.1 dB 스텝)
 - 필드는 모두 optional — 보내는 것만 변경됨
 
+### GET / POST `/api/camera/controls` — 전체 파라미터 표면
+드라이버가 노출하는 **모든** 컨트롤을 동적으로 열거/설정합니다
+(C-052m 기준 30개: 노출+오토윈도우, 게인+오토윈도우, 감마, 블랙레벨,
+Reverse X/Y, 비닝, 트리거 풀세트, 온도/펌웨어/시리얼 등).
+- GET 응답 항목: `id, name, type, min/max/step/default, read_only,
+  inactive, value, menu{}` — 값은 드라이버 원시 단위
+  (노출 ns, 게인 밀리벨, 감마 ×100, 온도 0.1°C)
+- POST body: `{ "id": <controls의 id>, "value": <int 또는 int 배열> }`
+  — compound 컨트롤(예: AREA 타입 `Binning Setting` = [가로, 세로])은
+  배열로. 버튼형(Trigger Software)은 value 무시하고 발화.
+- 응답은 **하드웨어가 실제 수락한 값**(클램프 반영)
+
+### GET / POST `/api/camera/roi` — 센서 영역(크롭)
+ROI 는 V4L2 컨트롤이 아니라 subdev **selection API** 라서 `/controls`
+에 없습니다.
+- GET: `{ crop, bounds, default, capture }` (각각 left/top/width/height)
+- POST: `{ "left": 100, "top": 50, "width": 400, "height": 300 }`
+  — 적용 시 캡처/스트림이 새 크기로 재시작, 드라이버가 정렬 단위로
+  보정한 실제 값이 응답에 담김 (예: 300 → 304)
+
+### GET / POST `/api/camera/framerate` — 센서 취득 프레임레이트
+subdev **frame-interval API** (역시 `/controls` 밖). 낮출수록 노출 시간
+상한이 올라갑니다. 변경 시 스트림이 잠시 재시작됩니다.
+- POST: `{ "fps": 30 }` → 응답 `{ "fps": 30.0 }` (적용값)
+
 ### POST `/api/camera/connect`
-카메라 SDK 세션을 재오픈합니다. body 없음.
-- 백엔드 탐색 순서: Vimba X → GStreamer → V4L2 → Mock
-- 응답: `CameraStatusResponse` (`power_state="on"`)
+카메라 세션을 재오픈합니다. body 없음.
+- 백엔드 탐색 순서: **isi_csi2 (MIPI)** → VmbPy → Vimba X GStreamer →
+  V4L2 GStreamer → UVC → Mock
+- 부팅 직후 카메라가 늦게 뜨는 경우 서버가 **백그라운드에서 자동
+  재연결**하므로 일반적으로 수동 호출이 필요 없습니다
 - 이미 connected 상태면 즉시 성공 (idempotent)
 - **에러 `CAMERA_CONNECT_FAILED`**: 모든 백엔드가 실패
 
 ### POST `/api/camera/disconnect`
-Vimba X SDK 를 정상 종료 시퀀스로 닫습니다 (frame release → `cam.__exit__()` →
-`vmb.__exit__()`). body 없음.
+카메라를 정상 종료합니다 (스트림 정지·버퍼 해제; VmbPy 백엔드는 SDK
+네이티브 시퀀스). body 없음.
 - 응답: `CameraStatusResponse` (`power_state="off"`)
 - 이후 capture/stream/settings 은 `CAMERA_OFFLINE` 반환
-- 용도: 카메라 교체, 장시간 유휴, SDK 재초기화. **USB/VBUS 는 건드리지 않습니다.**
 
 ---
 

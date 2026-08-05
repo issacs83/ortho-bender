@@ -58,6 +58,15 @@ export interface CameraRoi {
 export interface CameraStatus {
   connected: boolean;
   streaming: boolean;
+  /** Flat fields served by the bench backend (isi_csi2/VmbPy service) */
+  device_id?: string | null;
+  width?: number | null;
+  height?: number | null;
+  exposure_us?: number | null;
+  gain_db?: number | null;
+  format?: string | null;
+  fps?: number | null;
+  backend?: string | null;
   device: CameraDeviceInfo | null;
   current_exposure_us: number | null;
   current_gain_db: number | null;
@@ -245,7 +254,53 @@ export const cameraApi = {
 
   disconnect: (): Promise<CameraStatus> =>
     request("/api/camera/disconnect", { method: "POST" }),
+
+  controls: (): Promise<{ controls: CameraControl[] }> =>
+    request("/api/camera/controls"),
+
+  roi: (): Promise<CameraRoiInfo> =>
+    request("/api/camera/roi"),
+
+  setRoi: (r: { left: number; top: number; width: number; height: number }): Promise<CameraRoiInfo> =>
+    request("/api/camera/roi", { method: "POST", body: JSON.stringify(r) }),
+
+  setControl: (id: number, value: number | number[]): Promise<{ id: number; value: number | number[] | null }> =>
+    request("/api/camera/controls", {
+      method: "POST",
+      body: JSON.stringify({ id, value }),
+    }),
+
+  framerate: (): Promise<{ fps: number | null }> =>
+    request("/api/camera/framerate"),
+
+  setFramerate: (fps: number): Promise<{ fps: number | null }> =>
+    request("/api/camera/framerate", { method: "POST", body: JSON.stringify({ fps }) }),
 };
+
+export interface CameraRect { left: number; top: number; width: number; height: number }
+
+/** Sensor crop info from GET /api/camera/roi. */
+export interface CameraRoiInfo {
+  crop: CameraRect;
+  bounds: CameraRect;
+  default: CameraRect;
+  capture: { width: number; height: number };
+}
+
+/** One entry of the camera driver's dynamic control surface. */
+export interface CameraControl {
+  id: number;
+  name: string;
+  type: 'int' | 'bool' | 'menu' | 'button' | 'int64' | 'ctrl_class' | 'string' | 'int_menu' | string;
+  min: number;
+  max: number;
+  step: number;
+  default: number;
+  read_only: boolean;
+  inactive: boolean;
+  value: number | string | number[] | null;
+  menu?: Record<number, string>;
+}
 
 // ---------------------------------------------------------------------------
 // Bending API

@@ -26,6 +26,8 @@ import os
 import sys
 from contextlib import asynccontextmanager
 
+import asyncio
+
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -125,6 +127,28 @@ async def lifespan(app: FastAPI):
 
     app.state.motor_service  = motor_svc
     app.state.camera_service = camera_svc
+
+    # Boot-order resilience: at cold boot this service starts (~9 s) before
+    # the avt3 CSI-2 sensor finishes probing (~12 s), so the first connect()
+    # finds no camera and the UI would need a manual reconnect. Retry in the
+    # background with backoff until the camera appears (also covers camera
+    # power applied after boot).
+    camera_retry_task = None
+    if isinstance(camera_svc, CameraService) and not camera_svc.get_status()["connected"]:
+        async def _camera_reconnect_loop():
+            delay = 3.0
+            while True:
+                await asyncio.sleep(delay)
+                delay = min(delay * 1.5, 30.0)
+                try:
+                    if await camera_svc.connect():
+                        log.info("Camera reconnect loop: camera connected")
+                        return
+                except Exception as exc:
+                    log.debug("Camera reconnect attempt failed: %s", exc)
+
+        camera_retry_task = asyncio.create_task(_camera_reconnect_loop())
+        log.info("Camera not present yet — background reconnect loop started")
 
     # Diagnostic backend — select via OB_MOTOR_BACKEND env var.
     # Verified bench mapping (2026-05-08): cs=0→LIFT, cs=1→BEND, cs=2→FEED.
@@ -232,6 +256,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     log.info("Shutting down Ortho-Bender SDK...")
+    if camera_retry_task is not None and not camera_retry_task.done():
+        camera_retry_task.cancel()
     await ws_manager.stop()
     if camera_svc is not None:
         try:
@@ -253,13 +279,35 @@ def create_app() -> FastAPI:
     application = FastAPI(
         title="Ortho-Bender SDK API",
         description=(
-            "REST + WebSocket API for the orthodontic wire bending machine (i.MX8MP). "
-            "Provides hardware-agnostic control of motor axes, camera, and B-code bending sequences."
+            "REST + WebSocket API for the orthodontic wire bending machine (i.MX8MP).\n\n"
+            "**Motor**: 3-axis bench control (jog/move/home) with hard safety caps "
+            "(CS ≤ 19, TOFF 1–8, PSU-derived clamps) and TMC260C register diagnostics.\n\n"
+            "**Camera**: Allied Vision Alvium 1800 C on MIPI CSI-2 via the native "
+            "`isi_csi2` backend — JPEG capture, MJPEG streaming (`?fps=1..50`), the "
+            "full dynamic control surface (`/api/camera/controls`), sensor ROI "
+            "(`/roi`), and sensor frame rate (`/framerate`). USB Alvium (VmbPy) "
+            "remains as a fallback backend.\n\n"
+            "**Bending**: B-code sequence execution with background progress "
+            "reporting, plus WebSocket telemetry channels (`/ws/motor`, "
+            "`/ws/camera`, `/ws/system`, `/ws/motor/diag`)."
         ),
-        version="0.1.0",
+        version="0.2.0",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
+        openapi_tags=[
+            {"name": "camera",
+             "description": "Alvium CSI-2 카메라 — 캡처/스트림/설정, 전체 컨트롤 "
+                            "표면(/controls), 센서 ROI(/roi)와 프레임레이트(/framerate). "
+                            "ROI·프레임레이트는 V4L2 컨트롤이 아닌 별도 subdev API라 "
+                            "/controls 목록에 없다."},
+            {"name": "motor",
+             "description": "3축 벤치 모터 제어 — jog/move/home, E-STOP, PSU 프리셋, "
+                            "축별 캘리브레이션. 안전 상한(CS≤19, TOFF 1–8)은 서버가 강제."},
+            {"name": "bending", "description": "B-code 벤딩 시퀀스 실행/진행률/정지."},
+            {"name": "system", "description": "시스템 상태, PSU 프리셋, 재부팅."},
+            {"name": "docs", "description": "오프라인 문서(md) 서빙."},
+        ],
     )
 
     # Serve Swagger/ReDoc assets locally (no CDN dependency — works offline)

@@ -159,10 +159,16 @@ class MotorStatusResponse(BaseModel):
 
 class CameraSettingsRequest(BaseModel):
     exposure_us: Optional[float] = Field(
-        None, gt=0, description="Exposure time in microseconds"
+        None, gt=0,
+        description=(
+            "Exposure time in microseconds. On the bench Alvium C the "
+            "hardware range is 18.9 us - 10 s (values are clamped); a new "
+            "value takes ~2-3 frames to appear in captured images."
+        ),
     )
     gain_db: Optional[float] = Field(
-        None, ge=0, description="Analog gain in dB"
+        None, ge=0,
+        description="Analog gain in dB (bench Alvium C: 0-48 dB, 0.1 dB steps)",
     )
     format: Optional[str] = Field(
         None, description="Pixel format: 'mono8', 'mono12', 'rgb8'"

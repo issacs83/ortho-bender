@@ -50,6 +50,7 @@ if _VMBPY_AVAILABLE and _GENICAM_PATH:
 
 
 class CameraBackend(str, Enum):
+    ISI        = "isi_csi2"
     VIMBA_X    = "vimba_x"
     GSTREAMER  = "gstreamer"
     UVC        = "uvc_fallback"
@@ -105,7 +106,12 @@ class CameraService:
                 return True
 
             ok = False
-            if _VMBPY_AVAILABLE and await self._try_vmbpy():
+            # ISI/CSI-2 first: the bench camera (Alvium C on MIPI) lives on
+            # the MPLANE-only ISI node that no other backend here can open,
+            # and probing it is cheap and deterministic.
+            if _CV2_AVAILABLE and await self._try_isi_v4l2():
+                ok = True
+            elif _VMBPY_AVAILABLE and await self._try_vmbpy():
                 ok = True
             elif not _CV2_AVAILABLE:
                 log.error("No camera backend available (VmbPy and OpenCV both missing)")
@@ -210,6 +216,53 @@ class CameraService:
         log.info("CameraService: opened via VmbPy (Vimba X USB3 Vision)")
         return True
 
+    async def _try_isi_v4l2(self) -> bool:
+        """Try the native ISI/CSI-2 MPLANE capture (Alvium C on i.MX8MP).
+
+        Uses raw V4L2 ioctls (see isi_v4l2.py) because the ISI node is
+        multiplanar-only. The returned object duck-types cv2.VideoCapture,
+        so every downstream OpenCV code path works unchanged, including
+        apply_settings() routing exposure/gain to the avt3 subdevice.
+        """
+        try:
+            from .isi_v4l2 import IsiV4l2Capture
+        except Exception as exc:  # numpy missing etc.
+            log.debug("ISI backend unavailable: %s", exc)
+            return False
+
+        loop = asyncio.get_running_loop()
+
+        def _open():
+            try:
+                cap = IsiV4l2Capture()
+            except Exception as exc:
+                log.debug("ISI open failed: %s", exc)
+                return None
+            ok, _ = cap.read()
+            if not ok:
+                cap.release()
+                return None
+            return cap
+
+        cap = await loop.run_in_executor(None, _open)
+        if cap is None:
+            log.debug("Camera backend isi_csi2 not available")
+            return False
+
+        self._cap = cap
+        self._backend = CameraBackend.ISI
+        self._connected = True
+        self._width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self._height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self._fps = cap.get(cv2.CAP_PROP_FPS)
+        self._exposure_us = cap.get(cv2.CAP_PROP_EXPOSURE) * 1_000_000.0
+        self._gain_db = cap.get(cv2.CAP_PROP_GAIN)
+        log.info("CameraService: opened via isi_csi2 (%dx%d @ %.1f fps, "
+                 "exposure %.0f us, gain %.1f dB)",
+                 self._width, self._height, self._fps,
+                 self._exposure_us, self._gain_db)
+        return True
+
     async def _try_vimba_x_gstreamer(self) -> bool:
         """Try the Allied Vision avtsrc GStreamer element."""
         pipeline = (
@@ -298,7 +351,9 @@ class CameraService:
 
     def get_status(self) -> dict:
         device_id = None
-        if self._connected and self._vmb_cam is not None:
+        if self._connected and self._backend == CameraBackend.ISI:
+            device_id = "Alvium 1800 C (MIPI CSI-2)"
+        elif self._connected and self._vmb_cam is not None:
             try:
                 device_id = self._vmb_cam.get_model()
             except Exception:
@@ -419,6 +474,81 @@ class CameraService:
             b"\xe8\xe9\xea\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xff\xda\x00\x08"
             b"\x01\x01\x00\x00?\x00\xfb\xd4P\x00\x00\x00\x1f\xff\xd9"
         )
+
+    # ------------------------------------------------------------------
+    # Generic camera controls (ISI/CSI-2 backend)
+    # ------------------------------------------------------------------
+
+    async def list_controls(self) -> list[dict]:
+        """Enumerate every control the camera driver exposes.
+
+        Only available on the isi_csi2 backend (the avt3 subdevice is
+        exclusive-open, so all access goes through this service).
+        """
+        if self._backend != CameraBackend.ISI or self._cap is None:
+            raise RuntimeError(
+                f"Camera controls not supported on backend {self._backend.value!r}")
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._cap.ctrl.enumerate_controls)
+
+    async def set_control(self, control_id: int, value: int):
+        """Set a single driver control by id; returns the read-back value."""
+        if self._backend != CameraBackend.ISI or self._cap is None:
+            raise RuntimeError(
+                f"Camera controls not supported on backend {self._backend.value!r}")
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, self._cap.ctrl.set_control, control_id, value)
+        # Keep the cached status fields coherent with direct control writes.
+        try:
+            self._exposure_us = self._cap.ctrl.get_exposure_us()
+            self._gain_db = self._cap.ctrl.get_gain_db()
+        except OSError:
+            pass
+        return result
+
+    async def get_sensor_frame_rate(self) -> float | None:
+        """Sensor-side acquisition frame rate (subdev frame-interval API)."""
+        if self._backend != CameraBackend.ISI or self._cap is None:
+            raise RuntimeError(
+                f"Frame rate control not supported on backend {self._backend.value!r}")
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._cap.ctrl.get_frame_rate)
+
+    async def set_sensor_frame_rate(self, fps: float) -> float | None:
+        if self._backend != CameraBackend.ISI or self._cap is None:
+            raise RuntimeError(
+                f"Frame rate control not supported on backend {self._backend.value!r}")
+        loop = asyncio.get_running_loop()
+        # The avt3 driver rejects frame-interval changes while streaming
+        # (EBUSY), so the capture pipeline pauses and restarts around it.
+        async with self._frame_lock:
+            actual = await loop.run_in_executor(None, self._cap.set_sensor_fps, fps)
+        if actual:
+            self._fps = actual
+        return actual
+
+    async def get_roi(self) -> dict:
+        """Current sensor crop + bounds (isi_csi2 backend)."""
+        if self._backend != CameraBackend.ISI or self._cap is None:
+            raise RuntimeError(
+                f"ROI not supported on backend {self._backend.value!r}")
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._cap.get_roi)
+
+    async def set_roi(self, left: int, top: int, width: int, height: int) -> dict:
+        """Apply a sensor crop; the capture pipeline restarts at the new
+        size (in-flight captures are serialised out via the frame lock)."""
+        if self._backend != CameraBackend.ISI or self._cap is None:
+            raise RuntimeError(
+                f"ROI not supported on backend {self._backend.value!r}")
+        loop = asyncio.get_running_loop()
+        async with self._frame_lock:
+            result = await loop.run_in_executor(
+                None, self._cap.set_roi, left, top, width, height)
+        self._width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self._height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        return result
 
     # ------------------------------------------------------------------
     # MJPEG streaming generator
