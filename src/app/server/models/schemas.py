@@ -91,6 +91,13 @@ class MotorJogRequest(BaseModel):
     direction: int = Field(..., description="+1 for positive, -1 for negative")
     speed: float = Field(..., gt=0, description="Jog speed in mm/s or deg/s")
     distance: float = Field(0.0, ge=0, description="Distance limit (0 = continuous)")
+    continuous: bool = Field(
+        False,
+        description=(
+            "Bench-only. When True the jog runs for up to 60 s instead of "
+            "the default 5 s. Used by ◀◀/▶▶ single-click continuous mode."
+        ),
+    )
 
     @field_validator("direction")
     @classmethod
@@ -118,6 +125,15 @@ class MotorResetRequest(BaseModel):
     )
 
 
+class AxisSignals(BaseModel):
+    """Five-LED dashboard row: 12V / EN / SG / DIR / STEP."""
+    vmot: bool          # chip is responding on SPI -> VMot 12 V is up
+    en:   bool          # chopper currently ON for this axis
+    sg:   bool          # StallGuard bit at last DRV_STATUS read
+    dir:  int           # +1 / -1 (logical), 0 = never driven
+    step: bool          # PWM4 enabled AND this axis is the active target
+
+
 class AxisStatus(BaseModel):
     axis: AxisId
     position: float     # mm or degrees
@@ -125,6 +141,7 @@ class AxisStatus(BaseModel):
     drv_status: int     # TMC5160 DRV_STATUS raw value
     sg_result: int      # StallGuard2 result
     cs_actual: int      # Actual motor current (0-31)
+    signals: Optional[AxisSignals] = None   # bench-mode hardware LEDs
 
 
 class MotorStatusResponse(BaseModel):
@@ -142,10 +159,16 @@ class MotorStatusResponse(BaseModel):
 
 class CameraSettingsRequest(BaseModel):
     exposure_us: Optional[float] = Field(
-        None, gt=0, description="Exposure time in microseconds"
+        None, gt=0,
+        description=(
+            "Exposure time in microseconds. On the bench Alvium C the "
+            "hardware range is 18.9 us - 10 s (values are clamped); a new "
+            "value takes ~2-3 frames to appear in captured images."
+        ),
     )
     gain_db: Optional[float] = Field(
-        None, ge=0, description="Analog gain in dB"
+        None, ge=0,
+        description="Analog gain in dB (bench Alvium C: 0-48 dB, 0.1 dB steps)",
     )
     format: Optional[str] = Field(
         None, description="Pixel format: 'mono8', 'mono12', 'rgb8'"

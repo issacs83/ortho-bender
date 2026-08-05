@@ -22,6 +22,8 @@ from ..models.schemas import (
     err,
     ok,
 )
+from pydantic import BaseModel
+
 from ..services.camera_service import CameraService
 from ..services.ipc_client import (
     IpcClient,
@@ -29,6 +31,7 @@ from ..services.ipc_client import (
     MSG_STATUS_HEARTBEAT,
 )
 from ..services.motor_service import MotorService
+from ..services.psu_service import PSU_PRESETS, PsuService
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/system", tags=["system"])
@@ -48,6 +51,14 @@ def _motor_service(request: Request) -> MotorService:
 
 def _camera_service(request: Request) -> CameraService:
     return request.app.state.camera_service
+
+
+def _psu_service(request: Request) -> PsuService:
+    return request.app.state.psu_service
+
+
+class PsuSelectRequest(BaseModel):
+    psu_id: str
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +85,12 @@ async def get_system_status(
     active_alarms = 0
     motion_state = MotionState.IDLE
 
-    if ipc_ok:
+    bench_mode = bool(getattr(motor, "has_bench", False))
+
+    # On the bench there is no M7 — skip the heartbeat round-trip entirely
+    # (the mock IPC would just return IDLE / wdt_ok=0 and waste the 0.5 s
+    # timeout when the OS is busy). Production keeps the M7 path.
+    if ipc_ok and not bench_mode:
         try:
             resp = await asyncio.wait_for(
                 ipc.send_recv(MSG_STATUS_HEARTBEAT), timeout=0.5
@@ -88,16 +104,41 @@ async def get_system_status(
                 motion_state = MotionState(state)
         except Exception as exc:
             log.debug("Heartbeat poll failed: %s", exc)
+    elif bench_mode:
+        # No M7 on the bench — heartbeat reads as healthy, link is whatever
+        # the mock IPC reports, alarms come from the bench fault service
+        # (none right now). Motion state is filled in below from MotorService.
+        m7_hb_ok = True
 
-    # Camera status — read from CameraBackend ABC
-    camera_connected = camera.is_connected
-    camera_model: str | None = None
-    if camera_connected:
+    # On the bench MotorService owns the real state (including the sticky
+    # _bench_estop_active flag) — see _bench_status().
+    if bench_mode:
         try:
-            dev = camera.device_info()
-            camera_model = dev.get("model")
-        except Exception:
-            pass
+            bench_ms = await motor.get_status()
+            motion_state = bench_ms.state
+        except Exception as exc:
+            log.debug("Bench motor status query failed: %s", exc)
+
+    # Camera model — read from actual hardware, not hardcoded.
+    # CameraService.get_status is async (returns a CameraStatus dataclass);
+    # NullCameraService keeps it sync as a dict for the no-camera path.
+    # Treat both shapes uniformly via _attr.
+    import inspect as _inspect
+    cam_raw = camera.get_status()
+    if _inspect.iscoroutine(cam_raw):
+        cam_raw = await cam_raw
+
+    def _attr(obj, name, default=None):
+        if obj is None:
+            return default
+        if isinstance(obj, dict):
+            return obj.get(name, default)
+        return getattr(obj, name, default)
+
+    cam_connected_raw = bool(_attr(cam_raw, "connected", False))
+    cam_backend       = _attr(cam_raw, "backend", "") or ""
+    cam_device        = _attr(cam_raw, "device")
+    camera_model: str | None = _attr(cam_device, "model") or _attr(cam_raw, "device_id")
 
     # Motor driver summary — count connected drivers from probe
     motor_connected = any(
@@ -110,7 +151,7 @@ async def get_system_status(
 
     return ok({
         "motion_state":     motion_state.value,
-        "camera_connected": camera_connected,
+        "camera_connected": cam_connected_raw and cam_backend != "mock",
         "camera_model":     camera_model,
         "ipc_connected":    ipc_ok,
         "m7_heartbeat_ok":  m7_hb_ok,
@@ -183,6 +224,43 @@ async def system_reboot(
     asyncio.create_task(_deferred_reboot())
 
     return ok({"message": "Reboot scheduled in 2 seconds"})
+
+
+# ---------------------------------------------------------------------------
+# GET / POST /api/system/psu — Power-supply preset selection
+# ---------------------------------------------------------------------------
+
+def _psu_to_dict(psu) -> dict:
+    return {"id": psu.id, "label": psu.label, "volts": psu.volts, "amps": psu.amps, "cs_cap": psu.cs_cap}
+
+
+@router.get("/psu", response_model=ApiResponse)
+async def get_psu(svc: PsuService = Depends(_psu_service)) -> ApiResponse:
+    """Return the active PSU preset and the available list."""
+    return ok({
+        "active":  _psu_to_dict(svc.psu),
+        "presets": [_psu_to_dict(p) for p in PSU_PRESETS],
+    })
+
+
+@router.post("/psu", response_model=ApiResponse)
+async def set_psu(
+    body: PsuSelectRequest,
+    request: Request,
+    svc: PsuService = Depends(_psu_service),
+) -> ApiResponse:
+    """Persist a new PSU preset selection (used by /diag/register guard)."""
+    try:
+        active = svc.set_psu(body.psu_id)
+        # Keep the bench backend's init-time current cap in lock-step so
+        # the next jog writes a SGCSCONF the new supply can actually feed.
+        diag_svc = getattr(request.app.state, "diag_service", None)
+        backend = getattr(diag_svc, "_backend", None) if diag_svc else None
+        if backend is not None and hasattr(backend, "apply_current_cap"):
+            backend.apply_current_cap(active.cs_cap)
+        return ok({"active": _psu_to_dict(active)})
+    except ValueError as exc:
+        return err(str(exc), "INVALID_PSU_ID")
 
 
 # ---------------------------------------------------------------------------

@@ -32,6 +32,44 @@ def _motor_service(request: Request) -> MotorService:
     return request.app.state.motor_service
 
 
+def _calibration_service(request: Request):
+    return getattr(request.app.state, "calibration_service", None)
+
+
+from pydantic import BaseModel as _BaseModel
+
+
+class CalibrationUpdate(_BaseModel):
+    axis: int
+    steps_per_unit: float
+
+
+# ---------------------------------------------------------------------------
+# GET /api/motor/calibration  +  POST /api/motor/calibration
+# ---------------------------------------------------------------------------
+
+@router.get("/calibration", response_model=ApiResponse)
+async def get_calibration(svc=Depends(_calibration_service)) -> ApiResponse:
+    """Return the active axis steps_per_unit map + per-axis caps."""
+    if svc is None:
+        return err("calibration not available", "NO_BENCH")
+    return ok(svc.all())
+
+
+@router.post("/calibration", response_model=ApiResponse)
+async def update_calibration(
+    body: CalibrationUpdate, svc=Depends(_calibration_service)
+) -> ApiResponse:
+    """Set steps_per_unit for one axis."""
+    if svc is None:
+        return err("calibration not available", "NO_BENCH")
+    try:
+        svc.update(body.axis, body.steps_per_unit)
+        return ok(svc.all())
+    except ValueError as exc:
+        return err(str(exc), "INVALID_CALIBRATION")
+
+
 # ---------------------------------------------------------------------------
 # GET /api/motor/status
 # ---------------------------------------------------------------------------
@@ -83,6 +121,46 @@ async def motor_jog(
     except Exception as exc:
         log.error("Motor jog failed: %s", exc)
         return err(str(exc), "MOTOR_JOG_ERROR")
+
+
+# ---------------------------------------------------------------------------
+# POST /api/motor/jog/start  +  POST /api/motor/jog/stop  (long-press jog)
+# ---------------------------------------------------------------------------
+
+@router.post("/jog/start", response_model=ApiResponse)
+async def motor_jog_start(
+    body: MotorJogRequest,
+    svc: MotorService = Depends(_motor_service),
+) -> ApiResponse:
+    """Begin continuous bench jog.
+
+    Two patterns supported:
+      - long-press (default, body.continuous=False): pointerdown → start,
+        pointerup → /jog/stop. 5 s safety fallback.
+      - single-click continuous (body.continuous=True): one click → run,
+        manual STOP button → /jog/stop. 60 s safety fallback.
+    """
+    try:
+        result = await svc.jog_start(
+            body.axis, body.direction, body.speed, continuous=body.continuous
+        )
+        return ok(result)
+    except Exception as exc:
+        log.error("Motor jog/start failed: %s", exc)
+        return err(str(exc), "MOTOR_JOG_START_ERROR")
+
+
+@router.post("/jog/stop", response_model=ApiResponse)
+async def motor_jog_stop(
+    svc: MotorService = Depends(_motor_service),
+) -> ApiResponse:
+    """Stop the current bench jog (long-press release)."""
+    try:
+        result = await svc.jog_stop()
+        return ok(result)
+    except Exception as exc:
+        log.error("Motor jog/stop failed: %s", exc)
+        return err(str(exc), "MOTOR_JOG_STOP_ERROR")
 
 
 # ---------------------------------------------------------------------------

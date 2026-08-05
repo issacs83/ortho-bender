@@ -58,10 +58,10 @@ async def test_read_status_mock_standstill(driver):
 
 @pytest.mark.asyncio
 async def test_set_current_range(driver):
-    """set_current accepts 0-31 and raises ValueError outside range."""
-    await driver.set_current(20)
+    """set_current accepts 0-19 (hard safety cap) and rejects outside."""
+    await driver.set_current(19)
     with pytest.raises(ValueError):
-        await driver.set_current(32)
+        await driver.set_current(20)  # SAFETY_CS_MAX=19 — boards burned at CS=31
     with pytest.raises(ValueError):
         await driver.set_current(-1)
 
@@ -71,6 +71,36 @@ async def test_set_microstep(driver):
     """set_microstep accepts valid MRES values."""
     await driver.set_microstep(0x04)  # 16 microsteps
     await driver.set_microstep(0x00)  # 256 microsteps
+
+
+@pytest.mark.asyncio
+async def test_set_microstep_preserves_dedge_intpol(mock_backend, driver):
+    """set_microstep must keep DEDGE (bit 8) + INTPOL (bit 9) set.
+
+    A regression here halves the step rate: the PWM STEP path relies on
+    DEDGE (2 microsteps per PWM cycle).
+    """
+    captured: list[bytes] = []
+    original = mock_backend.spi_transfer
+
+    async def capture(cs, data):
+        captured.append(bytes(data))
+        return await original(cs, data)
+
+    mock_backend.spi_transfer = capture
+    await driver.set_microstep(4)
+    datagram = (captured[-1][0] << 16) | (captured[-1][1] << 8) | captured[-1][2]
+    assert datagram & (1 << 8), "DEDGE dropped by set_microstep"
+    assert datagram & (1 << 9), "INTPOL dropped by set_microstep"
+    assert datagram & 0x0F == 4
+
+
+def test_drvctrl_default_is_1_16_with_dedge():
+    """DRVCTRL_DEFAULT: MRES=4 (1/16), DEDGE=1, INTPOL=1."""
+    from src.app.server.services.tmc260c_driver import DRVCTRL_DEFAULT
+    assert DRVCTRL_DEFAULT & 0x0F == 4
+    assert DRVCTRL_DEFAULT & (1 << 8)
+    assert DRVCTRL_DEFAULT & (1 << 9)
 
 
 @pytest.mark.asyncio
@@ -91,3 +121,14 @@ async def test_dump_registers(driver):
     assert 'SMARTEN' in dump
     assert 'SGCSCONF' in dump
     assert 'DRVCONF' in dump
+
+
+@pytest.mark.asyncio
+async def test_dump_registers_drvctrl_matches_written_default(driver):
+    """dump must report the DRVCTRL value actually written at init.
+
+    An earlier version reported 0x204 — a value never written to the chip.
+    """
+    from src.app.server.services.tmc260c_driver import DRVCTRL_DEFAULT
+    dump = await driver.dump_registers()
+    assert dump['DRVCTRL'] == DRVCTRL_DEFAULT

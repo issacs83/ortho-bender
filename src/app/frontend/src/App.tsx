@@ -1,11 +1,16 @@
 /**
- * App.tsx — Ortho-Bender Dashboard: shell + page routing.
+ * App.tsx — Ortho-Bender Dashboard: sidebar + header + page routing.
+ *
+ * Layout:
+ *   Fixed header (56px) + fixed sidebar (240px/56px) + scrollable content
+ *
+ * Routing: useState-based, no react-router-dom.
  */
 
 import { useEffect, useState } from 'react';
-import { Sidebar } from './components/shell/Sidebar';
-import { Header } from './components/shell/Header';
-import { AlarmBanner } from './components/shell/AlarmBanner';
+import { Sidebar } from './components/layout/Sidebar';
+import { Header } from './components/layout/Header';
+import { AlarmBanner } from './components/layout/AlarmBanner';
 import { ConnectionPage }  from './pages/ConnectionPage';
 import { DashboardPage }   from './pages/DashboardPage';
 import { BendingPage }     from './pages/BendingPage';
@@ -15,11 +20,13 @@ import { SimulationPage }  from './pages/SimulationPage';
 import { SettingsPage }    from './pages/SettingsPage';
 import { DiagnosticsPage } from './pages/DiagnosticsPage';
 import { DocumentationPage } from './pages/DocumentationPage';
-import { systemApi, type SystemStatus } from './api/client';
+import { systemApi, motorApi, type SystemStatus } from './api/client';
 import { wsApi } from './api/client';
 import type { ConnStatus } from './components/ui/ConnectionIcon';
 import type { SystemEvent } from './hooks/useSystemWs';
-import { cn } from './lib/cn';
+import { useBoardRebootDetector } from './hooks/useBoardRebootDetector';
+import { ToastProvider } from './components/ui/ToastSystem';
+import { BG_PRIMARY, BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_MUTED } from './constants';
 
 export type Page = 'connection' | 'dashboard' | 'bending' | 'motor' | 'camera' | 'simulation' | 'settings' | 'diagnostics' | 'docs';
 
@@ -29,9 +36,16 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [sysStatus, setSysStatus] = useState<SystemStatus | null>(null);
-  const [systemEvents, setSystemEvents] = useState<SystemEvent[]>([]);
-  const [motionStateNum, setMotionStateNum] = useState(0);
+  const { rebootDetected, dismiss: dismissReboot } = useBoardRebootDetector();
+  const [homing, setHoming] = useState(false);
 
+  async function runHomingFromPrompt() {
+    try { setHoming(true); await motorApi.home(0); dismissReboot(); }
+    catch (e) { alert(`Homing failed: ${e}`); }
+    finally { setHoming(false); }
+  }
+
+  // Responsive detection
   useEffect(() => {
     function onResize() {
       const mobile = window.innerWidth < 768;
@@ -41,6 +55,8 @@ export default function App() {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
+  const [systemEvents, setSystemEvents] = useState<SystemEvent[]>([]);
+  const [motionStateNum, setMotionStateNum] = useState(0);
 
   // Derived connection statuses — based on real hardware detection
   const boardStatus: ConnStatus = sysStatus ? 'connected' : 'disconnected';
@@ -49,7 +65,9 @@ export default function App() {
   const driverProbe = sysStatus?.driver_probe ?? {};
   const driverTotal = Object.keys(driverProbe).length;
   const driverConnected = Object.values(driverProbe).filter((d) => d.connected).length;
-  const motorDetail = driverTotal > 0 ? `${driverConnected}/${driverTotal}` : 'NO';
+  const motorDetail = driverTotal > 0
+    ? `${driverConnected}/${driverTotal}`
+    : 'NO';
   const camStatus: ConnStatus = sysStatus?.camera_connected ? 'connected' : 'disconnected';
 
   const sidebarWidth = sidebarCollapsed ? 56 : 240;
@@ -109,47 +127,124 @@ export default function App() {
   }
 
   return (
-    <div className="bg-canvas min-h-screen text-text-primary">
-      <Header
-        onToggleSidebar={() => isMobile ? setSidebarOpen((o) => !o) : setSidebarCollapsed((c) => !c)}
-        motionStateNum={motionStateNum}
-        bdStatus={boardStatus}
-        ipcStatus={ipcStatus}
-        motorStatus={motorConnStatus}
-        motorModel={sysStatus?.motor_model ?? null}
-        motorDetail={motorDetail}
-        camStatus={camStatus}
-        camModel={sysStatus?.camera_model ?? null}
-        alarmCount={sysStatus?.active_alarms ?? 0}
-        onEstopAction={handleEstopAction}
-      />
+    <ToastProvider>
+      {/* Global styles */}
+      <style>{`
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        /* Global button press feedback. Inline-styled buttons opt out by
+           setting transform inline. The :not([disabled]) guard keeps
+           disabled buttons static so the operator can see they're inert. */
+        button:not([disabled]):active {
+          transform: scale(0.96);
+          transition: transform 60ms ease-out, filter 60ms ease-out;
+          filter: brightness(0.85);
+        }
+        button:not([disabled]) { transition: transform 120ms ease, filter 120ms ease; }
+        button[disabled] { cursor: not-allowed !important; }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to   { transform: rotate(360deg); }
+        }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+        @media (max-width: 768px) {
+          .sidebar-overlay {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            background: rgba(0,0,0,0.5) !important;
+            z-index: 99 !important;
+          }
+        }
+      `}</style>
 
-      {/* Mobile overlay backdrop */}
-      {isMobile && sidebarOpen && (
-        <div
-          onClick={() => setSidebarOpen(false)}
-          className="fixed inset-0 bg-black/50 z-[99] top-14"
+      <div style={{ background: BG_PRIMARY, minHeight: '100vh', color: '#f1f5f9' }}>
+        {rebootDetected && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+          >
+            <div style={{ background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 24, maxWidth: 460, color: TEXT_PRIMARY }}>
+              <h3 style={{ margin: '0 0 10px', color: '#fcd34d', fontSize: 16 }}>⚠ Board restart detected</h3>
+              <p style={{ margin: '0 0 8px', fontSize: 13, lineHeight: 1.5 }}>
+                The controller has rebooted since this dashboard last polled it.
+                Stored motor positions have been cleared because they may no
+                longer match the physical machine.
+              </p>
+              <p style={{ margin: '0 0 18px', fontSize: 12, color: TEXT_MUTED }}>
+                Run homing before any motion command, or acknowledge if you
+                will home from the bench shortly.
+              </p>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                <button
+                  onClick={dismissReboot}
+                  style={{ background: 'transparent', border: `1px solid ${BORDER}`, color: TEXT_MUTED, borderRadius: 4, padding: '8px 16px', cursor: 'pointer', fontSize: 13 }}
+                >Acknowledge</button>
+                <button
+                  onClick={runHomingFromPrompt}
+                  disabled={homing}
+                  style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '8px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: homing ? 0.6 : 1 }}
+                >{homing ? 'Homing…' : 'Run Homing'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Fixed header */}
+        <Header
+          onToggleSidebar={() => isMobile ? setSidebarOpen((o) => !o) : setSidebarCollapsed((c) => !c)}
+          motionStateNum={motionStateNum}
+          bdStatus={boardStatus}
+          ipcStatus={ipcStatus}
+          motorStatus={motorConnStatus}
+          motorModel={sysStatus?.motor_model ?? null}
+          motorDetail={motorDetail}
+          camStatus={camStatus}
+          camModel={sysStatus?.camera_model ?? null}
+          onEstopAction={handleEstopAction}
         />
-      )}
 
-      {(!isMobile || sidebarOpen) && (
-        <Sidebar
-          currentPage={currentPage}
-          onNavigate={handleNavigate}
-          collapsed={isMobile ? false : sidebarCollapsed}
-          onToggleCollapse={() => isMobile ? setSidebarOpen(false) : setSidebarCollapsed((c) => !c)}
-        />
-      )}
+        {/* Mobile overlay backdrop */}
+        {isMobile && sidebarOpen && (
+          <div
+            onClick={() => setSidebarOpen(false)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 99, top: 56 }}
+          />
+        )}
 
-      <div
-        className={cn('mt-14 min-h-[calc(100vh-56px)] flex flex-col transition-[margin-left] duration-default')}
-        style={{ marginLeft: isMobile ? 0 : sidebarWidth }}
-      >
-        <AlarmBanner activeAlarms={sysStatus?.active_alarms ?? 0} events={systemEvents} />
-        <div className="flex-1 overflow-y-auto">
-          {renderPage()}
+        {/* Sidebar: fixed on desktop, overlay drawer on mobile */}
+        {(!isMobile || sidebarOpen) && (
+          <Sidebar
+            currentPage={currentPage}
+            onNavigate={handleNavigate}
+            collapsed={isMobile ? false : sidebarCollapsed}
+            onToggleCollapse={() => isMobile ? setSidebarOpen(false) : setSidebarCollapsed((c) => !c)}
+          />
+        )}
+
+        {/* Main content area */}
+        <div style={{
+          marginLeft: isMobile ? 0 : sidebarWidth,
+          marginTop: 56,
+          minHeight: 'calc(100vh - 56px)',
+          transition: 'margin-left 0.2s ease',
+          display: 'flex',
+          flexDirection: 'column',
+        }}>
+          {/* Alarm banner (conditional) */}
+          <AlarmBanner activeAlarms={sysStatus?.active_alarms ?? 0} events={systemEvents} />
+
+          {/* Page content */}
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {renderPage()}
+          </div>
         </div>
       </div>
-    </div>
+    </ToastProvider>
   );
 }

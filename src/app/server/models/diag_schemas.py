@@ -19,8 +19,18 @@ from pydantic import BaseModel, Field
 
 
 class DriverId(StrEnum):
+    """Driver identifier for diagnostic API.
+
+    Test bench (verified 2026-05-08, Veyron 1×2A ×3):
+      tmc260c_0 = LIFT  (cs=0, gpio5_07)
+      tmc260c_1 = BEND  (cs=1, gpio3_22)
+      tmc260c_2 = FEED  (cs=2, gpio5_13)
+
+    tmc5072 retained for future production board with TMC5072 dual-driver IC.
+    """
     TMC260C_0 = "tmc260c_0"
     TMC260C_1 = "tmc260c_1"
+    TMC260C_2 = "tmc260c_2"
     TMC5072   = "tmc5072"
 
 

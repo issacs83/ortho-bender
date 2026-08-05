@@ -3,10 +3,12 @@
  */
 
 import { useState } from 'react';
-import { Card, CardTitle } from '../components/ui/Card';
-import { Button } from '../components/ui/Button';
+import { usePersistentState } from '../hooks/usePersistentState';
+import { useSoftLimits, softLimitsDefault, type SoftLimits } from '../hooks/useSoftLimits';
+import { usePsuConfig } from '../hooks/usePsuConfig';
+import { useAxisCalibration, AXIS_PHYSICAL_UNIT } from '../hooks/useAxisCalibration';
+import { AXIS_NAMES, AXIS_UNITS, BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, BG_PRIMARY, PSU_PRESETS, SAFETY_CS_MAX } from '../constants';
 import { StatusBadge } from '../components/ui/StatusBadge';
-import { cn } from '../lib/cn';
 
 type Role = 'Operator' | 'Engineer' | 'Admin';
 
@@ -31,24 +33,26 @@ const ROLE_INFO: Record<Role, { desc: string; access: string[] }> = {
   },
 };
 
-const inputClass = cn(
-  'w-full bg-surface-2 border border-border text-text-primary',
-  'px-2.5 py-1.5 rounded text-[13px]',
-  'focus:outline-none focus:border-accent/60',
-);
-
-const selectClass = cn(inputClass, 'cursor-pointer');
-
 export function SettingsPage() {
-  const [currentRole, setCurrentRole] = useState<Role>('Engineer');
+  const [currentRole, setCurrentRole] = usePersistentState<Role>('settings.currentRole', 'Engineer');
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState<string | null>(null);
   const [targetRole, setTargetRole] = useState<Role>('Operator');
-  const [theme, setTheme] = useState('Dark');
-  const [language, setLanguage] = useState('English');
-  const [notifFault, setNotifFault] = useState(true);
-  const [notifWarning, setNotifWarning] = useState(true);
-  const [notifComplete, setNotifComplete] = useState(false);
+  const [theme, setTheme] = usePersistentState('settings.theme', 'Dark');
+  const [language, setLanguage] = usePersistentState('settings.language', 'English');
+  const [notifFault, setNotifFault] = usePersistentState('settings.notifFault', true);
+  const [notifWarning, setNotifWarning] = usePersistentState('settings.notifWarning', true);
+  const [notifComplete, setNotifComplete] = usePersistentState('settings.notifComplete', false);
+  const [softLimits, setSoftLimits] = useSoftLimits();
+  const { psu, psuId, setPsuId, override, setOverride, effectiveCsMax } = usePsuConfig();
+  const { cal, setStepsPerUnit } = useAxisCalibration();
+
+  function updateLimit(axisIdx: number, value: number) {
+    if (!Number.isFinite(value) || value <= 0) return;
+    const next = [...softLimits] as SoftLimits;
+    next[axisIdx] = value;
+    setSoftLimits(next);
+  }
 
   function handleSwitchRole() {
     if (pin.length < 4) {
@@ -64,109 +68,198 @@ export function SettingsPage() {
     setPinError(null);
   }
 
+  const cardStyle = { background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 20, marginBottom: 16 };
+  const inputStyle = { background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '6px 10px', borderRadius: 4, fontSize: 13, width: '100%' };
+  const selectStyle = { ...inputStyle };
+
   return (
-    <div className="p-4 max-w-[700px] mx-auto">
-      <h2 className="text-lg font-semibold text-text-primary mb-4">Settings</h2>
+    <div style={{ padding: 20, maxWidth: 700, margin: '0 auto' }}>
+      <h2 style={{ margin: '0 0 20px', color: TEXT_PRIMARY, fontSize: 18 }}>Settings</h2>
 
       {/* User Roles */}
-      <Card className="mb-3">
-        <CardTitle className="mb-4">User Role</CardTitle>
-
-        <div className="flex items-center gap-2.5 mb-3.5">
-          <span className="text-[13px] text-text-tertiary">Current Role:</span>
+      <div style={cardStyle}>
+        <h3 style={{ margin: '0 0 16px', fontSize: 14, color: TEXT_PRIMARY }}>User Role</h3>
+        <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 13, color: TEXT_MUTED }}>Current Role:</span>
           <StatusBadge variant="info" label={currentRole} />
         </div>
 
-        <div className="mb-3">
-          <label className="block text-[12px] text-text-tertiary mb-1">Switch to Role</label>
-          <select
-            value={targetRole}
-            onChange={(e) => setTargetRole(e.target.value as Role)}
-            className={cn(selectClass, 'max-w-[200px]')}
-          >
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>Switch to Role</label>
+          <select value={targetRole} onChange={(e) => setTargetRole(e.target.value as Role)} style={{ ...selectStyle, width: 200 }}>
             {(['Operator', 'Engineer', 'Admin'] as Role[]).map((r) => (
               <option key={r}>{r}</option>
             ))}
           </select>
         </div>
 
-        <div className="mb-3">
-          <label className="block text-[12px] text-text-tertiary mb-1">PIN</label>
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>PIN</label>
           <input
             type="password"
             value={pin}
             onChange={(e) => setPin(e.target.value)}
             placeholder="Enter role PIN"
-            className={cn(inputClass, 'max-w-[200px]')}
+            style={{ ...inputStyle, width: 200 }}
           />
-          {pinError && (
-            <p className="text-[12px] text-danger mt-1">{pinError}</p>
-          )}
+          {pinError && <div style={{ fontSize: 12, color: '#ef4444', marginTop: 4 }}>{pinError}</div>}
         </div>
 
-        <Button variant="primary" onClick={handleSwitchRole}>
+        <button
+          onClick={handleSwitchRole}
+          style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+        >
           Switch Role
-        </Button>
+        </button>
 
-        <div className="mt-4 p-3 bg-surface-2 rounded border border-border">
-          <p className="text-[12px] text-text-tertiary mb-1.5">{ROLE_INFO[currentRole].desc}</p>
-          <p className="text-[11px] text-text-tertiary">
+        <div style={{ marginTop: 16, padding: 12, background: BG_PRIMARY, borderRadius: 6, border: `1px solid ${BORDER}` }}>
+          <div style={{ fontSize: 12, color: TEXT_MUTED, marginBottom: 6 }}>{ROLE_INFO[currentRole].desc}</div>
+          <div style={{ fontSize: 11, color: TEXT_MUTED }}>
             Access: {ROLE_INFO[currentRole].access.join(' · ')}
-          </p>
+          </div>
         </div>
-      </Card>
+      </div>
 
       {/* Appearance */}
-      <Card className="mb-3">
-        <CardTitle className="mb-4">Appearance</CardTitle>
-        <div className="grid grid-cols-2 gap-3.5">
+      <div style={cardStyle}>
+        <h3 style={{ margin: '0 0 16px', fontSize: 14, color: TEXT_PRIMARY }}>Appearance</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
           <div>
-            <label className="block text-[12px] text-text-tertiary mb-1">Theme</label>
-            <select
-              value={theme}
-              onChange={(e) => setTheme(e.target.value)}
-              className={selectClass}
-            >
+            <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>Theme</label>
+            <select value={theme} onChange={(e) => setTheme(e.target.value)} style={selectStyle}>
               {['Dark', 'Light', 'System'].map((t) => <option key={t}>{t}</option>)}
             </select>
           </div>
           <div>
-            <label className="block text-[12px] text-text-tertiary mb-1">Language</label>
-            <select
-              value={language}
-              onChange={(e) => setLanguage(e.target.value)}
-              className={selectClass}
-            >
+            <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>Language</label>
+            <select value={language} onChange={(e) => setLanguage(e.target.value)} style={selectStyle}>
               {['English', 'Korean', 'Japanese'].map((l) => <option key={l}>{l}</option>)}
             </select>
           </div>
         </div>
-      </Card>
+      </div>
+
+      {/* Power Supply + Driver safety cap */}
+      <div style={cardStyle}>
+        <h3 style={{ margin: '0 0 6px', fontSize: 14, color: TEXT_PRIMARY }}>Power Supply</h3>
+        <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 14 }}>
+          Selecting the actual benchtop PSU caps IRUN/IHOLD on the Driver Config tab so the
+          driver cannot be set above what the supply can sustain. Hardware safety max is
+          CS = <strong style={{ color: '#fcd34d' }}>{SAFETY_CS_MAX}</strong> (boards burned 2026-05-08 with CS=31).
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 12 }}>
+          <div>
+            <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>PSU preset</label>
+            <select value={psuId} onChange={(e) => setPsuId(e.target.value)} style={selectStyle}>
+              {PSU_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label} → CS≤{p.csCap}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>
+              Manual CS cap override <span style={{ color: TEXT_MUTED }}>(0 = use preset)</span>
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={SAFETY_CS_MAX}
+              value={override}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (!Number.isFinite(v)) return;
+                setOverride(Math.min(SAFETY_CS_MAX, Math.max(0, v)));
+              }}
+              style={inputStyle}
+            />
+          </div>
+        </div>
+        <div style={{ padding: 10, background: BG_PRIMARY, borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 12, color: TEXT_SECONDARY }}>
+          Active PSU: <strong style={{ color: TEXT_PRIMARY }}>{psu.label}</strong>
+          &nbsp;·&nbsp; Effective CS cap: <strong style={{ color: '#fcd34d' }}>{effectiveCsMax}</strong>
+          &nbsp;·&nbsp; Hardware max: {SAFETY_CS_MAX}
+        </div>
+      </div>
+
+      {/* Axis Calibration */}
+      <div style={cardStyle}>
+        <h3 style={{ margin: '0 0 6px', fontSize: 14, color: TEXT_PRIMARY }}>Axis Calibration</h3>
+        <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 14 }}>
+          Steps per user unit for each axis. Drives the conversion from "Jog Speed" /
+          "Step Size" (mm or deg) to motor STEP rate. Defaults assume 200 microsteps =
+          1 motor revolution. Adjust to match your wire-bender mechanicals
+          (lead screws, gear ratios) — value is persisted on the board.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+          {AXIS_NAMES.map((n, i) => (
+            <div key={n}>
+              <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>
+                {n} <span style={{ color: TEXT_SECONDARY }}>(step / {AXIS_PHYSICAL_UNIT[i]})</span>
+              </label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={cal.steps_per_unit[i]}
+                onChange={(e) => setStepsPerUnit(i, Number(e.target.value))}
+                style={inputStyle}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Motor Soft Limits */}
+      <div style={cardStyle}>
+        <h3 style={{ margin: '0 0 6px', fontSize: 14, color: TEXT_PRIMARY }}>Motor Soft Limits</h3>
+        <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 14 }}>
+          Position progress bar reference per axis. Bar turns amber at 80%, red beyond 100%.
+          Stored locally in this browser — does not change motor firmware limits.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
+          {AXIS_NAMES.map((name, i) => (
+            <div key={name}>
+              <label style={{ fontSize: 12, color: TEXT_MUTED, display: 'block', marginBottom: 4 }}>
+                {name} ({AXIS_UNITS[i]})
+              </label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={softLimits[i]}
+                onChange={(e) => updateLimit(i, Number(e.target.value))}
+                style={inputStyle}
+              />
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={() => setSoftLimits(softLimitsDefault())}
+          style={{ marginTop: 14, background: 'transparent', color: TEXT_SECONDARY, border: `1px solid ${BORDER}`, borderRadius: 4, padding: '6px 12px', cursor: 'pointer', fontSize: 12 }}
+        >
+          Reset to defaults
+        </button>
+      </div>
 
       {/* Notifications */}
-      <Card>
-        <CardTitle className="mb-4">Notifications</CardTitle>
-        <div className="flex flex-col gap-3">
+      <div style={cardStyle}>
+        <h3 style={{ margin: '0 0 16px', fontSize: 14, color: TEXT_PRIMARY }}>Notifications</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {([
             ['Fault / E-Stop alerts', notifFault, setNotifFault],
             ['Warning alerts',        notifWarning, setNotifWarning],
             ['Bending complete',      notifComplete, setNotifComplete],
           ] as [string, boolean, (v: boolean) => void][]).map(([label, value, setter]) => (
-            <label
-              key={label}
-              className="flex items-center gap-2.5 cursor-pointer text-[13px] text-text-secondary"
-            >
+            <label key={label} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13, color: TEXT_SECONDARY }}>
               <input
                 type="checkbox"
                 checked={value}
                 onChange={(e) => setter(e.target.checked)}
-                className="accent-accent w-4 h-4"
+                style={{ accentColor: '#3b82f6', width: 16, height: 16 }}
               />
               {label}
             </label>
           ))}
         </div>
-      </Card>
+      </div>
     </div>
   );
 }
