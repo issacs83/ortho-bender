@@ -16,6 +16,7 @@ from ..models.schemas import (
     ApiResponse,
     MotionState,
     MotorHomeRequest,
+    MotorZeroRequest,
     MotorJogRequest,
     MotorMoveRequest,
     MotorResetRequest,
@@ -166,6 +167,26 @@ async def motor_jog_stop(
 # ---------------------------------------------------------------------------
 # POST /api/motor/home
 # ---------------------------------------------------------------------------
+
+@router.post("/zero", response_model=ApiResponse)
+async def motor_set_zero(
+    body: MotorZeroRequest,
+    svc: MotorService = Depends(_motor_service),
+) -> ApiResponse:
+    """Zero-point (datum) setting — declare the current physical position.
+
+    Jog the axis to a known reference (mechanical stop, mark, or a limit
+    switch once wired) and call this to define the position counter as
+    `value` (default 0). No motion occurs; the counter persists across
+    restarts. Homing via the two bench limit switches will build on this
+    once they are powered and wired.
+    """
+    try:
+        status = await svc.set_zero(int(body.axis), body.value)
+        return ok(status.model_dump())
+    except (RuntimeError, ValueError) as exc:
+        return err(str(exc), "MOTOR_ZERO_ERROR")
+
 
 @router.post("/home", response_model=ApiResponse)
 async def motor_home(

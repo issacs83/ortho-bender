@@ -214,6 +214,13 @@ export const motorApi = {
       body: JSON.stringify({ axis_mask }),
     }),
 
+  /** Declare the current physical position of `axis` to be `value` (mm/deg). */
+  setZero: (axis: number, value = 0): Promise<MotorStatus> =>
+    request("/api/motor/zero", {
+      method: "POST",
+      body: JSON.stringify({ axis, value }),
+    }),
+
   stop: (): Promise<MotorStatus> =>
     request("/api/motor/stop", { method: "POST" }),
 

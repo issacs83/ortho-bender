@@ -116,6 +116,17 @@ class MotorHomeRequest(BaseModel):
     )
 
 
+class MotorZeroRequest(BaseModel):
+    axis: AxisId = Field(..., description="Axis whose position counter to redefine")
+    value: float = Field(
+        0.0,
+        ge=-100000, le=100000,
+        description="Declare the CURRENT physical position to be this value "
+                    "in axis-native units (mm or deg). 0 = set zero point. "
+                    "No motion occurs; the counter is persisted."
+    )
+
+
 class MotorResetRequest(BaseModel):
     axis_mask: int = Field(
         0,

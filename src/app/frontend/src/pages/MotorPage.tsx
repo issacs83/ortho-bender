@@ -347,6 +347,20 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                 style={{ ...jogBtnStyle, color: '#a5b4fc', background: '#1e1b4b' }}
                 className="jog-btn"
               >▶▶</button>
+              {/* ⌂0 = 영점 설정: 현재 물리 위치를 이 축의 0으로 선언 (모션 없음) */}
+              <button
+                disabled={!enabled}
+                onClick={async () => {
+                  if (!enabled) return;
+                  if (!window.confirm(`${AXIS_NAMES[axisId]} 축의 현재 위치를 0으로 설정할까요?\n(모터는 움직이지 않고 위치 카운터만 재정의됩니다)`)) return;
+                  // Position display refreshes via the regular status stream.
+                  try { await motorApi.setZero(axisId, 0); }
+                  catch (e) { console.error('setZero failed', e); }
+                }}
+                title="영점 설정 — 현재 위치를 0으로 선언 (기계적 기준점에 조그로 맞춘 뒤 사용)"
+                style={{ ...jogBtnStyle, fontSize: 11, fontWeight: 700, color: '#86efac', background: '#14532d', border: `1px solid #166534` }}
+                className="jog-btn"
+              >⌂0</button>
             </div>
           );
         })}

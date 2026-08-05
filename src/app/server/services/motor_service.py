@@ -402,6 +402,30 @@ class MotorService:
         await self._ipc.send_recv(MSG_MOTION_JOG, payload)
         return await self.get_status()
 
+    async def set_zero(self, axis: int, value: float = 0.0) -> MotorStatusResponse:
+        """Define the current physical position as `value` (user units).
+
+        Zero-point / datum setting for the bench: the operator jogs the
+        axis to a known reference (mechanical stop, mark, future limit
+        switch) and declares the position counter to be `value`
+        (typically 0). The counter is persisted, so it survives server
+        restarts. Uses the same steps-per-unit convention as the status
+        display. Bench-only until M7 homing lands.
+        """
+        if not self.has_bench:
+            raise RuntimeError("set_zero is only available in bench mode")
+        cs = self._axis_to_cs.get(int(axis))
+        if cs is None:
+            raise ValueError(f"Axis {axis} is not present on the bench")
+        # Same conversion as _bench_status (display units = steps / 200).
+        self._spi_backend.positions[cs] = int(round(value * 200.0))
+        save = getattr(self._spi_backend, "_save_state", None)
+        if callable(save):
+            save()
+        log.info("set_zero: axis=%d (cs=%d) position counter := %.3f units",
+                 axis, cs, value)
+        return await self.get_status()
+
     async def home(self, axis_mask: int = 0) -> MotorStatusResponse:
         """Execute homing sequence for the specified axes.
 
