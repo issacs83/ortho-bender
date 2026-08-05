@@ -58,6 +58,8 @@ export interface CameraRoi {
 export interface CameraStatus {
   connected: boolean;
   streaming: boolean;
+  /** Flat model string from the bench backend (e.g. "Alvium 1800 C (MIPI CSI-2)") */
+  device_id?: string | null;
   device: CameraDeviceInfo | null;
   current_exposure_us: number | null;
   current_gain_db: number | null;

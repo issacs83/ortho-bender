@@ -41,11 +41,14 @@ function SubTabBar({ active, onChange }: { active: CameraSubTab; onChange: (t: C
 // ---------------------------------------------------------------------------
 
 function LiveCapture({ status }: { status: CameraStatus | null }) {
-  const [useWs, setUseWs] = usePersistentState('camera.useWs', false);
+  // Key is versioned: the old 'camera.useWs' could get stuck true forever
+  // after a single MJPEG error (e.g. a server restart mid-stream).
+  const [useWs, setUseWs] = usePersistentState('camera.useWs.v2', false);
   const [zoom, setZoom] = usePersistentState('camera.zoom', 1);
   const [showCrosshair, setShowCrosshair] = usePersistentState('camera.showCrosshair', false);
   const [recording, setRecording] = useState(false);
   const [frameCount, setFrameCount] = useState(0);
+  const [streamRetry, setStreamRetry] = useState(0);
   const wsFrame = useCameraWs(useWs);
 
   useEffect(() => { if (wsFrame) setFrameCount((c) => c + 1); }, [wsFrame]);
@@ -65,10 +68,16 @@ function LiveCapture({ status }: { status: CameraStatus | null }) {
         {/* Stream */}
         {!useWs ? (
           <img
-            src={streamSrc}
+            key={streamRetry}
+            src={`${streamSrc}${streamSrc.includes('?') ? '&' : '?'}r=${streamRetry}`}
             alt="Camera stream"
             style={{ width: '100%', maxHeight: 400, objectFit: 'contain', display: 'block', transform: `scale(${zoom})`, transformOrigin: 'center center' }}
-            onError={() => setUseWs(true)}
+            onError={() => {
+              // A dropped MJPEG stream (server restart, camera reconnect) is
+              // transient — retry with a cache-busted URL instead of
+              // permanently switching to the WS fallback.
+              setTimeout(() => setStreamRetry((k) => k + 1), 2000);
+            }}
           />
         ) : wsFrame ? (
           <img
@@ -382,7 +391,7 @@ export function CameraPage() {
     <div style={{ padding: 'clamp(12px, 3vw, 20px)', maxWidth: 1100, margin: '0 auto' }}>
       <h2 style={{ margin: '0 0 4px', color: TEXT_PRIMARY, fontSize: 18 }}>Camera</h2>
       <div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 14 }}>
-        Allied Vision Alvium 1800 U-158m
+        {status?.device_id ?? 'Allied Vision Alvium'}
       </div>
 
       <div style={{
