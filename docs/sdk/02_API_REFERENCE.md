@@ -90,7 +90,8 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
 **리밋 스위치 호밍** (2026-08 벤치: PM-L25 포토인터럽터, LIFT=J21 pin7 / BEND=J21 pin11).
 - `axis_mask=0` → 스위치 장착 축 전체(LIFT+BEND). 비트: `0x02=BEND, 0x08=LIFT`
 - GRBL식 2-패스: 고속 접근(seek) → 백오프 → 저속 재접근(latch, 반복정밀도) →
-  **감지점 = 0 (datum)** → 백오프 거리만큼 이탈 후 정지
+  **감지점 = 0 (datum) — 이 기계의 홈 포즈가 스위치 위치이므로 감지점에 그대로
+  정착** (`home_park=0`; 관행적 이탈 대기를 원하면 home_park>0으로 설정)
 - **즉시 반환** (state=HOMING) — 완료는 `/ws/motor` 스트림 또는 `GET /limits`로 확인
 - `POST /jog/stop` 또는 E-STOP으로 취소. 스위치 없는 축 지정 시 `MOTOR_HOME_ERROR`
 - 파라미터는 서버 설정: `home_seek_speed`(4 u/s) / `home_latch_speed`(0.5) /
