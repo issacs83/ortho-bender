@@ -137,12 +137,13 @@ class MotorResetRequest(BaseModel):
 
 
 class AxisSignals(BaseModel):
-    """Five-LED dashboard row: 12V / EN / SG / DIR / STEP."""
+    """Six-LED dashboard row: 12V / EN / SG / DIR / STEP / LIMIT."""
     vmot: bool          # chip is responding on SPI -> VMot 12 V is up
     en:   bool          # chopper currently ON for this axis
     sg:   bool          # StallGuard bit at last DRV_STATUS read
     dir:  int           # +1 / -1 (logical), 0 = never driven
     step: bool          # PWM4 enabled AND this axis is the active target
+    limit: bool | None = None   # limit switch tripped; None = no switch fitted
 
 
 class AxisStatus(BaseModel):

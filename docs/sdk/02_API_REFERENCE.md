@@ -87,8 +87,24 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
 ```json
 { "axis_mask": 0 }
 ```
-- `axis_mask=0` → 모든 enabled 축
-- StallGuard2 기반 기계적 endstop 검출
+**리밋 스위치 호밍** (2026-08 벤치: PM-L25 포토인터럽터, LIFT=J21 pin7 / BEND=J21 pin11).
+- `axis_mask=0` → 스위치 장착 축 전체(LIFT+BEND). 비트: `0x02=BEND, 0x08=LIFT`
+- GRBL식 2-패스: 고속 접근(seek) → 백오프 → 저속 재접근(latch, 반복정밀도) →
+  **감지점 = 0 (datum)** → 백오프 거리만큼 이탈 후 정지
+- **즉시 반환** (state=HOMING) — 완료는 `/ws/motor` 스트림 또는 `GET /limits`로 확인
+- `POST /jog/stop` 또는 E-STOP으로 취소. 스위치 없는 축 지정 시 `MOTOR_HOME_ERROR`
+- 파라미터는 서버 설정: `home_seek_speed`(4 u/s) / `home_latch_speed`(0.5) /
+  `home_backoff`(1.0) / `home_dir_lift·bend`(-1) / `home_timeout_s`(60)
+
+### GET `/api/motor/limits`
+**Response (data)**
+```json
+{ "limits": { "1": false, "3": true }, "homed": [1],
+  "homing": false, "error": null }
+```
+- `limits`: 축별 리밋 스위치 실시간 상태 (장착 축만: 1=BEND, 3=LIFT). true=감지됨
+- `homed`: 서버 시작 후 호밍 완료된 축 / `homing`: 호밍 진행 중 / `error`: 최근 실패 사유
+- 스위치 상태는 모터 상태 스트림의 `signals.limit` 로도 축별 제공됨
 
 ### POST `/api/motor/zero`
 ```json

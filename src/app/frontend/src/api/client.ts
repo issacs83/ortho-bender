@@ -20,6 +20,15 @@ export interface AxisSignals {
   sg:   boolean;   // StallGuard bit at last status read
   dir:  number;    // +1 / -1, 0 = never driven yet
   step: boolean;   // PWM enabled AND this axis is the active target
+  limit?: boolean | null;  // limit switch tripped; null/undefined = none fitted
+}
+
+/** GET /api/motor/limits — live switch states + homing bookkeeping. */
+export interface LimitStatus {
+  limits: Record<number, boolean>;  // axis id -> switch tripped (fitted axes only)
+  homed: number[];                  // axes homed since server start
+  homing: boolean;                  // a homing sequence is running
+  error: string | null;             // last homing failure
 }
 
 export interface AxisStatus {
@@ -224,6 +233,9 @@ export const motorApi = {
       method: "POST",
       body: JSON.stringify({ axis_mask }),
     }),
+
+  limits: (): Promise<LimitStatus> =>
+    request("/api/motor/limits"),
 
   /** Declare the current physical position of `axis` to be `value` (mm/deg). */
   setZero: (axis: number, value = 0): Promise<MotorStatus> =>
