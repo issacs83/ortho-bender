@@ -64,8 +64,10 @@ class Settings(BaseSettings):
     # Limit switches — PM-L25 photo-interrupters, wired 2026-08-13.
     # Output runs through a 12 V divider (~3.0 V idle) into J21; the line
     # is pulled to GND when the switch triggers → ACTIVE LOW.
-    #   sensor A = LIFT  → J21 pin 7  (UART3_CTS pad, ECSPI1_MISO, GPIO5_IO08)
-    #   sensor B = BEND  → J21 pin 11 (UART3_RTS pad, ECSPI1_SS0,  GPIO5_IO09)
+    # Live-verified 2026-08-14 (held-block static test — definitive):
+    # holding the LIFT-axis sensor blocked activates J21 pin 7, so:
+    #   LIFT sensor → J21 pin 7  (UART3_CTS pad, ECSPI1_MISO, GPIO5_IO08)
+    #   BEND sensor → J21 pin 11 (UART3_RTS pad, ECSPI1_SS0,  GPIO5_IO09)
     # Empty string = switch not fitted (axis not homable).
     # ------------------------------------------------------------------
     gpio_limit_lift: str = "GPIO5_IO08"
@@ -73,8 +75,10 @@ class Settings(BaseSettings):
     # Homing motion parameters (axis-native units: mm or deg).
     # home_dir_*: which jog direction moves TOWARD the switch (+1/-1).
     # Flip after the first live test if the axis runs away from it.
+    # Live-verified 2026-08-14: LIFT switch sits in the − jog direction,
+    # BEND switch in the + direction (−1 run drove BEND away from it).
     home_dir_lift: int = -1
-    home_dir_bend: int = -1
+    home_dir_bend: int = 1
     home_seek_speed: float = 4.0     # fast approach (units/s)
     home_latch_speed: float = 0.5    # slow re-approach for repeatability
     home_backoff: float = 1.0        # pull-off distance after latch (units)
