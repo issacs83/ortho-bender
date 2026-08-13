@@ -81,7 +81,12 @@ class Settings(BaseSettings):
     home_dir_bend: int = 1
     home_seek_speed: float = 4.0     # fast approach (units/s)
     home_latch_speed: float = 0.5    # slow re-approach for repeatability
-    home_backoff: float = 1.0        # pull-off distance after latch (units)
+    home_backoff: float = 1.0        # intermediate retreat between passes (units)
+    # Final resting position after homing, in units from the datum in the
+    # retreat direction. 0.0 = park exactly at the switch trip point (this
+    # machine's home pose IS the switch position — user decision 2026-08-14).
+    # Set >0 (e.g. 1.0) for the conventional off-switch pull-off park.
+    home_park: float = 0.0
     home_timeout_s: float = 60.0     # per-axis seek timeout
 
     # Legacy aliases (kept for backwards-compat with diag_router and existing

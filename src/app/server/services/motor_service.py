@@ -522,12 +522,19 @@ class MotorService:
                 seek_hz = int(cfg.home_seek_speed * spu)
                 latch_hz = int(cfg.home_latch_speed * spu)
                 backoff = int(cfg.home_backoff * spu)
+                # Hard travel cap: the switch MUST appear within the axis'
+                # calibrated travel (×1.1) — a dead sensor aborts instead
+                # of grinding into a hard stop.
+                dist_lim = cal.distance_limit(axis) if cal else 50.0
+                max_travel = int(dist_lim * 1.1 * spu)
                 log.info("homing axis=%d cs=%d dir=%+d seek=%dHz latch=%dHz "
-                         "backoff=%dsteps", axis, cs, direction, seek_hz,
-                         latch_hz, backoff)
+                         "backoff=%dsteps max_travel=%dsteps", axis, cs,
+                         direction, seek_hz, latch_hz, backoff, max_travel)
                 await self._spi_backend.home_axis(
                     cs, direction, seek_hz, latch_hz, backoff,
-                    timeout_s=cfg.home_timeout_s)
+                    timeout_s=cfg.home_timeout_s,
+                    park_steps=int(cfg.home_park * spu),
+                    max_travel_steps=max_travel)
                 self._homed_axes.add(axis)
                 log.info("homing axis=%d complete", axis)
         except self._asyncio.CancelledError:

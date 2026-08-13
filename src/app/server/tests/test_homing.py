@@ -32,11 +32,13 @@ class _StubBench:
                 "step": False, "limit": self.limit_active(cs)}
 
     async def home_axis(self, cs, direction, seek_hz, latch_hz,
-                        backoff_steps, timeout_s=60.0):
-        self.home_calls.append((cs, direction, seek_hz, latch_hz, backoff_steps))
+                        backoff_steps, timeout_s=60.0, park_steps=0,
+                        max_travel_steps=None):
+        self.home_calls.append((cs, direction, seek_hz, latch_hz,
+                                backoff_steps, park_steps))
         if self.fail_cs == cs:
             raise RuntimeError(f"axis cs={cs} homing timeout")
-        self.positions[cs] = backoff_steps
+        self.positions[cs] = park_steps
 
 
 @pytest.fixture
@@ -93,13 +95,16 @@ async def test_home_speeds_scale_with_calibration(svc):
     class _Cal:
         def steps_per_unit(self, axis):
             return 400.0
+        def distance_limit(self, axis):
+            return 100.0
     svc.set_calibration(_Cal())
     await svc.home(0x08)                # LIFT
     await _wait_homing_done(svc)
-    _, _, seek_hz, latch_hz, backoff = svc._spi_backend.home_calls[0]
+    _, _, seek_hz, latch_hz, backoff, park = svc._spi_backend.home_calls[0]
     assert seek_hz == 1600              # 4.0 u/s × 400
     assert latch_hz == 200              # 0.5 u/s × 400
     assert backoff == 400               # 1.0 u × 400
+    assert park == 0                    # home_park=0 → rest ON the trip point
 
 
 @pytest.mark.asyncio

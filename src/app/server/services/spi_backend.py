@@ -760,7 +760,8 @@ class SpidevMotorBackend(MotorBackend):
     async def home_axis(
         self, cs: int, direction: int,
         seek_hz: int, latch_hz: int, backoff_steps: int,
-        timeout_s: float = 60.0,
+        timeout_s: float = 60.0, park_steps: int = 0,
+        max_travel_steps: int | None = None,
     ) -> None:
         """Home one axis against its limit switch (GRBL-style two-pass).
 
@@ -769,8 +770,10 @@ class SpidevMotorBackend(MotorBackend):
         3. Back off until it releases, plus backoff_steps.
         4. Latch: slow re-approach at latch_hz — repeatable trip point.
         5. Datum: position := 0 at the trip point.
-        6. Pull off backoff_steps so the switch is free during operation
-           (final resting position = +backoff in the retreat direction).
+        6. Park: retreat park_steps from the datum. park_steps=0 leaves
+           the axis exactly at the switch trip point — this machine's
+           home pose IS the switch position (sensor reads tripped while
+           parked; the on-switch retreat in step 1 handles the next run).
 
         Runs as the bench motion task: jog_stop / E-STOP cancel it, and
         the finally block silences the chip either way.
@@ -781,7 +784,19 @@ class SpidevMotorBackend(MotorBackend):
         seek_hz = max(200, min(int(seek_hz), 2000))
         latch_hz = max(50, min(int(latch_hz), 500))
         backoff_steps = max(20, int(backoff_steps))
-        max_seek = int(timeout_s * seek_hz)
+        # HARD travel caps — a dead/stuck sensor must end in a bounded
+        # short move + error, never a full-travel grind into a hard stop
+        # (2026-08-14 incident: seek was capped only by the 60 s timeout
+        # = 240 units, and the on-switch retreat by the same — a LIFT
+        # sensor that stopped tripping drove the axis into BOTH ends).
+        #   - seek: the axis' calibrated travel limit (×1.1 margin)
+        #   - release moves: the switch must free within a flag-length —
+        #     10 backoffs (≈10 units) is generous; beyond that the sensor
+        #     is stuck and we abort.
+        if max_travel_steps is None:
+            max_travel_steps = int(50 * 200)   # conservative 50-unit default
+        max_seek = min(int(timeout_s * seek_hz), max_travel_steps)
+        max_release = backoff_steps * 10
         self._pwm_killed = False   # new motion — clear E-STOP kill latch
         self._active_axis = cs
         try:
@@ -793,22 +808,27 @@ class SpidevMotorBackend(MotorBackend):
             # 1) Clear the switch if we're starting on it
             if self._limit_tripped_debounced(cs):
                 met, _ = await self._home_move(
-                    cs, -direction, seek_hz, max_seek, 'release')
+                    cs, -direction, seek_hz, max_release, 'release')
                 if not met:
-                    raise RuntimeError(f"axis cs={cs} limit stuck active")
+                    raise RuntimeError(
+                        f"axis cs={cs} limit stuck active — sensor/wiring "
+                        f"suspect, aborting after bounded retreat")
                 await self._home_move(cs, -direction, seek_hz, backoff_steps, None)
 
             # 2) Seek
             met, _ = await self._home_move(cs, direction, seek_hz, max_seek, 'trip')
             if not met:
                 raise RuntimeError(
-                    f"axis cs={cs} homing timeout — switch not reached "
-                    f"within {timeout_s:.0f}s (check home_dir/wiring)")
+                    f"axis cs={cs} switch not reached within travel limit "
+                    f"({max_seek} steps) — check sensor power/wiring/home_dir")
 
             # 3) Back off until released + margin
-            met, _ = await self._home_move(cs, -direction, seek_hz, max_seek, 'release')
+            met, _ = await self._home_move(
+                cs, -direction, seek_hz, max_release, 'release')
             if not met:
-                raise RuntimeError(f"axis cs={cs} limit did not release on backoff")
+                raise RuntimeError(
+                    f"axis cs={cs} limit did not release on backoff — "
+                    f"sensor stuck, aborting")
             await self._home_move(cs, -direction, seek_hz, backoff_steps, None)
 
             # 4) Slow latch pass
@@ -821,8 +841,9 @@ class SpidevMotorBackend(MotorBackend):
             # 5) Datum at the (repeatable) slow trip point
             self.positions[cs] = 0
 
-            # 6) Final pull-off so normal motion starts off the switch
-            await self._home_move(cs, -direction, seek_hz, backoff_steps, None)
+            # 6) Park (park_steps=0 → stay on the trip point = home pose)
+            if park_steps > 0:
+                await self._home_move(cs, -direction, seek_hz, park_steps, None)
             log.info("home_axis cs=%d complete: datum set, resting at %+d steps",
                      cs, self.positions[cs])
         finally:
