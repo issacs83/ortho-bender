@@ -77,6 +77,12 @@ class MotorService:
         # moment the jog task finishes. Without this the bar would keep moving
         # because _bench_status returned JOGGING while the cancel was in flight.
         self._bench_estop_active: bool = False
+        # Limit-switch homing state (bench): flag while the homing sequence
+        # runs (status shows HOMING), axes homed since server start, and
+        # the last homing failure (surfaced via GET /api/motor/limits).
+        self._bench_homing: bool = False
+        self._homed_axes: set[int] = set()
+        self._home_error: Optional[str] = None
         # Per-axis steps/unit calibration. Late-injected via set_calibration()
         # so main.py can wire it after MotorService construction.
         self._calibration = None  # type: ignore[assignment]
@@ -332,7 +338,7 @@ class MotorService:
         if self._bench_estop_active:
             state = MotionState.ESTOP
         elif bench_jog_active:
-            state = MotionState.JOGGING
+            state = MotionState.HOMING if self._bench_homing else MotionState.JOGGING
         else:
             state = MotionState.IDLE
         return MotorStatusResponse(
@@ -466,17 +472,89 @@ class MotorService:
         return await self.get_status()
 
     async def home(self, axis_mask: int = 0) -> MotorStatusResponse:
-        """Execute homing sequence for the specified axes.
+        """Execute limit-switch homing for the specified axes.
 
-        Bench mode: no homing switches — returns status only (no movement).
+        Bench: homes every requested axis that has a limit switch fitted
+        (LIFT and BEND — PM-L25 photo-interrupters), sequentially, as a
+        background motion task. Returns immediately with state=HOMING;
+        progress streams over /ws/motor and completion/failure is visible
+        via GET /api/motor/limits. jog/stop (or E-STOP) cancels homing.
+        axis_mask=0 → all homable axes (bit semantics: 0x02=BEND, 0x08=LIFT).
         """
         self._ensure_not_estop("home")
-        if self.has_bench:
-            log.info("home() ignored on bench (no homing switches)")
+        if not self.has_bench:
+            payload = build_home_payload(axis_mask)
+            await self._ipc.send_recv(MSG_MOTION_HOME, payload)
             return await self.get_status()
-        payload = build_home_payload(axis_mask)
-        await self._ipc.send_recv(MSG_MOTION_HOME, payload)
+
+        from ..config import get_settings
+        cfg = get_settings()
+        plan: list[tuple[int, int, int]] = []   # (axis, cs, direction)
+        for axis, cs, dir_ in (
+            (int(AxisId.LIFT), 0, cfg.home_dir_lift),
+            (int(AxisId.BEND), 1, cfg.home_dir_bend),
+        ):
+            if axis_mask and not (axis_mask >> axis) & 1:
+                continue
+            if self._spi_backend.limit_active(cs) is None:
+                log.warning("home: axis=%d has no limit switch — skipped", axis)
+                continue
+            plan.append((axis, cs, 1 if dir_ >= 0 else -1))
+        if not plan:
+            raise RuntimeError(
+                "no homable axes — limit switches are fitted on LIFT and "
+                "BEND only (check axis_mask / gpio_limit_* config)")
+
+        await self.jog_stop()
+        self._home_error = None
+        self._bench_homing = True
+        self._bench_jog_task = self._asyncio.create_task(self._home_sequence(plan))
         return await self.get_status()
+
+    async def _home_sequence(self, plan: list[tuple[int, int, int]]) -> None:
+        """Home the planned axes one at a time (single shared STEP line)."""
+        from ..config import get_settings
+        cfg = get_settings()
+        cal = self._calibration
+        try:
+            for axis, cs, direction in plan:
+                spu = cal.steps_per_unit(axis) if cal else 200.0
+                seek_hz = int(cfg.home_seek_speed * spu)
+                latch_hz = int(cfg.home_latch_speed * spu)
+                backoff = int(cfg.home_backoff * spu)
+                log.info("homing axis=%d cs=%d dir=%+d seek=%dHz latch=%dHz "
+                         "backoff=%dsteps", axis, cs, direction, seek_hz,
+                         latch_hz, backoff)
+                await self._spi_backend.home_axis(
+                    cs, direction, seek_hz, latch_hz, backoff,
+                    timeout_s=cfg.home_timeout_s)
+                self._homed_axes.add(axis)
+                log.info("homing axis=%d complete", axis)
+        except self._asyncio.CancelledError:
+            self._home_error = "homing cancelled"
+            log.warning("homing sequence cancelled")
+            raise
+        except Exception as exc:
+            self._home_error = str(exc)
+            log.error("homing failed: %s", exc)
+        finally:
+            self._bench_homing = False
+
+    def limit_status(self) -> dict:
+        """Live limit switch states + homing bookkeeping (bench)."""
+        limits: dict[int, bool] = {}
+        if self.has_bench:
+            for axis, cs in ((int(AxisId.LIFT), 0), (int(AxisId.BEND), 1),
+                             (int(AxisId.FEED), 2)):
+                st = self._spi_backend.limit_active(cs)
+                if st is not None:
+                    limits[axis] = st
+        return {
+            "limits": limits,
+            "homed": sorted(self._homed_axes),
+            "homing": self._bench_homing,
+            "error": self._home_error,
+        }
 
     async def stop(self) -> MotorStatusResponse:
         """Controlled deceleration stop.

@@ -252,18 +252,43 @@ async def motor_set_zero(
         return err(str(exc), "MOTOR_ZERO_ERROR")
 
 
+@router.get("/limits", response_model=ApiResponse)
+async def motor_limits(
+    svc: MotorService = Depends(_motor_service),
+) -> ApiResponse:
+    """Live limit switch states + homing bookkeeping.
+
+    Response: `limits` maps axis id → switch tripped (only axes with a
+    switch fitted appear: 1=BEND, 3=LIFT), `homed` lists axes homed since
+    server start, `homing` is True while a homing sequence runs, `error`
+    holds the last homing failure (or null). Switch states also stream in
+    every axis' `signals.limit` over /ws/motor.
+    """
+    try:
+        return ok(svc.limit_status())
+    except Exception as exc:
+        log.error("Motor limits query failed: %s", exc)
+        return err(str(exc), "MOTOR_LIMITS_ERROR")
+
+
 @router.post("/home", response_model=ApiResponse)
 async def motor_home(
     body: MotorHomeRequest,
     svc: MotorService = Depends(_motor_service),
 ) -> ApiResponse:
-    """
-    Execute homing sequence using StallGuard2.
-    axis_mask=0 homes all enabled axes.
+    """Limit-switch homing (GRBL-style two-pass).
+
+    Homes each requested axis that has a switch (0x02=BEND, 0x08=LIFT;
+    axis_mask=0 = all homable): fast seek → back off → slow latch →
+    datum 0 at the switch → pull-off. Returns immediately with
+    state=HOMING; watch /ws/motor for completion and GET /limits for
+    the result. POST /jog/stop or E-STOP cancels.
     """
     try:
         status = await svc.home(body.axis_mask)
         return ok(status.model_dump())
+    except RuntimeError as exc:
+        return err(str(exc), "MOTOR_HOME_ERROR")
     except Exception as exc:
         log.error("Motor home failed (mask=0x%02x): %s", body.axis_mask, exc)
         return err(str(exc), "MOTOR_HOME_ERROR")

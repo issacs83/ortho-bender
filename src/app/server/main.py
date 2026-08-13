@@ -163,6 +163,8 @@ async def lifespan(app: FastAPI):
             gpio_dir=cfg.gpio_dir,
             pwm_step_path=cfg.pwm_step_path,
             pwm_step_export=cfg.pwm_step_export,
+            gpio_limit_lift=cfg.gpio_limit_lift,
+            gpio_limit_bend=cfg.gpio_limit_bend,
         )
         await diag_backend.open()
         # Wire spidev backend into MotorService so REST move/jog drive the

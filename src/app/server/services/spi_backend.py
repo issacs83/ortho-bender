@@ -140,6 +140,8 @@ class SpidevMotorBackend(MotorBackend):
         gpio_dir:     str = "GPIO3_IO23",
         pwm_step_path:   str = "/sys/class/pwm/pwmchip2/pwm0",
         pwm_step_export: str = "/sys/class/pwm/pwmchip2/export",
+        gpio_limit_lift: str = "",
+        gpio_limit_bend: str = "",
         # Legacy kwargs (accepted but mapped to new names for backwards compat)
         gpio_cs1: str | None = None,
         gpio_cs2: str | None = None,
@@ -158,6 +160,16 @@ class SpidevMotorBackend(MotorBackend):
             'feed_cs': gpio_feed_cs,
             'dir':     gpio_dir,
         }
+        # Limit switch inputs (PM-L25, ACTIVE LOW — divider idles ~3 V,
+        # switch pulls to GND). Optional: empty pin string = not fitted.
+        self._gpio_inputs: set[str] = set()
+        for name, pin in (('limit_lift', gpio_limit_lift),
+                          ('limit_bend', gpio_limit_bend)):
+            if pin:
+                self._gpio_names[name] = pin
+                self._gpio_inputs.add(name)
+        # cs index -> limit input name (FEED cs=2 has no switch)
+        self._cs_to_limit = {0: 'limit_lift', 1: 'limit_bend'}
         # cs index -> logical name
         self._cs_to_name = {0: 'lift_cs', 1: 'bend_cs', 2: 'feed_cs'}
 
@@ -302,12 +314,19 @@ class SpidevMotorBackend(MotorBackend):
         for chip_path, lines in chip_lines.items():
             line_cfg = {}
             for name, offset in lines.items():
-                # CS lines idle HIGH, DIR idle LOW
-                init_value = Value.ACTIVE if name.endswith('_cs') else Value.INACTIVE
-                line_cfg[offset] = gpiod.LineSettings(
-                    direction=Direction.OUTPUT,
-                    output_value=init_value,
-                )
+                if name in self._gpio_inputs:
+                    # Limit switches: input, no bias — the external divider
+                    # (~500 Ω Thevenin) defines the level.
+                    line_cfg[offset] = gpiod.LineSettings(
+                        direction=Direction.INPUT,
+                    )
+                else:
+                    # CS lines idle HIGH, DIR idle LOW
+                    init_value = Value.ACTIVE if name.endswith('_cs') else Value.INACTIVE
+                    line_cfg[offset] = gpiod.LineSettings(
+                        direction=Direction.OUTPUT,
+                        output_value=init_value,
+                    )
             req = gpiod.request_lines(
                 chip_path,
                 consumer="ortho-bender-spi",
@@ -660,7 +679,164 @@ class SpidevMotorBackend(MotorBackend):
             "sg":   bool(self._last_sg.get(cs, False)),
             "dir":  int(self._last_dir),
             "step": bool(self._pwm_active and self._active_axis == cs),
+            "limit": self.limit_active(cs),
         }
+
+    # -------------------------------------------------------------------
+    # Limit switches + homing
+    # -------------------------------------------------------------------
+    def limit_active(self, cs: int) -> bool | None:
+        """Live limit switch state for one cs (True = tripped).
+
+        ACTIVE LOW: the PM-L25 divider idles high (~3 V) and the sensor
+        pulls the line to GND when the flag enters the slot. Returns None
+        when the axis has no switch fitted (FEED) or GPIO isn't up yet.
+        """
+        name = self._cs_to_limit.get(cs)
+        if name is None or name not in self._gpio_inputs:
+            return None
+        chip_path, _ = self._gpio_map.get(name, (None, None))
+        if chip_path is None or chip_path not in self._gpio_requests:
+            return None
+        try:
+            return not self._gpio_get(name)
+        except Exception:
+            return None
+
+    def _limit_tripped_debounced(self, cs: int) -> bool:
+        """Two consecutive reads agree — rejects single-sample noise."""
+        return bool(self.limit_active(cs)) and bool(self.limit_active(cs))
+
+    async def _home_move(
+        self, cs: int, direction: int, freq_hz: int,
+        max_steps: int, stop_when: str | None,
+        fault_check_s: float = 0.25,
+    ) -> tuple[bool, int]:
+        """One homing segment: run STEP at `freq_hz` until the limit
+        condition is met or `max_steps` elapse.
+
+        stop_when: 'trip' → stop when switch goes active,
+                   'release' → stop when switch goes inactive,
+                   None → run exactly max_steps (fixed distance).
+        Returns (condition_met, steps_done). PWM stops dead at the end of
+        every segment — homing speeds sit inside the motor's self-start
+        region, so no ramp is needed and the stop is step-accurate to one
+        poll interval.
+        """
+        poll_s = 0.005
+        self._gpio_set('dir', (direction > 0) != _DIR_INVERT)
+        self._last_dir = 1 if direction > 0 else -1
+        await asyncio.sleep(_DIR_SETUP_S)
+        await self._pwm_ensure_exported()
+        pos_start = self.positions.get(cs, 0)
+        await self._pwm_set_hz(freq_hz)
+        t0 = time.monotonic()
+        met = False
+        steps = 0
+        next_fault_t = fault_check_s
+        try:
+            while steps < max_steps:
+                await asyncio.sleep(poll_s)
+                elapsed = time.monotonic() - t0
+                steps = min(int(elapsed * freq_hz), max_steps)
+                self.positions[cs] = pos_start + steps * (1 if direction > 0 else -1)
+                if stop_when == 'trip' and self._limit_tripped_debounced(cs):
+                    met = True
+                    break
+                if stop_when == 'release' and self.limit_active(cs) is False:
+                    met = True
+                    break
+                if elapsed >= next_fault_t:
+                    next_fault_t += fault_check_s
+                    status = await self._read_status(cs)
+                    if self._has_fault(status):
+                        raise RuntimeError(
+                            f"axis cs={cs} fault during homing (0x{status:05X})")
+        finally:
+            await self._pwm_disable()
+            self.positions[cs] = pos_start + steps * (1 if direction > 0 else -1)
+        return met, steps
+
+    async def home_axis(
+        self, cs: int, direction: int,
+        seek_hz: int, latch_hz: int, backoff_steps: int,
+        timeout_s: float = 60.0,
+    ) -> None:
+        """Home one axis against its limit switch (GRBL-style two-pass).
+
+        1. If already on the switch, retreat until it releases (+backoff).
+        2. Seek: approach at seek_hz until the switch trips.
+        3. Back off until it releases, plus backoff_steps.
+        4. Latch: slow re-approach at latch_hz — repeatable trip point.
+        5. Datum: position := 0 at the trip point.
+        6. Pull off backoff_steps so the switch is free during operation
+           (final resting position = +backoff in the retreat direction).
+
+        Runs as the bench motion task: jog_stop / E-STOP cancel it, and
+        the finally block silences the chip either way.
+        """
+        if self.limit_active(cs) is None:
+            raise RuntimeError(f"axis cs={cs} has no limit switch configured")
+        direction = 1 if direction > 0 else -1
+        seek_hz = max(200, min(int(seek_hz), 2000))
+        latch_hz = max(50, min(int(latch_hz), 500))
+        backoff_steps = max(20, int(backoff_steps))
+        max_seek = int(timeout_s * seek_hz)
+        self._pwm_killed = False   # new motion — clear E-STOP kill latch
+        self._active_axis = cs
+        try:
+            await self._init_chip(cs)
+            status = await self._read_status(cs)
+            if self._has_fault(status):
+                raise RuntimeError(f"axis cs={cs} fault before homing (0x{status:05X})")
+
+            # 1) Clear the switch if we're starting on it
+            if self._limit_tripped_debounced(cs):
+                met, _ = await self._home_move(
+                    cs, -direction, seek_hz, max_seek, 'release')
+                if not met:
+                    raise RuntimeError(f"axis cs={cs} limit stuck active")
+                await self._home_move(cs, -direction, seek_hz, backoff_steps, None)
+
+            # 2) Seek
+            met, _ = await self._home_move(cs, direction, seek_hz, max_seek, 'trip')
+            if not met:
+                raise RuntimeError(
+                    f"axis cs={cs} homing timeout — switch not reached "
+                    f"within {timeout_s:.0f}s (check home_dir/wiring)")
+
+            # 3) Back off until released + margin
+            met, _ = await self._home_move(cs, -direction, seek_hz, max_seek, 'release')
+            if not met:
+                raise RuntimeError(f"axis cs={cs} limit did not release on backoff")
+            await self._home_move(cs, -direction, seek_hz, backoff_steps, None)
+
+            # 4) Slow latch pass
+            met, _ = await self._home_move(
+                cs, direction, latch_hz,
+                backoff_steps * 4 + int(2.0 * latch_hz), 'trip')
+            if not met:
+                raise RuntimeError(f"axis cs={cs} latch pass missed the switch")
+
+            # 5) Datum at the (repeatable) slow trip point
+            self.positions[cs] = 0
+
+            # 6) Final pull-off so normal motion starts off the switch
+            await self._home_move(cs, -direction, seek_hz, backoff_steps, None)
+            log.info("home_axis cs=%d complete: datum set, resting at %+d steps",
+                     cs, self.positions[cs])
+        finally:
+            try:
+                await self._pwm_disable()
+            except Exception:
+                pass
+            try:
+                await self._silence_chip(cs)
+            except Exception:
+                pass
+            self._save_state()
+            if self._active_axis == cs:
+                self._active_axis = None
 
     # -------------------------------------------------------------------
     # Internal: TMC260C init / silence / status

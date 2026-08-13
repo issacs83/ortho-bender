@@ -270,6 +270,9 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                       <SignalLed label="SG"   tone={sgEffective ? 'red' : 'off'} title={sig.en ? 'StallGuard2: stall detected' : 'StallGuard masked while EN=off (silenced chip always reads SG=1)'} />
                       <SignalLed label="DIR"  tone={dirTone} glyph={dirGlyph} title={`Direction line: ${sig.dir > 0 ? 'CW (+)' : sig.dir < 0 ? 'CCW (-)' : 'never driven'}`} />
                       <SignalLed label="STEP" tone={sig.step ? 'amber' : 'off'} blink={sig.step} title={sig.step ? 'PWM4 STEP active on this axis' : 'PWM idle / targeting another axis'} />
+                      {sig.limit !== null && sig.limit !== undefined && (
+                        <SignalLed label="LIM" tone={sig.limit ? 'red' : 'green'} blink={sig.limit} title={sig.limit ? 'Limit switch TRIPPED (PM-L25 blocked)' : 'Limit switch clear'} />
+                      )}
                     </div>
                   );
                 })()}
@@ -384,6 +387,21 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                 style={{ ...jogBtnStyle, fontSize: 11, fontWeight: 700, color: '#86efac', background: '#14532d', border: `1px solid #166534` }}
                 className="jog-btn"
               >⌂0</button>
+              {/* HOME = 리밋스위치 호밍 — 스위치 장착 축(LIFT/BEND)에만 표시 */}
+              {ax?.signals?.limit !== null && ax?.signals?.limit !== undefined && (
+                <button
+                  disabled={!enabled}
+                  onClick={() => {
+                    if (!enabled) return;
+                    if (!window.confirm(`${AXIS_NAMES[axisId]} 축을 호밍할까요?\n(리밋 스위치를 향해 저속 이동 → 감지 지점을 0으로 설정 → 백오프)`)) return;
+                    setError(null);
+                    motorApi.home(1 << axisId).catch((e) => setError(String(e)));
+                  }}
+                  title="리밋스위치 호밍 — 저속 접근 → 스위치 감지점 = 0 → 백오프 (정지 버튼/E-STOP으로 취소)"
+                  style={{ ...jogBtnStyle, fontSize: 10, fontWeight: 700, color: '#fbbf24', background: '#451a03', border: `1px solid #92400e` }}
+                  className="jog-btn"
+                >HOME</button>
+              )}
             </div>
           );
         })}
@@ -506,14 +524,27 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                 disabled={estopBlocked}
                 style={motionBtn({ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '8px 14px', fontSize: 13, fontWeight: 600 })}
               >Home All</button>
-              {AXIS_NAMES.map((n, i) => (
-                <button
-                  key={i}
-                  onClick={() => { if (!estopBlocked) motorApi.home(1 << i); }}
-                  disabled={estopBlocked}
-                  style={motionBtn({ ...btnBase, fontSize: 12 })}
-                >Home {n}</button>
-              ))}
+              {AXIS_NAMES.map((n, i) => {
+                // Bench: only axes with a limit switch fitted are homable —
+                // hide the rest instead of offering a button that errors.
+                const axEntry = motorStatus?.axes.find((a) => a.axis === i);
+                const hide = motorStatus
+                  ? (!axEntry || (axEntry.signals ? axEntry.signals.limit == null : false))
+                  : false;
+                if (hide) return null;
+                return (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      if (estopBlocked) return;
+                      setError(null);
+                      motorApi.home(1 << i).catch((e) => setError(String(e)));
+                    }}
+                    disabled={estopBlocked}
+                    style={motionBtn({ ...btnBase, fontSize: 12 })}
+                  >Home {n}</button>
+                );
+              })}
               <button onClick={() => motorApi.stop()} style={{ ...btnBase, background: '#78350f', color: '#fcd34d' }}>Stop</button>
               <button onClick={() => motorApi.reset()} style={btnBase}>Reset Fault</button>
             </>
@@ -541,7 +572,7 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
       )}
 
       {showHomeModal && (
-        <ConfirmModal title="Home All Axes" description="Move all axes to home position. Ensure no wire is loaded." confirmLabel="Home All" onConfirm={() => { motorApi.home(0); setShowHomeModal(false); }} onCancel={() => setShowHomeModal(false)} />
+        <ConfirmModal title="Home All Axes" description="리밋 스위치가 장착된 모든 축(LIFT, BEND)을 순차 호밍합니다: 저속 접근 → 스위치 감지점 = 0 → 백오프. 와이어가 물려 있지 않은지 확인하세요. 정지 버튼/E-STOP으로 취소할 수 있습니다." confirmLabel="Home All" onConfirm={() => { setError(null); motorApi.home(0).catch((e) => setError(String(e))); setShowHomeModal(false); }} onCancel={() => setShowHomeModal(false)} />
       )}
       {showMoveAllModal && (
         <ConfirmModal title="Move All Axes" description="Move all axes to specified target positions simultaneously." confirmLabel="Move All" onConfirm={moveAll} onCancel={() => setShowMoveAllModal(false)} />
