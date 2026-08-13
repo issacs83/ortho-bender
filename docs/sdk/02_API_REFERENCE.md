@@ -89,9 +89,16 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
 ```
 **리밋 스위치 호밍** (2026-08 벤치: PM-L25 포토인터럽터, LIFT=J21 pin7 / BEND=J21 pin11).
 - `axis_mask=0` → 스위치 장착 축 전체(LIFT+BEND). 비트: `0x02=BEND, 0x08=LIFT`
-- GRBL식 2-패스: 고속 접근(seek) → 백오프 → 저속 재접근(latch, 반복정밀도) →
-  **감지점 = 0 (datum) — 이 기계의 홈 포즈가 스위치 위치이므로 감지점에 그대로
-  정착** (`home_park=0`; 관행적 이탈 대기를 원하면 home_park>0으로 설정)
+- **양방향 탐색** (CiA 402 methods 23-30 패턴 — 센서가 이동범위 중간의 '창'이라
+  축이 어느 쪽에 있는지 모름): ① 스위치 위면 선-후퇴 → ② `home_dir` 방향
+  1차 탐색(`home_search_range`=15u 유한) → ③ 미발견 시 **역방향으로 전체
+  travel 탐색** → ④ 양쪽 다 실패 = 센서 이상 에러(유한 이동 보장)
+- 창 발견 후: 항상 같은 쪽으로 빠져나와 **같은 방향·같은 에지·저속으로 래치**
+  (PM-L25 히스테리시스 0.05mm·비대칭 응답 때문 — 반복정밀도 ≤0.01mm 확보) →
+  **감지점 = 0 (datum) — 이 기계의 홈 포즈가 스위치 위치이므로 감지점에 정착**
+  (`home_park=0`; 관행적 이탈 대기 원하면 >0)
+- BEND는 호밍 중 **전류 저감**(`home_reduced_cs`=10) — 하드스톱 접촉 시 부드러운
+  스톨. LIFT는 중력축이라 풀전류 유지
 - **즉시 반환** (state=HOMING) — 완료는 `/ws/motor` 스트림 또는 `GET /limits`로 확인
 - `POST /jog/stop` 또는 E-STOP으로 취소. 스위치 없는 축 지정 시 `MOTOR_HOME_ERROR`
 - 파라미터는 서버 설정: `home_seek_speed`(4 u/s) / `home_latch_speed`(0.5) /

@@ -33,9 +33,13 @@ class _StubBench:
 
     async def home_axis(self, cs, direction, seek_hz, latch_hz,
                         backoff_steps, timeout_s=60.0, park_steps=0,
-                        max_travel_steps=None):
+                        max_travel_steps=None, search_range_steps=None,
+                        reduced_cs=0):
         self.home_calls.append((cs, direction, seek_hz, latch_hz,
                                 backoff_steps, park_steps))
+        self.last_kwargs = dict(max_travel_steps=max_travel_steps,
+                                search_range_steps=search_range_steps,
+                                reduced_cs=reduced_cs)
         if self.fail_cs == cs:
             raise RuntimeError(f"axis cs={cs} homing timeout")
         self.positions[cs] = park_steps
@@ -105,6 +109,17 @@ async def test_home_speeds_scale_with_calibration(svc):
     assert latch_hz == 200              # 0.5 u/s × 400
     assert backoff == 400               # 1.0 u × 400
     assert park == 0                    # home_park=0 → rest ON the trip point
+    kw = svc._spi_backend.last_kwargs
+    assert kw["search_range_steps"] == 6000   # 15 u × 400 (primary leg)
+    assert kw["max_travel_steps"] == 44000    # 100 u × 1.1 × 400
+    assert kw["reduced_cs"] == 0              # LIFT = gravity axis, full current
+
+
+@pytest.mark.asyncio
+async def test_bend_homes_with_reduced_current(svc):
+    await svc.home(0x02)                # BEND
+    await _wait_homing_done(svc)
+    assert svc._spi_backend.last_kwargs["reduced_cs"] == 10
 
 
 @pytest.mark.asyncio

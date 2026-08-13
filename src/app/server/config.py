@@ -82,6 +82,17 @@ class Settings(BaseSettings):
     home_seek_speed: float = 4.0     # fast approach (units/s)
     home_latch_speed: float = 0.5    # slow re-approach for repeatability
     home_backoff: float = 1.0        # intermediate retreat between passes (units)
+    # Bidirectional search (CiA 402 methods 23-30 pattern, mid-travel
+    # window sensor): primary leg in home_dir bounded by
+    # home_search_range; if the window is not found, REVERSE and search
+    # the whole travel from the other side. Raise home_search_range if
+    # normal operation moves the axis further than this from home.
+    home_search_range: float = 15.0  # primary seek leg bound (units)
+    # Reduced motor current during homing (Duet M913 / Marlin
+    # *_CURRENT_HOME practice) so hard-stop contact stalls gently.
+    # CS value 0-19; 0 = no reduction. Applied to BEND only — LIFT is a
+    # gravity axis and keeps full current (Klipper hold_current caution).
+    home_reduced_cs: int = 10
     # Final resting position after homing, in units from the datum in the
     # retreat direction. 0.0 = park exactly at the switch trip point (this
     # machine's home pose IS the switch position — user decision 2026-08-14).

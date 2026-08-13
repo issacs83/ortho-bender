@@ -527,14 +527,22 @@ class MotorService:
                 # of grinding into a hard stop.
                 dist_lim = cal.distance_limit(axis) if cal else 50.0
                 max_travel = int(dist_lim * 1.1 * spu)
+                search_range = int(cfg.home_search_range * spu)
+                # Reduced-current homing (gentle hard-stop contact) for
+                # BEND only — LIFT is a gravity axis and keeps full
+                # current so it cannot sink mid-homing.
+                reduced = int(cfg.home_reduced_cs) if axis == int(AxisId.BEND) else 0
                 log.info("homing axis=%d cs=%d dir=%+d seek=%dHz latch=%dHz "
-                         "backoff=%dsteps max_travel=%dsteps", axis, cs,
-                         direction, seek_hz, latch_hz, backoff, max_travel)
+                         "backoff=%dsteps search=%dsteps max_travel=%dsteps "
+                         "reduced_cs=%d", axis, cs, direction, seek_hz,
+                         latch_hz, backoff, search_range, max_travel, reduced)
                 await self._spi_backend.home_axis(
                     cs, direction, seek_hz, latch_hz, backoff,
                     timeout_s=cfg.home_timeout_s,
                     park_steps=int(cfg.home_park * spu),
-                    max_travel_steps=max_travel)
+                    max_travel_steps=max_travel,
+                    search_range_steps=search_range,
+                    reduced_cs=reduced)
                 self._homed_axes.add(axis)
                 log.info("homing axis=%d complete", axis)
         except self._asyncio.CancelledError:

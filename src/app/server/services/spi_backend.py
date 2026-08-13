@@ -762,18 +762,36 @@ class SpidevMotorBackend(MotorBackend):
         seek_hz: int, latch_hz: int, backoff_steps: int,
         timeout_s: float = 60.0, park_steps: int = 0,
         max_travel_steps: int | None = None,
+        search_range_steps: int | None = None,
+        reduced_cs: int = 0,
     ) -> None:
-        """Home one axis against its limit switch (GRBL-style two-pass).
+        """Home one axis against its mid-travel window sensor.
 
-        1. If already on the switch, retreat until it releases (+backoff).
-        2. Seek: approach at seek_hz until the switch trips.
-        3. Back off until it releases, plus backoff_steps.
-        4. Latch: slow re-approach at latch_hz — repeatable trip point.
-        5. Datum: position := 0 at the trip point.
-        6. Park: retreat park_steps from the datum. park_steps=0 leaves
-           the axis exactly at the switch trip point — this machine's
-           home pose IS the switch position (sensor reads tripped while
-           parked; the on-switch retreat in step 1 handles the next run).
+        Bidirectional search per CiA 402 methods 23-30 (adapted for a
+        soft travel bound instead of end limit switches), with GRBL-style
+        two-pass latching:
+
+        S1 RELEASE   on the switch? retreat (-dir) until clear + backoff.
+        S2 PRIMARY   seek in `direction`, bounded by search_range_steps —
+                     the flag can rest on EITHER side of the window, so
+                     "not found within the primary leg" usually means
+                     wrong side, NOT a fault.
+        S3 REVERSE   seek in -direction across the whole travel
+                     (max_travel_steps). Still nothing → sensor fault.
+        S4 CANONICAL back off (-dir) until released + backoff. Whichever
+                     leg found the window, this exits it on the SAME side,
+                     so the latch always approaches from one direction —
+                     required because the PM-L25's 0.05 mm hysteresis and
+                     asymmetric 20/80 µs response make mixed-direction
+                     datums several times worse than its 0.01 mm spec.
+        S5 LATCH     slow approach in `direction`; datum = trip edge.
+        S6 PARK      park_steps=0 rests exactly on the trip point (this
+                     machine's home pose IS the switch position);
+                     park_steps>0 = conventional pull-off.
+
+        reduced_cs > 0 temporarily narrows the current-scale cap during
+        homing (Duet M913 / Marlin *_CURRENT_HOME practice) so any
+        hard-stop contact stalls gently. Do NOT use on gravity axes.
 
         Runs as the bench motion task: jog_stop / E-STOP cancel it, and
         the finally block silences the chip either way.
@@ -784,28 +802,29 @@ class SpidevMotorBackend(MotorBackend):
         seek_hz = max(200, min(int(seek_hz), 2000))
         latch_hz = max(50, min(int(latch_hz), 500))
         backoff_steps = max(20, int(backoff_steps))
-        # HARD travel caps — a dead/stuck sensor must end in a bounded
-        # short move + error, never a full-travel grind into a hard stop
-        # (2026-08-14 incident: seek was capped only by the 60 s timeout
-        # = 240 units, and the on-switch retreat by the same — a LIFT
-        # sensor that stopped tripping drove the axis into BOTH ends).
-        #   - seek: the axis' calibrated travel limit (×1.1 margin)
-        #   - release moves: the switch must free within a flag-length —
-        #     10 backoffs (≈10 units) is generous; beyond that the sensor
-        #     is stuck and we abort.
+        # Travel bounds. Release moves are capped at a flag-length
+        # (10 backoffs): a switch that will not free within that is stuck.
         if max_travel_steps is None:
             max_travel_steps = int(50 * 200)   # conservative 50-unit default
-        max_seek = min(int(timeout_s * seek_hz), max_travel_steps)
+        if search_range_steps is None:
+            search_range_steps = max_travel_steps
+        max_primary = min(int(timeout_s * seek_hz), search_range_steps)
+        max_reverse = min(int(timeout_s * seek_hz), max_travel_steps)
         max_release = backoff_steps * 10
         self._pwm_killed = False   # new motion — clear E-STOP kill latch
         self._active_axis = cs
+        cap_before = self._cs_scale_cap
         try:
+            if reduced_cs > 0:
+                # Narrow (never widen) the cap so _init_chip writes a
+                # gentler CS for the homing moves; restored in finally.
+                self.apply_current_cap(min(cap_before, int(reduced_cs)))
             await self._init_chip(cs)
             status = await self._read_status(cs)
             if self._has_fault(status):
                 raise RuntimeError(f"axis cs={cs} fault before homing (0x{status:05X})")
 
-            # 1) Clear the switch if we're starting on it
+            # S1 — clear the switch if we're starting on it
             if self._limit_tripped_debounced(cs):
                 met, _ = await self._home_move(
                     cs, -direction, seek_hz, max_release, 'release')
@@ -815,14 +834,24 @@ class SpidevMotorBackend(MotorBackend):
                         f"suspect, aborting after bounded retreat")
                 await self._home_move(cs, -direction, seek_hz, backoff_steps, None)
 
-            # 2) Seek
-            met, _ = await self._home_move(cs, direction, seek_hz, max_seek, 'trip')
+            # S2 — primary seek (bounded leg)
+            met, _ = await self._home_move(
+                cs, direction, seek_hz, max_primary, 'trip')
             if not met:
-                raise RuntimeError(
-                    f"axis cs={cs} switch not reached within travel limit "
-                    f"({max_seek} steps) — check sensor power/wiring/home_dir")
+                # S3 — wrong side of the window: reverse and search the
+                # whole travel from this end.
+                log.info("home_axis cs=%d: window not in primary leg "
+                         "(%d steps) — reversing", cs, max_primary)
+                met, _ = await self._home_move(
+                    cs, -direction, seek_hz, max_reverse, 'trip')
+                if not met:
+                    raise RuntimeError(
+                        f"axis cs={cs} home window not found in either "
+                        f"direction — check sensor power/wiring")
 
-            # 3) Back off until released + margin
+            # S4 — canonicalize: exit the window on the -direction side
+            # (works for both legs: primary entered from -dir and backs
+            # out; reverse entered from +dir and crosses through).
             met, _ = await self._home_move(
                 cs, -direction, seek_hz, max_release, 'release')
             if not met:
@@ -847,6 +876,9 @@ class SpidevMotorBackend(MotorBackend):
             log.info("home_axis cs=%d complete: datum set, resting at %+d steps",
                      cs, self.positions[cs])
         finally:
+            # Restore the run current cap narrowed for reduced-CS homing.
+            if reduced_cs > 0:
+                self.apply_current_cap(cap_before)
             try:
                 await self._pwm_disable()
             except Exception:
