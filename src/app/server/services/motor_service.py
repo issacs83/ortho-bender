@@ -220,7 +220,13 @@ class MotorService:
         every chip here (only the running one is touched by pulse_step's
         finally) to minimise deadtime between rapid taps.
         """
-        if self._bench_jog_task is not None and not self._bench_jog_task.done():
+        # Snapshot the task reference: the grace waits below yield to the
+        # event loop, where a concurrent jog_stop (rapid double-tap — a
+        # second jog_start calls jog_stop too) may cancel the task and
+        # null out self._bench_jog_task. Re-reading the attribute after
+        # an await raised 'NoneType' has no attribute 'done'.
+        task = self._bench_jog_task
+        if task is not None and not task.done():
             # Minimum-nudge guarantee: a very short tap releases while the
             # motion task is still in its setup phase (~100 ms: DIR setup
             # + warm chip init) — cancelling here would produce ZERO steps
@@ -233,17 +239,19 @@ class MotorService:
                     and not getattr(be, "_pwm_active", True)
                     and not getattr(be, "_pwm_killed", False)):
                 for _ in range(40):            # ≤ 0.4 s bound
-                    if getattr(be, "_pwm_active", False) or self._bench_jog_task.done():
+                    if getattr(be, "_pwm_active", False) or task.done():
                         break
                     await self._asyncio.sleep(0.01)
-                if getattr(be, "_pwm_active", False):
+                if getattr(be, "_pwm_active", False) and not task.done():
                     await self._asyncio.sleep(0.05)   # ~10 steps at the floor
-            self._bench_jog_task.cancel()
+            task.cancel()
             try:
-                await self._bench_jog_task
+                await task
             except (self._asyncio.CancelledError, Exception):
                 pass
-        self._bench_jog_task = None
+        # Clear only if a newer motion task hasn't replaced it meanwhile.
+        if self._bench_jog_task is task:
+            self._bench_jog_task = None
         if self.has_bench:
             try:
                 await self._spi_backend._pwm_disable()
