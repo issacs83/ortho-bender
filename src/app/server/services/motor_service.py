@@ -551,7 +551,8 @@ class MotorService:
                     search_range_steps=search_range,
                     reduced_cs=reduced,
                     rotary=rotary,
-                    preprobe_steps=preprobe)
+                    preprobe_steps=preprobe,
+                    stall_abort=bool(cfg.home_stall_abort) and not rotary)
                 self._homed_axes.add(axis)
                 log.info("homing axis=%d complete", axis)
         except self._asyncio.CancelledError:

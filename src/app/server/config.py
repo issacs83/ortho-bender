@@ -105,6 +105,22 @@ class Settings(BaseSettings):
     # proved too weak on this bench (silent step-loss — the counter ran
     # while the motor stalled, so homing "searched" without moving).
     home_reduced_cs: int = 0
+    # StallGuard contact abort during homing search legs (virtual limit
+    # switch — abort only, never the datum; Trinamic AN-002). OFF until
+    # bench-tuned: SG is unreliable at low velocity and drifts with coil
+    # temperature.
+    home_stall_abort: bool = False
+
+    # ------------------------------------------------------------------
+    # Holding current — LIFT sinks under gravity when de-energized
+    # (observed: parked axis sank below its home window). While idle the
+    # LIFT chopper stays energized at a reduced CS; it is released only
+    # for the duration of other-axis motion (shared STEP line: an
+    # energized chip steps along with the active axis) and re-held after.
+    # E-STOP / driver-disable always release it.
+    # ------------------------------------------------------------------
+    hold_lift: bool = True
+    hold_cs: int = 8                 # holding current scale (< run CS)
     # Final resting position after homing, in units from the datum.
     # <0 = park |value| INSIDE the window (approach direction) — sensor
     # reads solidly tripped at the home pose (the trip edge itself sits

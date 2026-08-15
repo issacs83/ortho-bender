@@ -34,13 +34,15 @@ class _StubBench:
     async def home_axis(self, cs, direction, seek_hz, latch_hz,
                         backoff_steps, timeout_s=60.0, park_steps=0,
                         max_travel_steps=None, search_range_steps=None,
-                        reduced_cs=0, rotary=False, preprobe_steps=0):
+                        reduced_cs=0, rotary=False, preprobe_steps=0,
+                        stall_abort=False):
         self.home_calls.append((cs, direction, seek_hz, latch_hz,
                                 backoff_steps, park_steps))
         self.last_kwargs = dict(max_travel_steps=max_travel_steps,
                                 search_range_steps=search_range_steps,
                                 reduced_cs=reduced_cs, rotary=rotary,
-                                preprobe_steps=preprobe_steps)
+                                preprobe_steps=preprobe_steps,
+                                stall_abort=stall_abort)
         if self.fail_cs == cs:
             raise RuntimeError(f"axis cs={cs} homing timeout")
         self.positions[cs] = park_steps
