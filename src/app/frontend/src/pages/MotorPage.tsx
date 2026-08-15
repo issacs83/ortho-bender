@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
-import { motorApi, diagApi, type MotorStatus, type AxisStatus, type DriverProbeResult, type MotionProfile } from '../api/client';
+import { motorApi, diagApi, type MotorStatus, type AxisStatus, type DriverProbeResult, type MotionProfile, type ProtectionSettings } from '../api/client';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { SliderInput } from '../components/ui/SliderInput';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -102,6 +102,20 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
         .catch(() => null);
     }, 500);
   }
+  // Protection / holding-torque settings (server-side runtime state)
+  const [prot, setProt] = useState<ProtectionSettings | null>(null);
+  const protCsTimer = useRef<number>(0);
+  useEffect(() => { motorApi.protection().then(setProt).catch(() => null); }, []);
+  function patchProt(patch: Partial<ProtectionSettings>, debounceMs = 0) {
+    setProt((p) => (p ? { ...p, ...patch } : p));
+    const send = () => motorApi.updateProtection(patch).then(setProt).catch(() => null);
+    if (debounceMs > 0) {
+      if (protCsTimer.current) window.clearTimeout(protCsTimer.current);
+      protCsTimer.current = window.setTimeout(send, debounceMs);
+    } else {
+      send();
+    }
+  }
   const [targetAxis, setTargetAxis] = usePersistentState('motor.targetAxis', 0);
   const [targetPos, setTargetPos] = usePersistentState('motor.targetPos', 0);
   const [multiTarget, setMultiTarget] = usePersistentState<number[]>('motor.multiTarget', [0, 0, 0, 0]);
@@ -191,12 +205,14 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
 
   async function moveTo() {
     setError(null);
-    try { await motorApi.move(targetAxis, targetPos, axisSpeed(targetAxis)); } catch (e) { setError(String(e)); }
+    // Absolute move — /move is relative (moves BY the value); move_to
+    // travels TO the target position.
+    try { await motorApi.moveTo(targetAxis, targetPos, axisSpeed(targetAxis)); } catch (e) { setError(String(e)); }
   }
   async function moveAll() {
     setShowMoveAllModal(false);
     for (let i = 0; i < 4; i++) {
-      try { await motorApi.move(i, multiTarget[i], axisSpeed(i)); } catch { /* continue */ }
+      try { await motorApi.moveTo(i, multiTarget[i], axisSpeed(i)); } catch { /* continue */ }
     }
   }
 
@@ -498,6 +514,32 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
               );
             })}
           </div>
+        </div>
+        <div style={cardStyle}>
+          <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Protection · 정지토크</h3>
+          {!prot && <div style={{ fontSize: 12, color: TEXT_MUTED }}>Loading…</div>}
+          {prot && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <label style={{ fontSize: 12, color: TEXT_SECONDARY, display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={prot.limit_stop}
+                  onChange={(e) => patchProt({ limit_stop: e.target.checked })} />
+                이동 중 리밋센서 감지 시 자동 정지
+              </label>
+              <label style={{ fontSize: 12, color: TEXT_SECONDARY, display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}
+                title="유휴 시 LIFT 코일을 통전 유지해 중력 침하를 막습니다. 통전 중 초퍼 소음(지잉)이 나는 게 정상 — 시끄러우면 아래 토크를 낮추세요.">
+                <input type="checkbox" checked={prot.hold_enabled}
+                  onChange={(e) => patchProt({ hold_enabled: e.target.checked })} />
+                LIFT 정지토크(홀딩) — 중력 침하 방지
+              </label>
+              <SliderInput
+                label="Hold Torque"
+                value={prot.hold_cs}
+                min={1} max={14} step={1} unit="CS"
+                help="정지(홀딩) 전류 스케일. 낮출수록 조용하고 발열이 적지만 유지력이 줄어듭니다. LIFT가 흘러내리면 올리세요."
+                onChange={(v) => patchProt({ hold_cs: v }, 500)}
+              />
+            </div>
+          )}
         </div>
         <div style={cardStyle}>
           <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Move To Position</h3>
