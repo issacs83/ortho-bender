@@ -387,20 +387,23 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                 style={{ ...jogBtnStyle, fontSize: 11, fontWeight: 700, color: '#86efac', background: '#14532d', border: `1px solid #166534` }}
                 className="jog-btn"
               >⌂0</button>
-              {/* HOME = 리밋스위치 호밍 — 스위치 장착 축(LIFT/BEND)에만 표시 */}
-              {ax?.signals?.limit !== null && ax?.signals?.limit !== undefined && (
+              {/* HOME = 리밋스위치 호밍 — 스위치 장착 축(LIFT/BEND)에만 활성.
+                  스위치 없는 축은 같은 폭의 자리를 차지해 행 정렬을 유지한다. */}
+              {ax?.signals?.limit !== null && ax?.signals?.limit !== undefined ? (
                 <button
                   disabled={!enabled}
                   onClick={() => {
                     if (!enabled) return;
-                    if (!window.confirm(`${AXIS_NAMES[axisId]} 축을 호밍할까요?\n(리밋 스위치를 향해 저속 이동 → 감지 지점을 0으로 설정 → 백오프)`)) return;
+                    if (!window.confirm(`${AXIS_NAMES[axisId]} 축을 호밍할까요?\n(스위치 감지점을 0으로 설정하고 그 위치에 정착합니다)`)) return;
                     setError(null);
                     motorApi.home(1 << axisId).catch((e) => setError(String(e)));
                   }}
-                  title="리밋스위치 호밍 — 저속 접근 → 스위치 감지점 = 0 → 백오프 (정지 버튼/E-STOP으로 취소)"
-                  style={{ ...jogBtnStyle, fontSize: 10, fontWeight: 700, color: '#fbbf24', background: '#451a03', border: `1px solid #92400e` }}
+                  title="리밋스위치 호밍 — 창 탐색(회전축은 1회전, 직선축은 양방향) → 감지점 = 0 정착 (정지 버튼/E-STOP으로 취소)"
+                  style={{ ...jogBtnStyle, width: 52, fontSize: 10, fontWeight: 700, color: '#fbbf24', background: '#451a03', border: `1px solid #92400e` }}
                   className="jog-btn"
                 >HOME</button>
+              ) : (
+                <div style={{ width: 52 }} />
               )}
             </div>
           );
