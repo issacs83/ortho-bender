@@ -76,6 +76,23 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
 - `speed`: mm/s 또는 °/s, `> 0`
 - `distance`: non-zero (양수=정방향, 음수=역방향)
 
+### POST `/api/motor/move_to`
+```json
+{ "axis": 1, "position": 5.0, "speed": 8 }
+```
+**절대 이동** — 현재 위치에서 `position`(사용자 단위)까지 이동. `/move`는
+상대(distance만큼) 이동임에 주의. 벤치 전용, 10초 이동시간 캡 적용.
+
+### GET / PUT `/api/motor/protection`
+```json
+{ "limit_stop": true, "hold_enabled": true, "hold_cs": 8 }
+```
+- `limit_stop`: **이동 중 리밋센서 감지 시 자동 정지** (에지 트리거 —
+  홈(창 안)에서 출발할 땐 창을 벗어날 때까지 가드 비활성이라 이탈은 항상 허용)
+- `hold_enabled` / `hold_cs`: LIFT **정지토크(홀딩 전류)** — 유휴 시 코일
+  통전 유지로 중력 침하 방지. `hold_cs` 1–19 (PSU 캡 우선), 낮출수록
+  조용·저발열·저토크. PUT은 부분 업데이트, 유휴 상태면 즉시 적용
+
 ### POST `/api/motor/jog`
 ```json
 { "axis": 1, "direction": 1, "speed": 3.0, "distance": 0 }

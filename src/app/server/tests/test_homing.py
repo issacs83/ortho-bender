@@ -22,7 +22,24 @@ class _StubBench:
         self.positions = {0: 0, 1: 0, 2: 0, 3: 0}
         self.limit = {0: False, 1: False}
         self.home_calls: list[tuple] = []
+        self.pulse_calls: list[tuple] = []
         self.fail_cs: int | None = None
+        self.limit_guard = True
+        self.hold_axes: set[int] = set()
+        self.hold_cs = 8
+        self.homed_persist: set[int] = set()
+
+    async def pulse_step(self, cs, steps, freq, direction, profile=None):
+        self.pulse_calls.append((cs, steps, freq, direction))
+
+    async def _hold_chip(self, cs):
+        pass
+
+    async def _silence_chip(self, cs):
+        pass
+
+    def _save_state(self):
+        pass
 
     def limit_active(self, cs):
         return self.limit.get(cs)
@@ -143,3 +160,32 @@ async def test_home_blocked_during_estop(svc):
     svc._bench_estop_active = True
     with pytest.raises(RuntimeError):
         await svc.home(0)
+
+
+@pytest.mark.asyncio
+async def test_homed_flag_persisted_to_backend(svc):
+    await svc.home(0x08)                # LIFT
+    await _wait_homing_done(svc)
+    assert 3 in svc._spi_backend.homed_persist
+    assert 3 in svc.limit_status()["homed"]
+
+
+@pytest.mark.asyncio
+async def test_protection_get_and_set(svc):
+    be = svc._spi_backend
+    be.hold_axes = {0}
+    assert svc.get_protection() == {
+        "limit_stop": True, "hold_enabled": True, "hold_cs": 8}
+    p = await svc.set_protection(limit_stop=False, hold_enabled=False, hold_cs=5)
+    assert p == {"limit_stop": False, "hold_enabled": False, "hold_cs": 5}
+    assert be.limit_guard is False and be.hold_axes == set()
+
+
+@pytest.mark.asyncio
+async def test_move_to_is_absolute(svc):
+    be = svc._spi_backend
+    be.positions[1] = 400               # BEND counter at +2.0 units
+    await svc.move_to(1, -1.0, 5)       # target -1.0 → delta -3.0 units
+    cs, steps, freq, direction = be.pulse_calls[0]
+    assert cs == 1 and direction == -1
+    assert steps == 600                 # 3.0 u × 200 steps/u

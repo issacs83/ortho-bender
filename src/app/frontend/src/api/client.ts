@@ -23,6 +23,13 @@ export interface AxisSignals {
   limit?: boolean | null;  // limit switch tripped; null/undefined = none fitted
 }
 
+/** GET/PUT /api/motor/protection — motion protection + holding torque. */
+export interface ProtectionSettings {
+  limit_stop: boolean;    // stop axis entering its limit window mid-motion
+  hold_enabled: boolean;  // LIFT idle holding current (anti-gravity-sink)
+  hold_cs: number;        // holding torque current scale 1-19
+}
+
 /** GET /api/motor/limits — live switch states + homing bookkeeping. */
 export interface LimitStatus {
   limits: Record<number, boolean>;  // axis id -> switch tripped (fitted axes only)
@@ -236,6 +243,22 @@ export const motorApi = {
 
   limits: (): Promise<LimitStatus> =>
     request("/api/motor/limits"),
+
+  /** Absolute move — travels TO `position` (the /move endpoint is relative). */
+  moveTo: (axis: number, position: number, speed: number): Promise<MotorStatus> =>
+    request("/api/motor/move_to", {
+      method: "POST",
+      body: JSON.stringify({ axis, position, speed }),
+    }),
+
+  protection: (): Promise<ProtectionSettings> =>
+    request("/api/motor/protection"),
+
+  updateProtection: (patch: Partial<ProtectionSettings>): Promise<ProtectionSettings> =>
+    request("/api/motor/protection", {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
 
   /** Declare the current physical position of `axis` to be `value` (mm/deg). */
   setZero: (axis: number, value = 0): Promise<MotorStatus> =>

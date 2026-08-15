@@ -221,6 +221,16 @@ class SpidevMotorBackend(MotorBackend):
         self.hold_axes: set[int] = set()
         self.hold_cs: int = 8
 
+        # Limit guard: stop an axis that ENTERS its limit window during
+        # normal motion (edge-triggered; starting inside the window keeps
+        # the guard disarmed until the axis leaves it). Toggled via
+        # PUT /api/motor/protection.
+        self.limit_guard: bool = True
+
+        # Axes homed against their switch — persisted with positions so a
+        # restart keeps both the counter and its "datum is real" status.
+        self.homed_persist: set[int] = set()
+
         # PWM sysfs write-state (see _pwm_set_hz): avoids the
         # duty=0 → enable re-toggle on every ramp tick, which produced up
         # to one dead period of STEP output per tick.
@@ -241,7 +251,12 @@ class SpidevMotorBackend(MotorBackend):
                     self.positions[int(k)] = int(v)
                 except (TypeError, ValueError):
                     pass
-            log.info("Restored motor positions from %s: %s", _STATE_FILE, self.positions)
+            try:
+                self.homed_persist = {int(x) for x in d.get("homed", [])}
+            except (TypeError, ValueError):
+                self.homed_persist = set()
+            log.info("Restored motor positions from %s: %s (homed=%s)",
+                     _STATE_FILE, self.positions, sorted(self.homed_persist))
         except FileNotFoundError:
             log.info("No saved motor state at %s — starting from zero", _STATE_FILE)
         except Exception as exc:
@@ -252,7 +267,10 @@ class SpidevMotorBackend(MotorBackend):
             os.makedirs(os.path.dirname(_STATE_FILE), exist_ok=True)
             tmp = _STATE_FILE + ".tmp"
             with open(tmp, "w") as f:
-                json.dump({"positions": {str(k): int(v) for k, v in self.positions.items()}}, f)
+                json.dump({
+                    "positions": {str(k): int(v) for k, v in self.positions.items()},
+                    "homed": sorted(self.homed_persist),
+                }, f)
             os.replace(tmp, _STATE_FILE)
         except Exception as exc:
             log.debug("Save motor state failed: %s", exc)
@@ -595,8 +613,37 @@ class SpidevMotorBackend(MotorBackend):
             shape = p.get("shape", "linear")
             await self._pwm_ensure_exported()
             h = min(start_hz, freq_hz)
+            floor_hz = h
+            # Short-move peak cap: limit the cruise frequency so that
+            # accel + decel alone cannot exceed the commanded step count
+            # (triangle profile). Without this a 0.2-unit tap ramps to
+            # full speed and the two ramps overshoot the move ~2-3x.
+            if accel > 0 and decel > 0:
+                denom = 1.0 / (2.0 * accel) + 1.0 / (2.0 * decel)
+                f_reach = int((floor_hz * floor_hz + count / denom) ** 0.5)
+                if f_reach < freq_hz:
+                    freq_hz = max(floor_hz, f_reach)
+            span = max(0, freq_hz - floor_hz)
+            # Decel rate: honour the profile but never take longer than
+            # _RAMP_DOWN_MAX_S so a stop always feels responsive.
+            eff_decel = max(decel, span / _RAMP_DOWN_MAX_S) if span else decel
             await self._pwm_set_hz(h)
-            await self._ramp(h, freq_hz, accel, shape)
+            # Ramp-up with live step accounting: everything emitted during
+            # the ramp counts toward both the position display AND the
+            # commanded distance (a short jog can complete entirely inside
+            # the ramp — it used to be invisible and to overshoot ~2x).
+            ramp_up = await self._ramp(h, freq_hz, accel, shape,
+                                       track=(axis, direction))
+            # Budget the natural-end decel ramp too, so ramp+cruise+decel
+            # lands near the commanded step count.
+            if span and eff_decel > 0:
+                decel_t = (1.5 if shape == "scurve" else 1.0) * span / eff_decel
+                decel_est = int((freq_hz + floor_hz) / 2.0 * decel_t)
+            else:
+                decel_est = 0
+            remaining = max(0, count - ramp_up - decel_est)
+            duration_s = remaining / freq_hz
+            pos_mid = self.positions.get(axis, 0)
             t0 = time.monotonic()
 
             # Run + fault/stall monitoring with 100 ms polling.
@@ -605,17 +652,25 @@ class SpidevMotorBackend(MotorBackend):
             stall_since: float | None = None
             STALL_TIMEOUT_S = 0.6
             clean_end = True
-            # Decel rate: honour the profile but never take longer than
-            # _RAMP_DOWN_MAX_S so a stop always feels responsive.
-            span = max(0, freq_hz - min(start_hz, freq_hz))
-            eff_decel = max(decel, span / _RAMP_DOWN_MAX_S) if span else decel
+            # Limit-switch guard (edge-triggered): stop the axis when its
+            # limit window is ENTERED during normal motion. Starting
+            # inside the window (parked at home) keeps the guard disarmed
+            # until the axis leaves it, so moving away is never blocked.
+            guard_armed = self.limit_guard and self.limit_active(axis) is False
             try:
                 while time.monotonic() - t0 < duration_s:
                     await asyncio.sleep(0.1)
                     elapsed = time.monotonic() - t0
-                    steps_so_far = min(int(elapsed * freq_hz), count)
-                    self.positions[axis] = pos_before + (steps_so_far * direction)
+                    steps_so_far = min(int(elapsed * freq_hz), remaining)
+                    self.positions[axis] = pos_mid + (steps_so_far * direction)
 
+                    lim = self.limit_active(axis)
+                    if lim is False:
+                        guard_armed = self.limit_guard
+                    elif lim and guard_armed:
+                        log.warning("axis %d limit switch tripped mid-motion "
+                                    "— stopping (limit guard)", axis)
+                        break   # clean_end stays True → decel stop
                     status = await self._read_status(axis)
                     if self._has_fault(status):
                         log.error("axis %d fault during run: 0x%05X — aborting", axis, status)
@@ -632,24 +687,33 @@ class SpidevMotorBackend(MotorBackend):
                             break
                     else:
                         stall_since = None
+                else:
+                    # Natural end: settle the cruise-phase count exactly.
+                    self.positions[axis] = pos_mid + (remaining * direction)
             except asyncio.CancelledError:
                 # Graceful stop (jog_stop / task cancel): decelerate before
                 # the finally block silences the chopper — UNLESS E-STOP
                 # already killed the PWM (self._pwm_active False), in which
                 # case the motor is electrically stopped and any ramp here
                 # would delay the safety path.
+                # Settle the cruise steps emitted since the last 100 ms
+                # tick before the decel ramp takes over the accounting.
+                elapsed = time.monotonic() - t0
+                self.positions[axis] = pos_mid + (
+                    min(int(elapsed * freq_hz), remaining) * direction)
                 if self._pwm_active:
                     try:
-                        await self._ramp(freq_hz, min(start_hz, freq_hz),
-                                         eff_decel, shape)
+                        await self._ramp(freq_hz, floor_hz, eff_decel, shape,
+                                         track=(axis, direction))
                     except Exception:
                         pass
                 raise
-            # Natural end of travel: decelerate to the floor before stopping
-            # so high-speed jogs don't slam to zero (missed-step/resonance
-            # risk at 1/16 microstep speeds).
+            # Controlled stop (natural end / limit guard): decelerate to
+            # the floor so high-speed jogs don't slam to zero
+            # (missed-step/resonance risk at 1/16 microstep speeds).
             if clean_end and self._pwm_active:
-                await self._ramp(freq_hz, min(start_hz, freq_hz), eff_decel, shape)
+                await self._ramp(freq_hz, floor_hz, eff_decel, shape,
+                                 track=(axis, direction))
         finally:
             # Ensure motor is safe no matter how we exit (success,
             # cancellation, fault, exception during init): gravity axes
@@ -660,13 +724,11 @@ class SpidevMotorBackend(MotorBackend):
             except Exception:
                 pass
             await self._finish_axis(axis)
-            # Final position snapshot. If t0 was never set (cancel during
-            # init), elapsed=0 and position stays at pos_before — correct
-            # behaviour because no STEP edges were emitted.
-            if t0 is not None:
-                elapsed = max(elapsed, time.monotonic() - t0)
-                steps_actual = min(int(elapsed * freq_hz), count)
-                self.positions[axis] = pos_before + (steps_actual * direction)
+            # Positions are maintained LIVE through every phase (ramp-up
+            # integral, cruise ticks, decel integral) — no end-of-motion
+            # recompute, which used to erase everything a short jog did
+            # inside its ramp. pos_before/t0 remain for log context only.
+            _ = pos_before, t0
             # Persist updated positions so a server restart resumes here
             self._save_state()
             # Clear active_axis after this jog/move ends so the STEP LED
@@ -1152,8 +1214,11 @@ class SpidevMotorBackend(MotorBackend):
     # PWM4 control (STEP signal, parallel to all 3 chips)
     # -------------------------------------------------------------------
     async def _ramp(self, f_from: int, f_to: int, rate_hz_s: float,
-                    shape: str = "linear") -> None:
-        """Slew the PWM frequency f_from → f_to.
+                    shape: str = "linear",
+                    track: tuple[int, int] | None = None) -> int:
+        """Slew the PWM frequency f_from → f_to. Returns the estimated
+        STEP edges emitted (trapezoid integral of the schedule);
+        track=(cs, direction) live-updates the position counter each tick.
 
         linear: constant slope = rate_hz_s (trapezoidal velocity).
         scurve: smoothstep schedule f(τ) = f0 + Δf·(3τ²−2τ³) — jerk-
@@ -1165,19 +1230,38 @@ class SpidevMotorBackend(MotorBackend):
         span = abs(f_to - f_from)
         if span == 0 or rate_hz_s <= 0:
             await self._pwm_set_hz(f_to)
-            return
+            return 0
         if shape == "scurve":
             total_s = 1.5 * span / rate_hz_s   # smoothstep peak slope = 1.5·Δf/T
         else:
             total_s = span / rate_hz_s
         total_s = max(total_s, _RAMP_TICK_S)
         t = 0.0
-        while t < total_s:
-            await asyncio.sleep(_RAMP_TICK_S)
-            t = min(total_s, t + _RAMP_TICK_S)
-            tau = t / total_s
-            s = tau * tau * (3.0 - 2.0 * tau) if shape == "scurve" else tau
-            await self._pwm_set_hz(int(round(f_from + (f_to - f_from) * s)))
+        steps = 0.0
+        f_prev = float(f_from)
+        base = self.positions.get(track[0], 0) if track else 0
+        try:
+            while t < total_s:
+                await asyncio.sleep(_RAMP_TICK_S)
+                dt = min(_RAMP_TICK_S, total_s - t)
+                t = min(total_s, t + _RAMP_TICK_S)
+                tau = t / total_s
+                s = tau * tau * (3.0 - 2.0 * tau) if shape == "scurve" else tau
+                f_now = f_from + (f_to - f_from) * s
+                # Trapezoid integral of the frequency schedule = STEP
+                # edges emitted this tick. Without this, everything that
+                # moves during a ramp is invisible to the position
+                # counter — a quick jog tap lives entirely inside the
+                # ramp and used to show zero displacement in the UI.
+                steps += (f_prev + f_now) / 2.0 * dt
+                f_prev = f_now
+                await self._pwm_set_hz(int(round(f_now)))
+                if track:
+                    self.positions[track[0]] = base + int(steps) * track[1]
+        finally:
+            if track:
+                self.positions[track[0]] = base + int(steps) * track[1]
+        return int(steps)
 
     async def _pwm_ensure_exported(self) -> None:
         if not os.path.isdir(self._pwm_path):

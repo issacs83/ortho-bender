@@ -271,6 +271,75 @@ async def motor_limits(
         return err(str(exc), "MOTOR_LIMITS_ERROR")
 
 
+class ProtectionUpdate(BaseModel):
+    """Partial protection/holding settings update (omitted = keep)."""
+    model_config = {"extra": "forbid"}
+    limit_stop: bool | None = Field(
+        None, description="Stop an axis that ENTERS its limit window during "
+                          "normal motion (edge-triggered; leaving the window "
+                          "from a parked-at-home start is never blocked)")
+    hold_enabled: bool | None = Field(
+        None, description="Idle holding current on LIFT (gravity axis) — "
+                          "prevents sinking; audible chopper hiss while held")
+    hold_cs: int | None = Field(
+        None, ge=1, le=19,
+        description="Holding torque current scale (1-19, PSU cap still "
+                    "applies). Lower = quieter + less holding torque")
+
+
+class MoveToRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    axis: int = Field(ge=0, le=3)
+    position: float = Field(ge=-100000, le=100000,
+                            description="Absolute target (user units)")
+    speed: float = Field(gt=0, le=40)
+
+
+@router.get("/protection", response_model=ApiResponse)
+async def get_protection(svc: MotorService = Depends(_motor_service)) -> ApiResponse:
+    """Motion protection + holding-torque settings (limit_stop /
+    hold_enabled / hold_cs)."""
+    try:
+        return ok(svc.get_protection())
+    except Exception as exc:
+        return err(str(exc), "MOTOR_PROTECTION_ERROR")
+
+
+@router.put("/protection", response_model=ApiResponse)
+async def update_protection(
+    body: ProtectionUpdate,
+    svc: MotorService = Depends(_motor_service),
+) -> ApiResponse:
+    """Update protection settings; holding changes apply immediately
+    while the bench is idle."""
+    try:
+        result = await svc.set_protection(
+            limit_stop=body.limit_stop,
+            hold_enabled=body.hold_enabled,
+            hold_cs=body.hold_cs)
+        return ok(result)
+    except (RuntimeError, ValueError) as exc:
+        return err(str(exc), "MOTOR_PROTECTION_ERROR")
+
+
+@router.post("/move_to", response_model=ApiResponse)
+async def motor_move_to(
+    body: MoveToRequest,
+    svc: MotorService = Depends(_motor_service),
+) -> ApiResponse:
+    """Absolute move to `position` (user units). POST /move is RELATIVE
+    (moves BY `distance`); this endpoint computes the delta from the
+    current counter — what the UI's 'Move To Position' means."""
+    try:
+        status = await svc.move_to(body.axis, body.position, body.speed)
+        return ok(status.model_dump())
+    except (RuntimeError, ValueError) as exc:
+        return err(str(exc), "MOTOR_MOVE_ERROR")
+    except Exception as exc:
+        log.error("move_to failed axis=%s pos=%s: %s", body.axis, body.position, exc)
+        return err(str(exc), "MOTOR_MOVE_ERROR")
+
+
 @router.post("/home", response_model=ApiResponse)
 async def motor_home(
     body: MotorHomeRequest,

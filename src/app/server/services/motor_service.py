@@ -554,6 +554,14 @@ class MotorService:
                     preprobe_steps=preprobe,
                     stall_abort=bool(cfg.home_stall_abort) and not rotary)
                 self._homed_axes.add(axis)
+                # Persist "datum is real" alongside the position counter
+                # so a restart keeps both.
+                hp = getattr(self._spi_backend, "homed_persist", None)
+                if hp is not None:
+                    hp.add(axis)
+                    save = getattr(self._spi_backend, "_save_state", None)
+                    if callable(save):
+                        save()
                 log.info("homing axis=%d complete", axis)
         except self._asyncio.CancelledError:
             self._home_error = "homing cancelled"
@@ -574,12 +582,73 @@ class MotorService:
                 st = self._spi_backend.limit_active(cs)
                 if st is not None:
                     limits[axis] = st
+        homed = set(self._homed_axes)
+        homed |= set(getattr(self._spi_backend, "homed_persist", set()) or set())
         return {
             "limits": limits,
-            "homed": sorted(self._homed_axes),
+            "homed": sorted(homed),
             "homing": self._bench_homing,
             "error": self._home_error,
         }
+
+    # ------------------------------------------------------------------
+    # Protection / holding-torque settings (bench)
+    # ------------------------------------------------------------------
+    def get_protection(self) -> dict:
+        """Runtime motion-protection settings."""
+        be = self._spi_backend
+        return {
+            "limit_stop": bool(getattr(be, "limit_guard", False)),
+            "hold_enabled": 0 in (getattr(be, "hold_axes", set()) or set()),
+            "hold_cs": int(getattr(be, "hold_cs", 0)),
+        }
+
+    async def set_protection(self, limit_stop=None, hold_enabled=None,
+                             hold_cs=None) -> dict:
+        """Update protection settings; hold changes apply immediately
+        when the bench is idle (energize / release the LIFT chopper)."""
+        if not self.has_bench:
+            raise RuntimeError("protection settings are bench-only")
+        be = self._spi_backend
+        if limit_stop is not None:
+            be.limit_guard = bool(limit_stop)
+        if hold_cs is not None:
+            be.hold_cs = max(1, min(int(hold_cs), 19))
+        if hold_enabled is not None:
+            if hold_enabled:
+                be.hold_axes = {0}
+            else:
+                be.hold_axes = set()
+        idle = self._bench_jog_task is None or self._bench_jog_task.done()
+        if idle and not self._bench_estop_active and (
+                hold_enabled is not None or hold_cs is not None):
+            # Re-apply the new holding state right away.
+            try:
+                if 0 in be.hold_axes:
+                    await be._hold_chip(0)
+                elif hold_enabled is not None:
+                    await be._silence_chip(0)
+            except Exception as exc:
+                log.warning("hold re-apply failed: %s", exc)
+        log.info("protection updated: %s", self.get_protection())
+        return self.get_protection()
+
+    async def move_to(self, axis: int, position: float, speed: float) -> MotorStatusResponse:
+        """Absolute move: travel to `position` (user units) from the
+        current counter. The /move endpoint is RELATIVE — the UI's
+        'Move To Position' needs this delta form."""
+        self._ensure_not_estop("move_to")
+        if not self.has_bench:
+            raise RuntimeError("move_to is bench-only")
+        cs = self._axis_to_cs.get(int(axis))
+        if cs is None:
+            raise ValueError(f"Axis {axis} is not present on the bench")
+        current = self._spi_backend.positions.get(cs, 0) / 200.0
+        delta = float(position) - current
+        if abs(delta) < 0.005:
+            return await self.get_status()
+        await self._bench_pulse(int(axis), delta, speed)
+        return await self.get_status()
 
     async def stop(self) -> MotorStatusResponse:
         """Controlled deceleration stop.
