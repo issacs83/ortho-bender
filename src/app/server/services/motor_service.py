@@ -221,6 +221,23 @@ class MotorService:
         finally) to minimise deadtime between rapid taps.
         """
         if self._bench_jog_task is not None and not self._bench_jog_task.done():
+            # Minimum-nudge guarantee: a very short tap releases while the
+            # motion task is still in its setup phase (~100 ms: DIR setup
+            # + warm chip init) — cancelling here would produce ZERO steps
+            # even though the user saw/heard the coil engage. If no STEP
+            # has been emitted yet (and we're not homing), wait for the
+            # PWM to start plus a short grace so every tap nudges the
+            # axis by a few counted steps.
+            be = self._spi_backend
+            if (be is not None and not self._bench_homing
+                    and not getattr(be, "_pwm_active", True)
+                    and not getattr(be, "_pwm_killed", False)):
+                for _ in range(40):            # ≤ 0.4 s bound
+                    if getattr(be, "_pwm_active", False) or self._bench_jog_task.done():
+                        break
+                    await self._asyncio.sleep(0.01)
+                if getattr(be, "_pwm_active", False):
+                    await self._asyncio.sleep(0.05)   # ~10 steps at the floor
             self._bench_jog_task.cancel()
             try:
                 await self._bench_jog_task

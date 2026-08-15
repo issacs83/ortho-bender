@@ -1236,32 +1236,43 @@ class SpidevMotorBackend(MotorBackend):
         else:
             total_s = span / rate_hz_s
         total_s = max(total_s, _RAMP_TICK_S)
+
+        def emitted(elapsed_s: float) -> int:
+            """Closed-form ∫f dt over [0, elapsed] of the schedule —
+            counts partial ticks, so even a cancel a few ms into the
+            ramp credits the STEP edges that were actually emitted."""
+            e = max(0.0, min(elapsed_s, total_s))
+            tau = e / total_s
+            df = f_to - f_from
+            if shape == "scurve":
+                # ∫(3τ²-2τ³)dτ = τ³ - τ⁴/2
+                integ = tau ** 3 - tau ** 4 / 2.0
+            else:
+                integ = tau * tau / 2.0
+            return int(f_from * e + df * total_s * integ)
+
         t = 0.0
-        steps = 0.0
-        f_prev = float(f_from)
+        t_wall = time.monotonic()
         base = self.positions.get(track[0], 0) if track else 0
         try:
             while t < total_s:
                 await asyncio.sleep(_RAMP_TICK_S)
-                dt = min(_RAMP_TICK_S, total_s - t)
                 t = min(total_s, t + _RAMP_TICK_S)
                 tau = t / total_s
                 s = tau * tau * (3.0 - 2.0 * tau) if shape == "scurve" else tau
-                f_now = f_from + (f_to - f_from) * s
-                # Trapezoid integral of the frequency schedule = STEP
-                # edges emitted this tick. Without this, everything that
-                # moves during a ramp is invisible to the position
-                # counter — a quick jog tap lives entirely inside the
-                # ramp and used to show zero displacement in the UI.
-                steps += (f_prev + f_now) / 2.0 * dt
-                f_prev = f_now
-                await self._pwm_set_hz(int(round(f_now)))
+                await self._pwm_set_hz(int(round(f_from + (f_to - f_from) * s)))
                 if track:
-                    self.positions[track[0]] = base + int(steps) * track[1]
+                    self.positions[track[0]] = base + emitted(
+                        time.monotonic() - t_wall) * track[1]
         finally:
+            # Wall-clock accounting: whatever actually elapsed (complete
+            # ticks, a truncated tick, or a cancel mid-sleep) is what the
+            # PWM emitted. Without this a quick jog tap that dies inside
+            # the ramp shows zero displacement while the motor moved.
             if track:
-                self.positions[track[0]] = base + int(steps) * track[1]
-        return int(steps)
+                self.positions[track[0]] = base + emitted(
+                    time.monotonic() - t_wall) * track[1]
+        return emitted(time.monotonic() - t_wall)
 
     async def _pwm_ensure_exported(self) -> None:
         if not os.path.isdir(self._pwm_path):
