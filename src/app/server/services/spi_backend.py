@@ -1262,18 +1262,27 @@ class SpidevMotorBackend(MotorBackend):
         total_s = max(total_s, _RAMP_TICK_S)
 
         def emitted(elapsed_s: float) -> int:
-            """Closed-form ∫f dt over [0, elapsed] of the schedule —
-            counts partial ticks, so even a cancel a few ms into the
-            ramp credits the STEP edges that were actually emitted."""
+            """STEP edges actually emitted in [0, elapsed].
+
+            Models the PWM's real stair behaviour: each tick's frequency
+            is programmed at the END of the tick, so emission during a
+            tick runs at the PREVIOUS setpoint. A smooth ∫f·dt overcounts
+            cancelled ramps by up to Δf×tick/2 per tick — enough to
+            scatter absolute-move landings by ±0.2-1.0 units when moves
+            preempt each other."""
             e = max(0.0, min(elapsed_s, total_s))
-            tau = e / total_s
             df = f_to - f_from
-            if shape == "scurve":
-                # ∫(3τ²-2τ³)dτ = τ³ - τ⁴/2
-                integ = tau ** 3 - tau ** 4 / 2.0
-            else:
-                integ = tau * tau / 2.0
-            return int(f_from * e + df * total_s * integ)
+            steps = 0.0
+            t = 0.0
+            f_cur = float(f_from)
+            while t < e:
+                dt = min(_RAMP_TICK_S, e - t)
+                steps += f_cur * dt
+                t += dt
+                tau = min(1.0, t / total_s)
+                s = tau * tau * (3.0 - 2.0 * tau) if shape == "scurve" else tau
+                f_cur = f_from + df * s
+            return int(steps)
 
         t = 0.0
         t_wall = time.monotonic()

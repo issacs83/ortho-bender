@@ -72,6 +72,11 @@ class MotorService:
         import asyncio as _asyncio
         self._asyncio = _asyncio
         self._bench_jog_task: Optional[_asyncio.Task] = None
+        # Serializes the preempt-and-start critical section of
+        # _run_motion — without it two concurrent HTTP motions can both
+        # pass jog_stop() while nothing runs yet and then start TWO
+        # pulse_step coroutines on the shared PWM.
+        self._motion_lock = _asyncio.Lock()
         # Sticky E-STOP flag — stays True until enable_drivers/reset clears it,
         # so the dashboard can show ESTOP instead of bouncing back to IDLE the
         # moment the jog task finishes. Without this the bar would keep moving
@@ -119,6 +124,35 @@ class MotorService:
         for phys, hz in (("accel", "accel_hz_s"), ("decel", "decel_hz_s")):
             out[hz] = int(max(200, min(40000, float(p[phys]) * spu)))
         return out
+
+    async def _run_motion(self, coro) -> None:
+        """Run a bench motion exclusively (last command wins).
+
+        move/move_to/jog(distance) used to await pulse_step inline with
+        NO mutual exclusion — a second request while one was running
+        interleaved two pulse_step coroutines on the shared PWM and
+        scrambled the position counter (observed: a counter left ~one
+        revolution off made the next absolute move spin a full turn).
+        All motion now goes through the single task slot: anything
+        already running (jog, previous move) is cancelled with its decel
+        + accurate accounting first, and STOP/E-STOP can cancel moves.
+        """
+        async with self._motion_lock:       # atomic preempt-and-start
+            # nudge=False: internal preemption must cancel instantly —
+            # the minimum-nudge grace is for the operator's tap release.
+            await self.jog_stop(nudge=False)
+            task = self._asyncio.create_task(coro)
+            self._bench_jog_task = task
+        try:
+            await task
+        except self._asyncio.CancelledError:
+            # Preempted by a newer command (or STOP): the motion ended
+            # with a clean decel — swallow unless WE are being cancelled.
+            if not task.cancelled():
+                raise
+        finally:
+            if self._bench_jog_task is task:
+                self._bench_jog_task = None
 
     def _max_speed_for(self, axis: int) -> float:
         """Per-axis machine velocity limit (profile max_speed).
@@ -211,7 +245,7 @@ class MotorService:
             "max_duration_s": max_duration_s,
         }
 
-    async def jog_stop(self) -> dict:
+    async def jog_stop(self, nudge: bool = True) -> dict:
         """Stop the current bench jog (long-press release).
 
         Cancels the background pulse_step task. Its finally block disables
@@ -235,7 +269,7 @@ class MotorService:
             # PWM to start plus a short grace so every tap nudges the
             # axis by a few counted steps.
             be = self._spi_backend
-            if (be is not None and not self._bench_homing
+            if (nudge and be is not None and not self._bench_homing
                     and not getattr(be, "_pwm_active", True)
                     and not getattr(be, "_pwm_killed", False)):
                 for _ in range(40):            # ≤ 0.4 s bound
@@ -437,7 +471,7 @@ class MotorService:
         """
         self._ensure_not_estop("move")
         if self.has_bench:
-            await self._bench_pulse(axis, distance, speed)
+            await self._run_motion(self._bench_pulse(axis, distance, speed))
             return await self.get_status()
 
         # IPC path (M7 production)
@@ -465,7 +499,7 @@ class MotorService:
         if self.has_bench:
             d = distance if distance != 0.0 else 1.0
             d *= (1 if direction >= 0 else -1)
-            await self._bench_pulse(axis, d, speed if speed > 0 else 10.0)
+            await self._run_motion(self._bench_pulse(axis, d, speed if speed > 0 else 10.0))
             return await self.get_status()
 
         payload = build_jog_payload(axis, direction, speed, distance)
@@ -672,7 +706,7 @@ class MotorService:
         delta = float(position) - current
         if abs(delta) < 0.005:
             return await self.get_status()
-        await self._bench_pulse(int(axis), delta, speed)
+        await self._run_motion(self._bench_pulse(int(axis), delta, speed))
         return await self.get_status()
 
     async def stop(self) -> MotorStatusResponse:
