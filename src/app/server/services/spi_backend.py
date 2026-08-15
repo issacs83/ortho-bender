@@ -627,13 +627,32 @@ class SpidevMotorBackend(MotorBackend):
             # Decel rate: honour the profile but never take longer than
             # _RAMP_DOWN_MAX_S so a stop always feels responsive.
             eff_decel = max(decel, span / _RAMP_DOWN_MAX_S) if span else decel
+            # Limit-switch guard (edge-triggered, armed only once the axis
+            # is outside its window): shared between the ramp (10 ms
+            # sub-polling) and the cruise monitor. A fast axis crosses
+            # the ~0.7 u window in tens of ms — the old 100 ms-only
+            # check could fly straight through without noticing.
+            guard = {"armed": self.limit_guard and self.limit_active(axis) is False,
+                     "hit": False}
+
+            def guard_check() -> bool:
+                if not self.limit_guard or guard["hit"]:
+                    return guard["hit"]
+                lim = self.limit_active(axis)
+                if lim is False:
+                    guard["armed"] = True
+                elif lim and guard["armed"]:
+                    guard["hit"] = True
+                return guard["hit"]
+
             await self._pwm_set_hz(h)
             # Ramp-up with live step accounting: everything emitted during
             # the ramp counts toward both the position display AND the
             # commanded distance (a short jog can complete entirely inside
             # the ramp — it used to be invisible and to overshoot ~2x).
             ramp_up = await self._ramp(h, freq_hz, accel, shape,
-                                       track=(axis, direction))
+                                       track=(axis, direction),
+                                       guard_cb=guard_check)
             # Budget the natural-end decel ramp too, so ramp+cruise+decel
             # lands near the commanded step count.
             if span and eff_decel > 0:
@@ -642,35 +661,33 @@ class SpidevMotorBackend(MotorBackend):
             else:
                 decel_est = 0
             remaining = max(0, count - ramp_up - decel_est)
+            if guard["hit"]:
+                remaining = 0   # guard fired inside the ramp — go stop
             duration_s = remaining / freq_hz
             pos_mid = self.positions.get(axis, 0)
             t0 = time.monotonic()
 
-            # Run + fault/stall monitoring with 100 ms polling.
-            # Live position update inside the loop so the WebSocket
-            # broadcast (also at 100 ms) shows real-time progress.
+            # Cruise + monitoring: limit guard and position at 10 ms
+            # (a fast axis crosses its sensor window in tens of ms),
+            # SPI fault/stall reads at 100 ms.
             stall_since: float | None = None
             STALL_TIMEOUT_S = 0.6
             clean_end = True
-            # Limit-switch guard (edge-triggered): stop the axis when its
-            # limit window is ENTERED during normal motion. Starting
-            # inside the window (parked at home) keeps the guard disarmed
-            # until the axis leaves it, so moving away is never blocked.
-            guard_armed = self.limit_guard and self.limit_active(axis) is False
+            next_status_t = 0.0
             try:
                 while time.monotonic() - t0 < duration_s:
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.01)
                     elapsed = time.monotonic() - t0
                     steps_so_far = min(int(elapsed * freq_hz), remaining)
                     self.positions[axis] = pos_mid + (steps_so_far * direction)
 
-                    lim = self.limit_active(axis)
-                    if lim is False:
-                        guard_armed = self.limit_guard
-                    elif lim and guard_armed:
+                    if guard_check():
                         log.warning("axis %d limit switch tripped mid-motion "
                                     "— stopping (limit guard)", axis)
                         break   # clean_end stays True → decel stop
+                    if elapsed < next_status_t:
+                        continue
+                    next_status_t = elapsed + 0.1
                     status = await self._read_status(axis)
                     if self._has_fault(status):
                         log.error("axis %d fault during run: 0x%05X — aborting", axis, status)
@@ -711,8 +728,14 @@ class SpidevMotorBackend(MotorBackend):
             # Controlled stop (natural end / limit guard): decelerate to
             # the floor so high-speed jogs don't slam to zero
             # (missed-step/resonance risk at 1/16 microstep speeds).
+            # The guard may fire inside the ramp-up, so start the decel
+            # from the frequency the PWM is actually at.
             if clean_end and self._pwm_active:
-                await self._ramp(freq_hz, floor_hz, eff_decel, shape,
+                cur_hz = freq_hz
+                if self._pwm_last_period_ns:
+                    cur_hz = min(freq_hz, max(floor_hz,
+                                 int(1e9 / self._pwm_last_period_ns)))
+                await self._ramp(cur_hz, floor_hz, eff_decel, shape,
                                  track=(axis, direction))
         finally:
             # Ensure motor is safe no matter how we exit (success,
@@ -1215,7 +1238,8 @@ class SpidevMotorBackend(MotorBackend):
     # -------------------------------------------------------------------
     async def _ramp(self, f_from: int, f_to: int, rate_hz_s: float,
                     shape: str = "linear",
-                    track: tuple[int, int] | None = None) -> int:
+                    track: tuple[int, int] | None = None,
+                    guard_cb=None) -> int:
         """Slew the PWM frequency f_from → f_to. Returns the estimated
         STEP edges emitted (trapezoid integral of the schedule);
         track=(cs, direction) live-updates the position counter each tick.
@@ -1254,9 +1278,21 @@ class SpidevMotorBackend(MotorBackend):
         t = 0.0
         t_wall = time.monotonic()
         base = self.positions.get(track[0], 0) if track else 0
+        aborted = False
         try:
-            while t < total_s:
-                await asyncio.sleep(_RAMP_TICK_S)
+            while t < total_s and not aborted:
+                # Sub-sleep in 10 ms slices so the limit guard can react
+                # inside a tick — a fast axis crosses its sensor window
+                # in a few tens of ms.
+                slept = 0.0
+                while slept < _RAMP_TICK_S:
+                    await asyncio.sleep(0.01)
+                    slept += 0.01
+                    if guard_cb is not None and guard_cb():
+                        aborted = True
+                        break
+                if aborted:
+                    break
                 t = min(total_s, t + _RAMP_TICK_S)
                 tau = t / total_s
                 s = tau * tau * (3.0 - 2.0 * tau) if shape == "scurve" else tau
