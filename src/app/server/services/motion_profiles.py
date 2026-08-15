@@ -60,8 +60,8 @@ _LEGACY_STEPS_PER_UNIT = 200.0
 # validated for. Speed itself is additionally capped by the per-axis
 # SPEED_LIMIT in calibration_service.
 _BOUNDS = {
-    "jog_speed":  (0.1, 40.0),
-    "max_speed":  (0.1, 40.0),
+    "jog_speed":  (0.1, 360.0),
+    "max_speed":  (0.1, 360.0),
     "step_size":  (0.01, 360.0),
     "start_hz":   (50, 2000),
     "accel":      (1.0, 200.0),   # units/s² (200–40000 Hz/s at 200 steps/unit)

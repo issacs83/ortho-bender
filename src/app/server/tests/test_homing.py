@@ -143,7 +143,7 @@ async def test_bend_homes_in_rotary_mode(svc):
     await _wait_homing_done(svc)
     kw = svc._spi_backend.last_kwargs
     assert kw["rotary"] is True               # unidirectional, 1 window/rev
-    assert kw["search_range_steps"] == 19000  # 95 u (1 rev + margin) × 200
+    assert kw["search_range_steps"] == 76000  # 380° (1 rev + margin) × 200
     assert kw["preprobe_steps"] == 0          # rotary needs no pre-probe
     assert kw["reduced_cs"] == 0              # CS=10 slippage — disabled
 

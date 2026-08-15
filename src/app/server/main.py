@@ -190,6 +190,10 @@ async def lifespan(app: FastAPI):
     if hasattr(diag_backend, "hold_axes") and cfg.hold_lift:
         diag_backend.hold_axes = {0}
         diag_backend.hold_cs = int(cfg.hold_cs)
+    # Limit guard: LIFT only — BEND's multi-slot disc would trip it
+    # at every slot passage (rotary axis has no travel ends anyway).
+    if hasattr(diag_backend, "guard_axes"):
+        diag_backend.guard_axes = {0}
     log.info("PsuService active: %s (cs_cap=%d)", psu_svc.psu.label, psu_svc.cs_cap)
 
     # Per-axis steps/unit calibration so jog/move convert mm/deg → step rate

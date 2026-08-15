@@ -371,7 +371,9 @@ class MotorService:
         for cs, axis_int in cs_to_axis.items():
             pos_steps = bench_pos.get(cs, 0)
             # Convert microsteps back to display units (inverse of _bench_pulse: 200 step = 1 unit)
-            pos_units = pos_steps / 200.0
+            spu = (self._calibration.steps_per_unit(axis_int)
+                   if self._calibration else 200.0)
+            pos_units = pos_steps / spu
             sig_dict = signals_fn(cs) if callable(signals_fn) else None
             axes.append(AxisStatus(
                 axis=AxisId(axis_int),
@@ -521,8 +523,10 @@ class MotorService:
         cs = self._axis_to_cs.get(int(axis))
         if cs is None:
             raise ValueError(f"Axis {axis} is not present on the bench")
-        # Same conversion as _bench_status (display units = steps / 200).
-        self._spi_backend.positions[cs] = int(round(value * 200.0))
+        # Same conversion as _bench_status (per-axis calibration).
+        spu = (self._calibration.steps_per_unit(int(axis))
+               if self._calibration else 200.0)
+        self._spi_backend.positions[cs] = int(round(value * spu))
         save = getattr(self._spi_backend, "_save_state", None)
         if callable(save):
             save()
@@ -702,7 +706,9 @@ class MotorService:
         cs = self._axis_to_cs.get(int(axis))
         if cs is None:
             raise ValueError(f"Axis {axis} is not present on the bench")
-        current = self._spi_backend.positions.get(cs, 0) / 200.0
+        spu = (self._calibration.steps_per_unit(int(axis))
+               if self._calibration else 200.0)
+        current = self._spi_backend.positions.get(cs, 0) / spu
         delta = float(position) - current
         if abs(delta) < 0.005:
             return await self.get_status()

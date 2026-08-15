@@ -179,9 +179,9 @@ class MotionProfileUpdate(BaseModel):
     "succeeding" with no effect.
     """
     model_config = {"extra": "forbid"}
-    jog_speed: float | None = Field(None, gt=0, le=40,
+    jog_speed: float | None = Field(None, gt=0, le=360,
                                     description="Default jog rate (mm/s or deg/s)")
-    max_speed: float | None = Field(None, gt=0, le=40,
+    max_speed: float | None = Field(None, gt=0, le=360,
                                     description="Machine velocity limit — all motion "
                                                 "commands are clamped to this "
                                                 "(GRBL $110-112 analog)")
@@ -292,7 +292,7 @@ class MoveToRequest(BaseModel):
     axis: int = Field(ge=0, le=3)
     position: float = Field(ge=-100000, le=100000,
                             description="Absolute target (user units)")
-    speed: float = Field(gt=0, le=40)
+    speed: float = Field(gt=0, le=360)
 
 
 @router.get("/protection", response_model=ApiResponse)
