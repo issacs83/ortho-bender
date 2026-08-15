@@ -764,6 +764,8 @@ class SpidevMotorBackend(MotorBackend):
         max_travel_steps: int | None = None,
         search_range_steps: int | None = None,
         reduced_cs: int = 0,
+        rotary: bool = False,
+        preprobe_steps: int = 0,
     ) -> None:
         """Home one axis against its mid-travel window sensor.
 
@@ -833,21 +835,51 @@ class SpidevMotorBackend(MotorBackend):
                         f"axis cs={cs} limit stuck active — sensor/wiring "
                         f"suspect, aborting after bounded retreat")
                 await self._home_move(cs, -direction, seek_hz, backoff_steps, None)
-
-            # S2 — primary seek (bounded leg)
-            met, _ = await self._home_move(
-                cs, direction, seek_hz, max_primary, 'trip')
-            if not met:
-                # S3 — wrong side of the window: reverse and search the
-                # whole travel from this end.
-                log.info("home_axis cs=%d: window not in primary leg "
-                         "(%d steps) — reversing", cs, max_primary)
+            elif preprobe_steps > 0 and not rotary:
+                # S1b — pre-probe AGAINST the approach direction: on a
+                # gravity axis the common off-window start is "sank just
+                # below the window", and the primary leg would dive into
+                # the bottom stop. A short opposite probe catches that
+                # case without ever touching the stop.
                 met, _ = await self._home_move(
-                    cs, -direction, seek_hz, max_reverse, 'trip')
-                if not met:
+                    cs, -direction, seek_hz, preprobe_steps, 'trip')
+                if met:
+                    log.info("home_axis cs=%d: window found on pre-probe", cs)
+                    met, _ = await self._home_move(
+                        cs, -direction, seek_hz, max_release, 'release')
+                    if not met:
+                        raise RuntimeError(
+                            f"axis cs={cs} limit did not release after "
+                            f"pre-probe — sensor stuck")
+                    await self._home_move(
+                        cs, -direction, seek_hz, backoff_steps, None)
+
+            if not self._limit_tripped_debounced(cs):
+                # S2 — primary seek. Rotary axis: one window per
+                # revolution, so a single leg bounded at 1 rev + margin
+                # ALWAYS crosses it — no reversal exists to need.
+                met, _ = await self._home_move(
+                    cs, direction, seek_hz, max_primary, 'trip')
+                if not met and rotary:
                     raise RuntimeError(
-                        f"axis cs={cs} home window not found in either "
-                        f"direction — check sensor power/wiring")
+                        f"axis cs={cs} window not seen within one full "
+                        f"revolution — check sensor power/wiring")
+                if not met:
+                    # S3 — linear axis on the wrong side: reverse and
+                    # search the whole travel. The primary leg may have
+                    # wedged the carriage into a hard stop, so break away
+                    # slowly for the first stretch before full seek speed.
+                    log.info("home_axis cs=%d: window not in primary leg "
+                             "(%d steps) — reversing", cs, max_primary)
+                    met, _ = await self._home_move(
+                        cs, -direction, latch_hz, backoff_steps * 2, 'trip')
+                    if not met:
+                        met, _ = await self._home_move(
+                            cs, -direction, seek_hz, max_reverse, 'trip')
+                    if not met:
+                        raise RuntimeError(
+                            f"axis cs={cs} home window not found in either "
+                            f"direction — check sensor power/wiring")
 
             # S4 — canonicalize: exit the window on the -direction side
             # (works for both legs: primary entered from -dir and backs
@@ -870,9 +902,15 @@ class SpidevMotorBackend(MotorBackend):
             # 5) Datum at the (repeatable) slow trip point
             self.positions[cs] = 0
 
-            # 6) Park (park_steps=0 → stay on the trip point = home pose)
+            # 6) Park. >0 = conventional pull-off (outside the window),
+            # <0 = advance INSIDE the window so the sensor reads solidly
+            # tripped at rest — the trip edge itself sits inside the
+            # sensor's hysteresis band and reads clear/tripped at random
+            # (observed live: BEND parked at 0 read clear, LIFT tripped).
             if park_steps > 0:
                 await self._home_move(cs, -direction, seek_hz, park_steps, None)
+            elif park_steps < 0:
+                await self._home_move(cs, direction, latch_hz, -park_steps, None)
             log.info("home_axis cs=%d complete: datum set, resting at %+d steps",
                      cs, self.positions[cs])
         finally:

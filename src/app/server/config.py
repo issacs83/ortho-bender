@@ -79,25 +79,39 @@ class Settings(BaseSettings):
     # BEND switch in the + direction (−1 run drove BEND away from it).
     home_dir_lift: int = -1
     home_dir_bend: int = 1
-    home_seek_speed: float = 4.0     # fast approach (units/s)
+    # Axis-specific homing kinematics (bench-measured 2026-08-15):
+    #   LIFT = vertical LINEAR axis (gravity: sinks below its window when
+    #          de-energized; careful speeds, full current always)
+    #   BEND = continuous ROTARY axis, one window per revolution,
+    #          1 rev = 82.6 display units measured, window ~0.7 units —
+    #          unidirectional search ≤ 1 rev + margin ALWAYS finds it,
+    #          no reversal, no hard stops
+    home_seek_speed: float = 4.0       # LIFT fast approach (units/s)
+    home_seek_speed_bend: float = 8.0  # BEND rotary seek (no crash risk)
     home_latch_speed: float = 0.5    # slow re-approach for repeatability
     home_backoff: float = 1.0        # intermediate retreat between passes (units)
-    # Bidirectional search (CiA 402 methods 23-30 pattern, mid-travel
-    # window sensor): primary leg in home_dir bounded by
-    # home_search_range; if the window is not found, REVERSE and search
-    # the whole travel from the other side. Raise home_search_range if
-    # normal operation moves the axis further than this from home.
+    # LIFT bidirectional search (CiA 402 methods 23-30 pattern): primary
+    # leg down bounded by home_search_range, then reverse up the whole
+    # travel. Raise home_search_range if normal operation moves the axis
+    # further than this from home.
     home_search_range: float = 15.0  # primary seek leg bound (units)
-    # Reduced motor current during homing (Duet M913 / Marlin
-    # *_CURRENT_HOME practice) so hard-stop contact stalls gently.
-    # CS value 0-19; 0 = no reduction. Applied to BEND only — LIFT is a
-    # gravity axis and keeps full current (Klipper hold_current caution).
-    home_reduced_cs: int = 10
-    # Final resting position after homing, in units from the datum in the
-    # retreat direction. 0.0 = park exactly at the switch trip point (this
-    # machine's home pose IS the switch position — user decision 2026-08-14).
-    # Set >0 (e.g. 1.0) for the conventional off-switch pull-off park.
-    home_park: float = 0.0
+    # Rotary search bound for BEND: 1 revolution + margin.
+    home_rev_bend: float = 95.0      # units (measured 82.6/rev × ~1.15)
+    # Pre-probe (LIFT): before the primary DOWN leg, probe UP this far
+    # watching for the window — catches the axis-sank-below-window case
+    # (the common gravity failure) without ever touching the bottom stop.
+    home_preprobe: float = 3.0       # units, 0 = off
+    # Reduced motor current during homing. DISABLED by default: CS=10
+    # proved too weak on this bench (silent step-loss — the counter ran
+    # while the motor stalled, so homing "searched" without moving).
+    home_reduced_cs: int = 0
+    # Final resting position after homing, in units from the datum.
+    # <0 = park |value| INSIDE the window (approach direction) — sensor
+    # reads solidly tripped at the home pose (the trip edge itself sits
+    # in the hysteresis band and is metastable). 0 = exactly on the trip
+    # edge. >0 = conventional off-switch pull-off. This machine's home
+    # pose IS the switch position (user decision 2026-08-14).
+    home_park: float = -0.3
     home_timeout_s: float = 60.0     # per-axis seek timeout
 
     # Legacy aliases (kept for backwards-compat with diag_router and existing

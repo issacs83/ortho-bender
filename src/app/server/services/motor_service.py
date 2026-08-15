@@ -519,7 +519,9 @@ class MotorService:
         try:
             for axis, cs, direction in plan:
                 spu = cal.steps_per_unit(axis) if cal else 200.0
-                seek_hz = int(cfg.home_seek_speed * spu)
+                rotary = axis == int(AxisId.BEND)   # continuous rotation, 1 window/rev
+                seek_speed = cfg.home_seek_speed_bend if rotary else cfg.home_seek_speed
+                seek_hz = int(seek_speed * spu)
                 latch_hz = int(cfg.home_latch_speed * spu)
                 backoff = int(cfg.home_backoff * spu)
                 # Hard travel cap: the switch MUST appear within the axis'
@@ -527,22 +529,29 @@ class MotorService:
                 # of grinding into a hard stop.
                 dist_lim = cal.distance_limit(axis) if cal else 50.0
                 max_travel = int(dist_lim * 1.1 * spu)
-                search_range = int(cfg.home_search_range * spu)
-                # Reduced-current homing (gentle hard-stop contact) for
-                # BEND only — LIFT is a gravity axis and keeps full
-                # current so it cannot sink mid-homing.
-                reduced = int(cfg.home_reduced_cs) if axis == int(AxisId.BEND) else 0
-                log.info("homing axis=%d cs=%d dir=%+d seek=%dHz latch=%dHz "
-                         "backoff=%dsteps search=%dsteps max_travel=%dsteps "
-                         "reduced_cs=%d", axis, cs, direction, seek_hz,
-                         latch_hz, backoff, search_range, max_travel, reduced)
+                if rotary:
+                    # One revolution + margin always crosses the window —
+                    # single-direction search, no reversal.
+                    search_range = int(cfg.home_rev_bend * spu)
+                    preprobe = 0
+                else:
+                    search_range = int(cfg.home_search_range * spu)
+                    preprobe = int(cfg.home_preprobe * spu)
+                reduced = int(cfg.home_reduced_cs) if rotary else 0
+                log.info("homing axis=%d cs=%d dir=%+d rotary=%s seek=%dHz "
+                         "latch=%dHz backoff=%d search=%d max_travel=%d "
+                         "preprobe=%d reduced_cs=%d", axis, cs, direction,
+                         rotary, seek_hz, latch_hz, backoff, search_range,
+                         max_travel, preprobe, reduced)
                 await self._spi_backend.home_axis(
                     cs, direction, seek_hz, latch_hz, backoff,
                     timeout_s=cfg.home_timeout_s,
                     park_steps=int(cfg.home_park * spu),
                     max_travel_steps=max_travel,
                     search_range_steps=search_range,
-                    reduced_cs=reduced)
+                    reduced_cs=reduced,
+                    rotary=rotary,
+                    preprobe_steps=preprobe)
                 self._homed_axes.add(axis)
                 log.info("homing axis=%d complete", axis)
         except self._asyncio.CancelledError:
