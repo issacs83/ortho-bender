@@ -213,6 +213,14 @@ class SpidevMotorBackend(MotorBackend):
         # PSU preset so _init_chip never writes a CS the supply can't feed.
         self._cs_scale_cap: int = SAFETY_CS_MAX
 
+        # Gravity-axis holding: cs values in hold_axes stay energized at
+        # hold_cs while idle (LIFT sinks when de-energized). The shared
+        # STEP line means a held chip steps along with any active axis,
+        # so held axes are released for the duration of other-axis motion
+        # and re-held afterwards. main.py populates from config.
+        self.hold_axes: set[int] = set()
+        self.hold_cs: int = 8
+
         # PWM sysfs write-state (see _pwm_set_hz): avoids the
         # duty=0 → enable re-toggle on every ramp tick, which produced up
         # to one dead period of STEP output per tick.
@@ -465,6 +473,10 @@ class SpidevMotorBackend(MotorBackend):
             count = int(duration_s * freq_hz)
 
         self._pwm_killed = False   # new motion — clear E-STOP kill latch
+        # Shared STEP: held axes not taking part must be released first.
+        for h in self.hold_axes - set(axes):
+            if self._chip_active.get(h):
+                await self._silence_chip(h)
         self._gpio_set('dir', (direction > 0) != _DIR_INVERT)
         await asyncio.sleep(_DIR_SETUP_S)
 
@@ -506,7 +518,16 @@ class SpidevMotorBackend(MotorBackend):
         finally:
             await self._pwm_disable()
             for a in axes:
-                await self._silence_chip(a)
+                if a in self.hold_axes and not self._pwm_killed:
+                    await self._hold_chip(a)
+                else:
+                    await self._silence_chip(a)
+            if not self._pwm_killed:
+                for h in self.hold_axes - set(axes):
+                    try:
+                        await self._hold_chip(h)
+                    except Exception as exc:
+                        log.warning("re-hold cs=%d failed: %s", h, exc)
 
         for a in axes:
             self.positions[a] = self.positions.get(a, 0) + (count * direction)
@@ -551,6 +572,7 @@ class SpidevMotorBackend(MotorBackend):
             # snapshot). This makes the 750 ms init phase cancellable.
             self._pwm_killed = False   # new motion — clear E-STOP kill latch
             self._active_axis = axis
+            await self._yield_held(axis)   # shared STEP: release held axes
             self._gpio_set('dir', (direction > 0) != _DIR_INVERT)
             await asyncio.sleep(_DIR_SETUP_S)
             await self._init_chip(axis)
@@ -629,16 +651,15 @@ class SpidevMotorBackend(MotorBackend):
             if clean_end and self._pwm_active:
                 await self._ramp(freq_hz, min(start_hz, freq_hz), eff_decel, shape)
         finally:
-            # Ensure motor is silenced no matter how we exit (success,
-            # cancellation, fault, exception during init).
+            # Ensure motor is safe no matter how we exit (success,
+            # cancellation, fault, exception during init): gravity axes
+            # go to reduced-current hold, the rest are silenced, and
+            # released bystanders are re-held (all skipped after E-STOP).
             try:
                 await self._pwm_disable()
             except Exception:
                 pass
-            try:
-                await self._silence_chip(axis)
-            except Exception:
-                pass
+            await self._finish_axis(axis)
             # Final position snapshot. If t0 was never set (cancel during
             # init), elapsed=0 and position stays at pos_before — correct
             # behaviour because no STEP edges were emitted.
@@ -683,6 +704,47 @@ class SpidevMotorBackend(MotorBackend):
         }
 
     # -------------------------------------------------------------------
+    # Gravity-axis holding
+    # -------------------------------------------------------------------
+    async def _hold_chip(self, cs: int) -> None:
+        """Energize `cs` at reduced holding current (idle gravity hold)."""
+        cap = self._cs_scale_cap
+        try:
+            self.apply_current_cap(min(cap, int(self.hold_cs)))
+            await self._init_chip(cs)
+        finally:
+            self.apply_current_cap(cap)
+
+    async def _yield_held(self, active_cs: int) -> None:
+        """Release held axes before motion on another axis — the shared
+        STEP line would step every energized chip in parallel."""
+        for h in self.hold_axes - {active_cs}:
+            if self._chip_active.get(h):
+                try:
+                    await self._silence_chip(h)
+                except Exception as exc:
+                    log.warning("yield held cs=%d failed: %s", h, exc)
+
+    async def _finish_axis(self, cs: int) -> None:
+        """End-of-motion chip handling: hold gravity axes, silence the
+        rest, then re-hold released bystanders. After E-STOP
+        (_pwm_killed) everything stays silenced — re-energizing here
+        would undo the E-STOP's chip silencing."""
+        try:
+            if cs in self.hold_axes and not self._pwm_killed:
+                await self._hold_chip(cs)
+            else:
+                await self._silence_chip(cs)
+        except Exception:
+            pass
+        if not self._pwm_killed:
+            for h in self.hold_axes - {cs}:
+                try:
+                    await self._hold_chip(h)
+                except Exception as exc:
+                    log.warning("re-hold cs=%d failed: %s", h, exc)
+
+    # -------------------------------------------------------------------
     # Limit switches + homing
     # -------------------------------------------------------------------
     def limit_active(self, cs: int) -> bool | None:
@@ -711,6 +773,7 @@ class SpidevMotorBackend(MotorBackend):
         self, cs: int, direction: int, freq_hz: int,
         max_steps: int, stop_when: str | None,
         fault_check_s: float = 0.25,
+        stall_abort: bool = False,
     ) -> tuple[bool, int]:
         """One homing segment: run STEP at `freq_hz` until the limit
         condition is met or `max_steps` elapse.
@@ -734,6 +797,7 @@ class SpidevMotorBackend(MotorBackend):
         met = False
         steps = 0
         next_fault_t = fault_check_s
+        sg_hits = 0
         try:
             while steps < max_steps:
                 await asyncio.sleep(poll_s)
@@ -752,6 +816,19 @@ class SpidevMotorBackend(MotorBackend):
                     if self._has_fault(status):
                         raise RuntimeError(
                             f"axis cs={cs} fault during homing (0x{status:05X})")
+                    if stall_abort:
+                        # StallGuard as a virtual limit switch (abort only,
+                        # never the datum — AN-002). Two consecutive SG
+                        # readings = mechanical contact: stop this leg as
+                        # if the travel bound was reached.
+                        if self._last_sg.get(cs):
+                            sg_hits += 1
+                            if sg_hits >= 2:
+                                log.warning("home_move cs=%d: stall detected "
+                                            "after %d steps — leg aborted", cs, steps)
+                                break
+                        else:
+                            sg_hits = 0
         finally:
             await self._pwm_disable()
             self.positions[cs] = pos_start + steps * (1 if direction > 0 else -1)
@@ -766,6 +843,7 @@ class SpidevMotorBackend(MotorBackend):
         reduced_cs: int = 0,
         rotary: bool = False,
         preprobe_steps: int = 0,
+        stall_abort: bool = False,
     ) -> None:
         """Home one axis against its mid-travel window sensor.
 
@@ -817,6 +895,7 @@ class SpidevMotorBackend(MotorBackend):
         self._active_axis = cs
         cap_before = self._cs_scale_cap
         try:
+            await self._yield_held(cs)   # shared STEP: release held axes
             if reduced_cs > 0:
                 # Narrow (never widen) the cap so _init_chip writes a
                 # gentler CS for the homing moves; restored in finally.
@@ -859,7 +938,8 @@ class SpidevMotorBackend(MotorBackend):
                 # revolution, so a single leg bounded at 1 rev + margin
                 # ALWAYS crosses it — no reversal exists to need.
                 met, _ = await self._home_move(
-                    cs, direction, seek_hz, max_primary, 'trip')
+                    cs, direction, seek_hz, max_primary, 'trip',
+                    stall_abort=stall_abort)
                 if not met and rotary:
                     raise RuntimeError(
                         f"axis cs={cs} window not seen within one full "
@@ -875,7 +955,8 @@ class SpidevMotorBackend(MotorBackend):
                         cs, -direction, latch_hz, backoff_steps * 2, 'trip')
                     if not met:
                         met, _ = await self._home_move(
-                            cs, -direction, seek_hz, max_reverse, 'trip')
+                            cs, -direction, seek_hz, max_reverse, 'trip',
+                            stall_abort=stall_abort)
                     if not met:
                         raise RuntimeError(
                             f"axis cs={cs} home window not found in either "
@@ -921,10 +1002,7 @@ class SpidevMotorBackend(MotorBackend):
                 await self._pwm_disable()
             except Exception:
                 pass
-            try:
-                await self._silence_chip(cs)
-            except Exception:
-                pass
+            await self._finish_axis(cs)
             self._save_state()
             if self._active_axis == cs:
                 self._active_axis = None

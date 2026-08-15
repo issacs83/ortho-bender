@@ -186,6 +186,10 @@ async def lifespan(app: FastAPI):
     # supply-appropriate SGCSCONF (not the unconditional CS=19 default).
     if hasattr(diag_backend, "apply_current_cap"):
         diag_backend.apply_current_cap(psu_svc.cs_cap)
+    # Gravity-axis idle holding (LIFT = cs0 sinks when de-energized)
+    if hasattr(diag_backend, "hold_axes") and cfg.hold_lift:
+        diag_backend.hold_axes = {0}
+        diag_backend.hold_cs = int(cfg.hold_cs)
     log.info("PsuService active: %s (cs_cap=%d)", psu_svc.psu.label, psu_svc.cs_cap)
 
     # Per-axis steps/unit calibration so jog/move convert mm/deg → step rate
