@@ -87,7 +87,12 @@ class Settings(BaseSettings):
     #          unidirectional search ≤ 1 rev + margin ALWAYS finds it,
     #          no reversal, no hard stops
     home_seek_speed: float = 4.0       # LIFT fast approach (units/s)
-    home_seek_speed_bend: float = 8.0  # BEND rotary seek (no crash risk)
+    # BEND seek in °/s. Axis calibrated 2026-08-16 (user-verified disc
+    # geometry): sensor disc has 8 slots at 45° — slot spacing measured
+    # 1,906 steps → 42.36 steps/°, 15,250 steps/rev. 43°/s ≈ 1,822 Hz,
+    # above the ~800-1500 Hz slip/resonance band observed at lower
+    # speeds.
+    home_seek_speed_bend: float = 43.0
     home_latch_speed: float = 0.5    # slow re-approach for repeatability
     home_backoff: float = 1.0        # intermediate retreat between passes (units)
     # LIFT bidirectional search (CiA 402 methods 23-30 pattern): primary
@@ -95,8 +100,9 @@ class Settings(BaseSettings):
     # travel. Raise home_search_range if normal operation moves the axis
     # further than this from home.
     home_search_range: float = 15.0  # primary seek leg bound (units)
-    # Rotary search bound for BEND: 1 revolution + margin.
-    home_rev_bend: float = 95.0      # units (measured 82.6/rev × ~1.15)
+    # Rotary search bound for BEND: 1 revolution + margin, in the
+    # calibrated degree units.
+    home_rev_bend: float = 380.0     # ° (360 + 5% margin)
     # Pre-probe (LIFT): before the primary DOWN leg, probe UP this far
     # watching for the window — catches the axis-sank-below-window case
     # (the common gravity failure) without ever touching the bottom stop.

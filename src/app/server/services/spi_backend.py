@@ -226,6 +226,10 @@ class SpidevMotorBackend(MotorBackend):
         # the guard disarmed until the axis leaves it). Toggled via
         # PUT /api/motor/protection.
         self.limit_guard: bool = True
+        # Axes the guard applies to. BEND's sensor disc has MULTIPLE
+        # slots per revolution — an edge-triggered guard would stop it
+        # at every slot, so main.py restricts this to LIFT (cs0).
+        self.guard_axes: set[int] = {0, 1, 2}
 
         # Axes homed against their switch — persisted with positions so a
         # restart keeps both the counter and its "datum is real" status.
@@ -632,11 +636,12 @@ class SpidevMotorBackend(MotorBackend):
             # sub-polling) and the cruise monitor. A fast axis crosses
             # the ~0.7 u window in tens of ms — the old 100 ms-only
             # check could fly straight through without noticing.
-            guard = {"armed": self.limit_guard and self.limit_active(axis) is False,
+            guarded = self.limit_guard and axis in self.guard_axes
+            guard = {"armed": guarded and self.limit_active(axis) is False,
                      "hit": False}
 
             def guard_check() -> bool:
-                if not self.limit_guard or guard["hit"]:
+                if not guarded or guard["hit"]:
                     return guard["hit"]
                 lim = self.limit_active(axis)
                 if lim is False:

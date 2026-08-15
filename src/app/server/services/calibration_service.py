@@ -54,7 +54,12 @@ DISTANCE_LIMIT: dict[int, float] = {
 # with the prior 4000 Hz hard cap when steps_per_unit = 200.
 SPEED_LIMIT: dict[int, float] = {
     0: 40.0,    # FEED  (with 200 step/mm  -> 8000 Hz, ~2400 RPM)
-    1: 40.0,    # BEND  (with 200 step/deg -> 8000 Hz)
+    # BEND calibrated in true degrees 2026-08-16 (22.222 steps/deg,
+    # 8000 steps = 1 rev, user-verified x3). 360 deg/s * 22.222 =
+    # 8000 Hz — the same hardware cap as before; the unit cap merely
+    # follows the finer calibration. The pulse path's [200, 8000] Hz
+    # clamp remains the actual safety bound.
+    1: 360.0,   # BEND  (deg/s; 8000 Hz at 22.222 steps/deg)
     2: 40.0,    # ROTATE
     3: 40.0,    # LIFT
 }
