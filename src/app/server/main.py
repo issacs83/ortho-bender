@@ -194,6 +194,9 @@ async def lifespan(app: FastAPI):
     # at every slot passage (rotary axis has no travel ends anyway).
     if hasattr(diag_backend, "guard_axes"):
         diag_backend.guard_axes = {0}
+    # LIFT direction convention: "+ is down" (cs 0)
+    if hasattr(diag_backend, "invert_axes") and cfg.invert_lift:
+        diag_backend.invert_axes = {0}
     log.info("PsuService active: %s (cs_cap=%d)", psu_svc.psu.label, psu_svc.cs_cap)
 
     # Per-axis steps/unit calibration so jog/move convert mm/deg → step rate

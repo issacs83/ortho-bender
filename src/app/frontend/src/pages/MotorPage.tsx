@@ -547,8 +547,19 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
             <select value={targetAxis} onChange={(e) => setTargetAxis(Number(e.target.value))} style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '6px 8px', borderRadius: 4, fontSize: 13 }}>
               {AXIS_NAMES.map((n, i) => <option key={i} value={i}>{n}</option>)}
             </select>
-            <input type="number" value={targetPos} onChange={(e) => setTargetPos(Number(e.target.value))} style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '6px 8px', borderRadius: 4, fontSize: 13, width: 80 }} />
+            <input type="number" step="any" value={targetPos} onChange={(e) => setTargetPos(Number(e.target.value))} style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '6px 8px', borderRadius: 4, fontSize: 13, width: 80 }} />
+            {/* Axes do not share a unit: FEED/LIFT are mm, BEND/ROTATE deg.
+                Showing it next to the field (and the range below) stops the
+                operator entering degrees into a millimetre axis. */}
+            <span style={{ fontSize: 13, color: TEXT_SECONDARY, paddingBottom: 6 }}>
+              {AXIS_UNITS[targetAxis]}
+            </span>
             <button onClick={moveTo} style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Move To</button>
+          </div>
+          <div style={{ fontSize: 11, color: TEXT_MUTED, marginTop: 8 }}>
+            {AXIS_NAMES[targetAxis]} 범위 {targetAxis === 3 ? '0' : `±${softLimits[targetAxis]}`}
+            {targetAxis === 3 ? ` … ${softLimits[targetAxis]}` : ''} {AXIS_UNITS[targetAxis]}
+            {targetAxis === 3 ? ' (홈=최상단 0, + 아래로)' : ''}
           </div>
         </div>
       </div>
