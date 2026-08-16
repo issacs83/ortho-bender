@@ -194,9 +194,16 @@ async def lifespan(app: FastAPI):
     # at every slot passage (rotary axis has no travel ends anyway).
     if hasattr(diag_backend, "guard_axes"):
         diag_backend.guard_axes = {0}
-    # LIFT direction convention: "+ is down" (cs 0)
-    if hasattr(diag_backend, "invert_axes") and cfg.invert_lift:
-        diag_backend.invert_axes = {0}
+    # Direction conventions: LIFT (cs 0) "+ is down"; FEED (cs 2) was
+    # wired mirrored to BEND, so + / ▶ means clockwise on every axis.
+    if hasattr(diag_backend, "invert_axes"):
+        inverted = set()
+        if cfg.invert_lift:
+            inverted.add(0)
+        if cfg.invert_feed:
+            inverted.add(2)
+        diag_backend.invert_axes = inverted
+        log.info("Axis DIR inversion active for cs=%s", sorted(inverted))
     log.info("PsuService active: %s (cs_cap=%d)", psu_svc.psu.label, psu_svc.cs_cap)
 
     # Per-axis steps/unit calibration so jog/move convert mm/deg → step rate
