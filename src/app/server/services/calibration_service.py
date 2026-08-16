@@ -54,12 +54,17 @@ DISTANCE_LIMIT: dict[int, float] = {
 # with the prior 4000 Hz hard cap when steps_per_unit = 200.
 SPEED_LIMIT: dict[int, float] = {
     0: 40.0,    # FEED  (with 200 step/mm  -> 8000 Hz, ~2400 RPM)
-    # BEND calibrated in true degrees 2026-08-16 (22.222 steps/deg,
-    # 8000 steps = 1 rev, user-verified x3). 360 deg/s * 22.222 =
-    # 8000 Hz — the same hardware cap as before; the unit cap merely
-    # follows the finer calibration. The pulse path's [200, 8000] Hz
-    # clamp remains the actual safety bound.
-    1: 360.0,   # BEND  (deg/s; 8000 Hz at 22.222 steps/deg)
+    # BEND calibrated in true degrees 2026-08-16. Sensor-referenced
+    # measurement (home slot crossed twice at 253 Hz, inside the motor's
+    # self-start region so counted steps == physical steps):
+    # 1 rev = 8286 steps -> 23.0167 steps/deg, repeatable to 0.06 %.
+    # An earlier eyeballed mark test read 8000 and was 3.6 % low, which
+    # is why a commanded 360 deg physically turned ~372 deg.
+    # Per-speed check against the slot after this fix: 60/120/300 deg/s
+    # land exactly on the slot, 180 deg/s within 0.6 %.
+    # The pulse path's [200, 8000] Hz clamp stays the real safety bound
+    # (360 deg/s would ask for 8286 Hz and is clamped).
+    1: 360.0,   # BEND  (deg/s)
     2: 40.0,    # ROTATE
     3: 40.0,    # LIFT
 }
