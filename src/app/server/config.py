@@ -136,6 +136,10 @@ class Settings(BaseSettings):
     # the top switch, bottom = +230 mm). The DIR line is flipped for that
     # axis; the counter keeps following the commanded sign.
     invert_lift: bool = True
+    # FEED jogged opposite to BEND on the bench (▶ turned it CCW while
+    # BEND turned CW). Same fix: flip that axis' DIR line so every axis
+    # agrees that + / ▶ is clockwise. Operator-reported 2026-08-16.
+    invert_feed: bool = True
     hold_lift: bool = True
     hold_cs: int = 8                 # holding current scale (< run CS)
     # Final resting position after homing, in units from the datum.
