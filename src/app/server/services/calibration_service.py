@@ -46,7 +46,10 @@ DISTANCE_LIMIT: dict[int, float] = {
     0: 100.0,   # FEED  ≤ 100 mm / command
     1: 360.0,   # BEND  ≤ 360 deg
     2: 360.0,   # ROTATE ≤ 360 deg
-    3: 100.0,   # LIFT  ≤ 100 mm
+    # LIFT stroke measured 2026-08-16: top limit switch -> bottom =
+    # 230 mm (46,065 steps at 200 steps/mm; T8 lead screw, 8 mm/rev,
+    # 1600 steps/rev — the 200 default is exactly right for it).
+    3: 240.0,   # LIFT  ≤ 240 mm (full stroke + margin)
 }
 
 # Axis-specific maximum target rate (in user units / sec). Combined with

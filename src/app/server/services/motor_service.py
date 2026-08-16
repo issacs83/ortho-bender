@@ -708,11 +708,32 @@ class MotorService:
             raise ValueError(f"Axis {axis} is not present on the bench")
         spu = (self._calibration.steps_per_unit(int(axis))
                if self._calibration else 200.0)
-        current = self._spi_backend.positions.get(cs, 0) / spu
-        delta = float(position) - current
-        if abs(delta) < 0.005:
-            return await self.get_status()
-        await self._run_motion(self._bench_pulse(int(axis), delta, speed))
+        # A single bench pulse is bounded twice — by the per-axis
+        # distance cap (LIFT 100 mm, FEED 100 mm ...) and by a 10 s
+        # duration cap — so a long absolute move used to stop partway
+        # with no error (a 230 mm LIFT traverse ended at 100 mm).
+        # Absolute moves therefore run in chunks until the target is
+        # reached; each pass re-reads the counter, so a truncated chunk
+        # simply gets another one.
+        # Landing tolerance: 2 motor steps. Chasing anything finer just
+        # trades one sub-step residue for another, since each corrective
+        # pass has its own ramp.
+        tol = max(2.0 / spu, 0.01)
+        prev_gap = None
+        for _ in range(40):
+            current = self._spi_backend.positions.get(cs, 0) / spu
+            gap = float(position) - current
+            if abs(gap) < tol:
+                break
+            if prev_gap is not None and abs(gap) > abs(prev_gap) * 0.7:
+                # The pass barely closed the distance — blocked, stalled,
+                # or already at the resolution floor. Stop rather than
+                # loop on the spot.
+                log.info("move_to axis=%d settled at %.3f (target %.3f, "
+                         "residue %.3f)", axis, current, position, gap)
+                break
+            prev_gap = gap
+            await self._run_motion(self._bench_pulse(int(axis), gap, speed))
         return await self.get_status()
 
     async def stop(self) -> MotorStatusResponse:

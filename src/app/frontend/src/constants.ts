@@ -83,7 +83,7 @@ export const PSU_DEFAULT_ID = '12v2.9a';
 // the TOP limit switch (datum 0) and travel runs DOWNWARD (negative), so
 // the bar measures |position| against the full stroke — 100 was a
 // placeholder that a real 240-unit stroke overflowed immediately.
-export const AXIS_SOFT_LIMITS = [600, 360, 360, 250] as const; // FEED, BEND, ROTATE, LIFT
+export const AXIS_SOFT_LIMITS = [600, 360, 360, 230] as const; // FEED, BEND, ROTATE, LIFT
 
 // ---------------------------------------------------------------------------
 // Motion state
