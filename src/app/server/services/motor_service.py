@@ -583,7 +583,12 @@ class MotorService:
             for axis, cs, direction in plan:
                 spu = cal.steps_per_unit(axis) if cal else 200.0
                 rotary = axis == int(AxisId.BEND)   # continuous rotation, 1 window/rev
-                seek_speed = cfg.home_seek_speed_bend if rotary else cfg.home_seek_speed
+                if rotary:
+                    seek_speed = cfg.home_seek_speed_bend
+                elif axis == int(AxisId.LIFT):
+                    seek_speed = cfg.home_seek_speed_lift
+                else:
+                    seek_speed = cfg.home_seek_speed
                 seek_hz = int(seek_speed * spu)
                 latch_hz = int(cfg.home_latch_speed * spu)
                 backoff = int(cfg.home_backoff * spu)
@@ -596,6 +601,11 @@ class MotorService:
                     # One revolution + margin always crosses the window —
                     # single-direction search, no reversal.
                     search_range = int(cfg.home_rev_bend * spu)
+                    preprobe = 0
+                elif axis == int(AxisId.LIFT):
+                    # Switch is at the top end: one leg over the whole
+                    # stroke always finds it, and nothing lies beyond.
+                    search_range = int(cfg.home_search_range_lift * spu)
                     preprobe = 0
                 else:
                     search_range = int(cfg.home_search_range * spu)

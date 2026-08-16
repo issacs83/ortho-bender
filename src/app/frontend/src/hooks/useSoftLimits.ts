@@ -13,7 +13,10 @@ import { usePersistentState } from './usePersistentState';
 
 export type SoftLimits = [number, number, number, number];
 
-const STORAGE_KEY = 'settings.softLimits';
+// v2: the LIFT limit changed from a 100 mm placeholder to the measured
+// 230 mm stroke, and browsers keep their own copy — bumping the key
+// retires the stale value instead of leaving the gauge wrong forever.
+const STORAGE_KEY = 'settings.softLimits.v3';
 
 export function softLimitsDefault(): SoftLimits {
   return [...AXIS_SOFT_LIMITS] as SoftLimits;

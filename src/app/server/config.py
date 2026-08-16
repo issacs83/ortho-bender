@@ -100,6 +100,13 @@ class Settings(BaseSettings):
     # travel. Raise home_search_range if normal operation moves the axis
     # further than this from home.
     home_search_range: float = 15.0  # primary seek leg bound (units)
+    # LIFT: the switch sits at the very top of the stroke and there is no
+    # travel above it, so the seek leg simply covers the whole stroke —
+    # a 15 mm leg followed by a reverse sweep would drive a low carriage
+    # into the bottom stop looking for a switch that is above it.
+    home_search_range_lift: float = 240.0
+    # LIFT seek speed (mm/s). 4 mm/s meant ~60 s to climb the stroke.
+    home_seek_speed_lift: float = 20.0
     # Rotary search bound for BEND: 1 revolution + margin, in the
     # calibrated degree units.
     home_rev_bend: float = 380.0     # ° (360 + 5% margin)
@@ -125,6 +132,10 @@ class Settings(BaseSettings):
     # energized chip steps along with the active axis) and re-held after.
     # E-STOP / driver-disable always release it.
     # ------------------------------------------------------------------
+    # LIFT sign convention: operator asked for "+ is down" (datum 0 at
+    # the top switch, bottom = +230 mm). The DIR line is flipped for that
+    # axis; the counter keeps following the commanded sign.
+    invert_lift: bool = True
     hold_lift: bool = True
     hold_cs: int = 8                 # holding current scale (< run CS)
     # Final resting position after homing, in units from the datum.

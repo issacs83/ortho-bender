@@ -231,6 +231,12 @@ class SpidevMotorBackend(MotorBackend):
         # at every slot, so main.py restricts this to LIFT (cs0).
         self.guard_axes: set[int] = {0, 1, 2}
 
+        # Axes whose physical DIR line is inverted relative to the
+        # commanded sign. The counter always follows the COMMAND, so the
+        # operator's convention ("+ is down" on the vertical LIFT) holds
+        # end to end while the wiring stays as built.
+        self.invert_axes: set[int] = set()
+
         # Axes homed against their switch — persisted with positions so a
         # restart keeps both the counter and its "datum is real" status.
         self.homed_persist: set[int] = set()
@@ -403,6 +409,12 @@ class SpidevMotorBackend(MotorBackend):
     # -------------------------------------------------------------------
     # GPIO helpers
     # -------------------------------------------------------------------
+    def _set_dir(self, axis: int, direction: int) -> None:
+        """Drive the shared DIR line for `axis`, honouring per-axis
+        inversion (see invert_axes)."""
+        phys = -direction if axis in self.invert_axes else direction
+        self._gpio_set('dir', (phys > 0) != _DIR_INVERT)
+
     def _gpio_set(self, name: str, high: bool) -> None:
         from gpiod.line import Value
         chip_path, offset = self._gpio_map[name]
@@ -499,7 +511,7 @@ class SpidevMotorBackend(MotorBackend):
         for h in self.hold_axes - set(axes):
             if self._chip_active.get(h):
                 await self._silence_chip(h)
-        self._gpio_set('dir', (direction > 0) != _DIR_INVERT)
+        self._set_dir(axes[0], direction)
         await asyncio.sleep(_DIR_SETUP_S)
 
         # Sequential init each axis
@@ -595,7 +607,7 @@ class SpidevMotorBackend(MotorBackend):
             self._pwm_killed = False   # new motion — clear E-STOP kill latch
             self._active_axis = axis
             await self._yield_held(axis)   # shared STEP: release held axes
-            self._gpio_set('dir', (direction > 0) != _DIR_INVERT)
+            self._set_dir(axis, direction)
             await asyncio.sleep(_DIR_SETUP_S)
             await self._init_chip(axis)
 
@@ -938,7 +950,7 @@ class SpidevMotorBackend(MotorBackend):
         poll interval.
         """
         poll_s = 0.005
-        self._gpio_set('dir', (direction > 0) != _DIR_INVERT)
+        self._set_dir(cs, direction)
         self._last_dir = 1 if direction > 0 else -1
         await asyncio.sleep(_DIR_SETUP_S)
         await self._pwm_ensure_exported()

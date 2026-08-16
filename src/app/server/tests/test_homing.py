@@ -125,16 +125,16 @@ async def test_home_speeds_scale_with_calibration(svc):
     await svc.home(0x08)                # LIFT
     await _wait_homing_done(svc)
     _, _, seek_hz, latch_hz, backoff, park = svc._spi_backend.home_calls[0]
-    assert seek_hz == 1600              # 4.0 u/s × 400
+    assert seek_hz == 8000              # LIFT 20 mm/s × 400
     assert latch_hz == 200              # 0.5 u/s × 400
     assert backoff == 400               # 1.0 u × 400
     assert park == -120                 # home_park=-0.3 u × 400 → inside window
     kw = svc._spi_backend.last_kwargs
-    assert kw["search_range_steps"] == 6000   # 15 u × 400 (primary leg)
+    assert kw["search_range_steps"] == 96000  # LIFT 240 mm stroke × 400
     assert kw["max_travel_steps"] == 44000    # 100 u × 1.1 × 400
     assert kw["reduced_cs"] == 0              # LIFT = gravity axis, full current
     assert kw["rotary"] is False              # LIFT = linear axis
-    assert kw["preprobe_steps"] == 1200       # 3 u × 400 sank-below probe
+    assert kw["preprobe_steps"] == 0          # switch is at the top end
 
 
 @pytest.mark.asyncio
