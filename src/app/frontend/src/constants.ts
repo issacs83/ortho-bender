@@ -34,7 +34,10 @@ export const COLOR_INFO_BG = '#1e3a5f';
 // ---------------------------------------------------------------------------
 export const AXIS_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#a78bfa'] as const;
 export const AXIS_NAMES = ['FEED', 'BEND', 'ROTATE', 'LIFT'] as const;
-export const AXIS_UNITS = ['mm', '°', '°', '°'] as const;
+// LIFT is a vertical LINEAR axis — it was mislabelled '°' here while
+// AXIS_PHYSICAL_UNIT (useAxisCalibration) correctly said mm, so the UI
+// showed "0.00 / 100 °" for a millimetre axis.
+export const AXIS_UNITS = ['mm', '°', '°', 'mm'] as const;
 
 // ---------------------------------------------------------------------------
 // Motor driver hardware-safety limits (TMC260C-PA)
@@ -76,7 +79,11 @@ export const PSU_DEFAULT_ID = '12v2.9a';
 // ROTATE: wire rotation about its own axis (full revolution, deg)
 // LIFT  : lift/lower mechanism stroke (mm)
 // Bar shows: blue/normal until 80% of limit, amber 80–100%, red over.
-export const AXIS_SOFT_LIMITS = [600, 360, 360, 100] as const; // FEED, BEND, ROTATE, LIFT
+// Travel range per axis, in that axis' own units. LIFT: homing parks at
+// the TOP limit switch (datum 0) and travel runs DOWNWARD (negative), so
+// the bar measures |position| against the full stroke — 100 was a
+// placeholder that a real 240-unit stroke overflowed immediately.
+export const AXIS_SOFT_LIMITS = [600, 360, 360, 250] as const; // FEED, BEND, ROTATE, LIFT
 
 // ---------------------------------------------------------------------------
 // Motion state
