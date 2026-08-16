@@ -2,7 +2,7 @@
 calibration_service.py — Per-axis step/unit calibration persisted on disk.
 
 Each axis has a `steps_per_unit` value:
-  FEED   step/mm   — wire feed roller radius × 2π / steps_per_rev
+  FEED   step/deg  — wire feed roller (rotary), degrees of roller travel
   BEND   step/deg  — bend die gear ratio × 360 / steps_per_rev
   ROTATE step/deg  — wire rotation gear ratio × 360 / steps_per_rev
   LIFT   step/mm   — lift mechanism lead screw mm/rev / steps_per_rev
@@ -43,7 +43,7 @@ DEFAULT_STEPS_PER_UNIT: dict[int, float] = {
 # Keep these conservative — exceeding them would push step counts into
 # multi-second runs that are easy to start by accident.
 DISTANCE_LIMIT: dict[int, float] = {
-    0: 100.0,   # FEED  ≤ 100 mm / command
+    0: 360.0,   # FEED  ≤ 360 deg (rotary feed roller)
     1: 360.0,   # BEND  ≤ 360 deg
     2: 360.0,   # ROTATE ≤ 360 deg
     # LIFT stroke measured 2026-08-16: top limit switch -> bottom =
