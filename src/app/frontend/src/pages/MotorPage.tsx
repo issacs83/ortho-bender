@@ -140,6 +140,9 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   const { cal } = useAxisCalibration();
   const axisMaxSpeed = (axis: number) => cal.speed_limit[axis] ?? 40;
   // Transient: modals + error
+  // Absolute moves queue on the server (single shared STEP line), so a
+  // press that is waiting must look accepted rather than ignored.
+  const [movingAxes, setMovingAxes] = useState<number[]>([]);
   const [showHomeModal, setShowHomeModal] = useState(false);
   const [showMoveAllModal, setShowMoveAllModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -582,7 +585,9 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
           <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 10 }}>
             좌표를 입력하면 그 위치로 <b>절대 이동</b>합니다(현재 위치 기준 상대 이동이 아님).
             단위는 축을 따릅니다 — 회전축 °, LIFT mm(<b>+ 는 아래</b>, 홈=최상단 0).
-            가감속은 지정 위치 안에서 완결됩니다.
+            가감속은 지정 위치 안에서 완결됩니다. 여러 축을 연달아 누르면
+            <b>취소되지 않고 차례로</b> 실행됩니다(STEP 신호선을 3축이 공유하는 구조라
+            한 번에 한 축씩 움직입니다).
           </div>
           <div style={{ display: 'grid', gap: 6 }}>
             {(motorStatus?.axes ?? []).map((ax) => {
@@ -615,14 +620,23 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                   <span style={{ fontSize: 10, color: TEXT_MUTED }} title="이동 가능 범위">
                     {range} {unit}
                   </span>
-                  <button
-                    onClick={() => {
-                      setError(null);
-                      motorApi.moveTo(axisId, multiTarget[axisId], axisSpeed(axisId))
-                        .catch((e) => setError(String(e)));
-                    }}
-                    style={{ marginLeft: 'auto', background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '5px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
-                  >Move To</button>
+                  {(() => {
+                    const busy = movingAxes.includes(axisId);
+                    const queuedBehind = movingAxes.length > 1 && movingAxes[0] !== axisId;
+                    return (
+                      <button
+                        onClick={() => {
+                          setError(null);
+                          setMovingAxes((m) => (m.includes(axisId) ? m : [...m, axisId]));
+                          motorApi.moveTo(axisId, multiTarget[axisId], axisSpeed(axisId))
+                            .catch((e) => setError(String(e)))
+                            .finally(() => setMovingAxes((m) => m.filter((a) => a !== axisId)));
+                        }}
+                        style={{ marginLeft: 'auto', background: busy ? '#334155' : '#1d4ed8', color: busy ? TEXT_SECONDARY : '#fff', border: 'none', borderRadius: 4, padding: '5px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600, minWidth: 84 }}
+                        title={busy ? '서버가 축을 하나씩 실행합니다 — 순서를 기다리는 중' : '이 좌표로 절대 이동'}
+                      >{busy ? (queuedBehind ? '대기 중…' : '이동 중…') : 'Move To'}</button>
+                    );
+                  })()}
                 </div>
               );
             })}

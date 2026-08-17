@@ -94,6 +94,10 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
   `move_to` 는 목표에 닿을 때까지 반복 실행합니다(230 mm LIFT 이동 실측 오차 0.00 mm)
 - 가감속은 **지정 위치 안에서 완결** — 45°를 지령하면 45°를 지나치지 않고 45°에 정지
 - 도달 판정: 2 스텝 이내(BEND 0.09°, LIFT 0.01 mm). 축이 막히면 로그를 남기고 중단
+- **대기열**: 벤치는 STEP 신호선을 3축이 공유하므로 한 번에 한 축만 움직입니다.
+  여러 축에 연속으로 `move_to` 를 보내면 **서로 취소하지 않고 순서대로 실행**되며,
+  각 요청은 자기 차례가 끝날 때 응답합니다. 대기 중인 수는 `GET /limits` 의
+  `queued` 로 확인하세요. `POST /stop` · `/estop` 은 대기 중인 이동까지 폐기합니다.
 
 ### GET `/api/motor/calibration`
 **Response (data)**
@@ -175,6 +179,7 @@ curl -X PUT http://<ip>:8000/api/motor/protection \
 { "limits": { "1": false, "3": true }, "homed": [1],
   "homing": false, "error": null }
 ```
+- `queued`: 실행을 기다리는 절대 이동(`move_to`) 개수
 - `limits`: 축별 리밋 스위치 실시간 상태 (장착 축만: 1=BEND, 3=LIFT). true=감지됨
 - `homed`: 서버 시작 후 호밍 완료된 축 / `homing`: 호밍 진행 중 / `error`: 최근 실패 사유
 - 스위치 상태는 모터 상태 스트림의 `signals.limit` 로도 축별 제공됨
