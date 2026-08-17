@@ -42,6 +42,16 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
 ```
 `confirm:true` 필수. 시스템 재부팅.
 
+### GET / POST `/api/system/psu`
+```json
+{ "psu_id": "12v2.9a" }
+```
+연결된 **전원 공급기 프리셋**을 선택합니다. 프리셋마다 안전한 모터 전류 상한(`cs_cap`)이
+정해져 있고, 서버가 이를 강제해 드라이버에 과전류가 기록되지 않게 합니다.
+- GET 응답: `{ active: {...}, presets: [{id,label,volts,amps,cs_cap}, ...] }`
+- 전류 상한은 정지토크(`/api/motor/protection` 의 `hold_cs`)에도 적용됩니다
+- **공급기를 바꾸면 반드시 프리셋도 바꾸세요** — 과대 설정은 하드웨어 손상 이력이 있습니다
+
 ---
 
 ## 2. `/api/motor` — 모터 직접 제어
@@ -153,6 +163,16 @@ curl -X PUT http://<ip>:8000/api/motor/protection \
 - `direction`: `+1` 또는 `-1`
 - `distance=0` → 연속 조그 (stop 호출까지)
 
+### POST `/api/motor/jog/start` · `/api/motor/jog/stop`
+```json
+{ "axis": 1, "direction": 1, "speed": 60, "distance": 0, "continuous": false }
+```
+누르고 있는 동안만 도는 **연속 조그**용 한 쌍입니다(UI의 ◀/▶ 길게 누르기).
+- `continuous:false` (기본): 안전 폴백 **5초** — 클라이언트가 `/jog/stop` 을 놓쳐도 멈춥니다
+- `continuous:true`: 폴백 **60초** — 한 번 클릭으로 계속 돌리고 STOP 으로 멈추는 방식
+- `/jog/stop` 은 감속 후 정지하며, 아주 짧게 눌러도 최소 이동이 보장됩니다
+- 외부 앱은 좌표 제어에는 `/move_to` 를, 수동 티칭에만 조그를 쓰는 편이 안전합니다
+
 ### POST `/api/motor/home`
 ```json
 { "axis_mask": 0 }
@@ -224,6 +244,17 @@ curl -X PUT http://<ip>:8000/api/motor/protection \
 - 감속 램프는 조그 정지/자연 종료 시 적용. 폴트·스톨·E-STOP 은 하드 스톱 유지
 - 참고: S-curve 감속은 같은 `decel` 에서 linear 대비 **정지 시간·거리가
   1.5배** (피크 가속도를 유지하는 대가). 정밀 정지 위치가 중요하면 linear 사용
+
+### POST `/api/motor/estop` — 🚨 비상 정지
+body 없음. **가장 우선순위가 높은 명령**입니다.
+- PWM(STEP) 출력을 즉시 차단하고 전 축 초퍼를 정지시킵니다
+- 진행 중인 모션과 **대기열의 이동까지 폐기**합니다
+- 이후 모든 모션 명령은 거부됩니다(`state = 6 ESTOP`) — 해제는 `POST /api/motor/reset`
+- 정지토크(홀딩)도 함께 해제되므로, **수직축(LIFT)은 중력으로 내려올 수 있습니다**
+
+> 외부 앱은 `GET /api/motor/status` 의 `state == 6` 을 감시해 UI를 잠그고,
+> 사용자 확인 후에만 `reset` 을 호출하세요. 하드웨어 E-STOP(M7 GPIO 경로)은
+> 이 API와 독립적으로 동작합니다.
 
 ### POST `/api/motor/stop`
 모든 축 즉시 감속 정지. body 없음.
@@ -313,6 +344,17 @@ ROI 는 V4L2 컨트롤이 아니라 subdev **selection API** 라서 `/controls`
 - POST: `{ "left": 100, "top": 50, "width": 400, "height": 300 }`
   — 적용 시 캡처/스트림이 새 크기로 재시작, 드라이버가 정렬 단위로
   보정한 실제 값이 응답에 담김 (예: 300 → 304)
+
+### 카메라 프리셋 — `/api/camera/presets`
+| Method | Path | 설명 |
+|---|---|---|
+| GET | `/api/camera/presets` | 저장된 프리셋 목록 (controls + ROI + fps + 저장시각) |
+| POST | `/api/camera/presets` | `{"name": "..."}` — **현재 설정**을 그 이름으로 저장 |
+| POST | `/api/camera/presets/{name}/apply` | 프리셋 적용 (스트림 일시정지 후 일괄 적용) |
+| DELETE | `/api/camera/presets/{name}` | 삭제 |
+
+검사 조건(노출·게인·ROI·프레임레이트)을 이름으로 저장해 두고 재현할 때 사용합니다.
+적용 응답의 `errors` 에는 개별 컨트롤 적용 실패가 담깁니다.
 
 ### GET / POST `/api/camera/framerate` — 센서 취득 프레임레이트
 subdev **frame-interval API** (역시 `/controls` 밖). 낮출수록 노출 시간
@@ -426,6 +468,10 @@ subdev **frame-interval API** (역시 `/controls` 밖). 낮출수록 노출 시�
 { "ssid": "lab-wifi", "password": "..." }
 ```
 - 연결 성공 시 새 IP 를 응답에 포함
+
+### GET `/api/wifi/scan` · `/api/wifi/saved` · POST `/api/wifi/forget`
+주변 AP 스캔 / 저장된 프로파일 조회 / 프로파일 삭제. 현장 설치용이며 CAD/CAM 연동에는
+쓰이지 않습니다(장비는 유선 192.168.77.2 로도 접근 가능).
 
 ### POST `/api/wifi/disconnect`
 현재 AP 에서 해제.
@@ -630,3 +676,37 @@ TMC260C 0/1에 대한 실시간 로드/폴트 모니터링용.
 | `sdk-examples/python/camera_stream.py` | REST 스냅샷 + WS 스트림 |
 | `sdk-examples/python/lifecycle_demo.py` | 카메라·모터 connect/disconnect 라운드 트립 |
 | `sdk-examples/curl/api_examples.sh` | cURL 요리책 |
+
+---
+
+## 8. `/api/docs` — 장비에 탑재된 문서
+
+장비가 자기 자신의 SDK 문서를 서빙합니다. 외부 앱이 **현장 장비의 실제 버전에 맞는
+문서**를 그대로 받아볼 수 있습니다.
+
+| Method | Path | 설명 |
+|---|---|---|
+| GET | `/api/docs/tree` | 문서 트리(.md 목록) |
+| GET | `/api/docs/file/{path}` | 문서 본문 (`{"path":..., "content":...}`) |
+| GET | `/api/docs/download/{path}` | 원본 파일 다운로드 |
+
+```bash
+curl http://<ip>:8000/api/docs/file/sdk/06_AXIS_CONVENTIONS.md
+curl http://<ip>:8000/api/docs/file/sdk/07_CAM_INTEGRATION.md
+```
+
+---
+
+## 9. `/api/motor/diag` — 드라이버 진단 (선택)
+
+| Method | Path | 설명 |
+|---|---|---|
+| GET | `/api/motor/diag/backend` | 활성 백엔드(spidev/mock), SPI 장치·속도, 드라이버 목록 |
+| GET | `/api/motor/diag/probe` | 각 드라이버 SPI 응답 확인 (연결/칩 식별) |
+| GET | `/api/motor/diag/spi-test` | SPI 왕복 지연 측정 |
+| GET | `/api/motor/diag/register/{driver}/{addr}` | 레지스터 읽기 |
+| POST | `/api/motor/diag/register/{driver}/{addr}` | 레지스터 쓰기 (**안전 가드 적용**: CS≤19, TOFF 1–8) |
+| GET | `/api/motor/diag/dump/{driver}` | 전체 레지스터 덤프 |
+
+설치·고장진단용입니다. CAD/CAM 연동에는 필요 없으며, 레지스터 쓰기는 하드웨어를
+손상시킬 수 있어 서버가 안전 상한을 강제합니다.
