@@ -69,18 +69,30 @@ curl http://localhost:8000/api/system/status
 ### 3.2 Motor — `/api/motor`
 | Method | Path | Body | 설명 |
 |--------|------|------|------|
-| GET | `/status` | — | 모든 축 position/velocity/DRV_STATUS |
-| POST | `/move` | `{axis, distance, speed}` | 절대 이동 (mm 또는 °) |
-| POST | `/jog` | `{axis, direction(±1), speed, distance?}` | 조그 모드 |
-| POST | `/home` | `{axis_mask}` (0=all) | StallGuard2 홈잉 |
-| POST | `/stop` | — | 즉시 감속 정지 |
-| POST | `/reset` | `{axis_mask}` | 드라이버 폴트 리셋 |
+| GET | `/status` | — | 모든 축 position/velocity/DRV_STATUS/리밋 신호 |
+| POST | **`/move_to`** | `{axis, position, speed}` | **절대 이동** — 좌표로 이동 (긴 이동 자동 분할) |
+| POST | `/move` | `{axis, distance, speed}` | **상대 이동** — 현재 위치에서 만큼 |
+| POST | `/jog` | `{axis, direction(±1), speed, distance?}` | 조그 (distance=0 → 연속) |
+| POST | `/home` | `{axis_mask}` (0=센서 장착 축 전체) | 리밋 스위치 호밍 (즉시 반환) |
+| GET | `/limits` | — | 리밋 센서 상태 · 호밍 진행/결과 |
+| POST | `/zero` | `{axis, value}` | 현재 위치를 원점으로 선언 (센서 없는 축용) |
+| GET·PUT | `/profiles[/{axis}]` | 부분 업데이트 | 축별 속도·가감속·S-curve |
+| GET·PUT | `/protection` | 부분 업데이트 | 리밋 자동정지 · LIFT 정지토크 |
+| GET·POST | `/calibration` | `{axis, steps_per_unit}` | 축 캘리브레이션 |
+| POST | `/stop` · `/estop` · `/reset` | — | 감속 정지 · 비상 정지 · 폴트 해제 |
 
-**축 매핑** (Phase 1 기본값 `axis_mask=0x03`):
-- `0` FEED — 와이어 피딩 (mm)
-- `1` BEND — 벤딩 다이 (°)
-- `2` ROTATE — 와이어 회전 (°, Phase 2)
-- `3` LIFT — 승강 (Phase 2)
+**축 매핑과 단위** — 축마다 단위와 부호가 다릅니다:
+
+| axis | 이름 | 단위 | `+` 방향 | 원점 |
+|:----:|------|:----:|---------|------|
+| 0 | FEED | **deg** (회전 롤러) | 시계방향 | `/zero` 수동 |
+| 1 | BEND | **deg** | 시계방향 | 리밋 센서 |
+| 2 | ROTATE | deg | 시계방향 | **벤치 미장착** |
+| 3 | LIFT | **mm** | **아래(하강)** | 최상단 센서 = 0 |
+
+> 📐 상세 규약(캘리브레이션 값·이동 한계·정밀도·안전 동작)은
+> **[06_AXIS_CONVENTIONS.md](06_AXIS_CONVENTIONS.md)** 를 반드시 확인하세요.
+> CAD/CAM 연동 전체 흐름은 **[07_CAM_INTEGRATION.md](07_CAM_INTEGRATION.md)** 에 있습니다.
 
 ### 3.3 Camera — `/api/camera`
 | Method | Path | 설명 |

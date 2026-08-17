@@ -304,12 +304,23 @@ def create_app() -> FastAPI:
         title="Ortho-Bender SDK API",
         description=(
             "REST + WebSocket API for the orthodontic wire bending machine (i.MX8MP).\n\n"
-            "**Motor**: 3-axis bench control (jog/move/home) with hard safety caps "
-            "(CS ≤ 19, TOFF 1–8, PSU-derived clamps) and TMC260C register diagnostics. "
-            "Per-axis motion profiles (`/api/motor/profiles`): jog defaults, machine "
-            "velocity limit (max_speed), physical-unit accel/decel (mm/s² · deg/s²), "
-            "and trapezoidal or jerk-limited S-curve ramps. Zero-point setting "
-            "(`/api/motor/zero`) declares the current position as datum.\n\n"
+            "**Motor**: 3-axis bench control with hard safety caps (CS ≤ 19, "
+            "TOFF 1–8, PSU-derived clamps) and TMC260C register diagnostics.\n\n"
+            "**Axis conventions — read before sending coordinates**: "
+            "`0=FEED` rotary **deg**, `1=BEND` rotary **deg**, `2=ROTATE` (not "
+            "fitted on this bench), `3=LIFT` linear **mm** whose **`+` is DOWN** "
+            "(datum 0 at the top limit switch, bottom at +230 mm). `+` is "
+            "clockwise on every rotary axis. Calibration: BEND 23.0167 steps/deg "
+            "(1 rev = 8286 steps), LIFT 200 steps/mm (230 mm stroke), FEED 200 "
+            "steps/deg (placeholder, not yet verified).\n\n"
+            "`POST /move` is **relative**, `POST /move_to` is **absolute** and "
+            "splits long moves automatically; ramps finish inside the commanded "
+            "target (45° lands on 45°, measured error ≤ 0.24° / 0.00 mm). "
+            "`/home` runs limit-switch homing (BEND rotary one-rev sweep, LIFT "
+            "full-stroke sweep to the top switch) and returns immediately — poll "
+            "`/limits`. `/protection` toggles the mid-motion limit guard and the "
+            "LIFT holding torque; `/profiles` carries per-axis speed, physical "
+            "accel/decel and trapezoidal vs S-curve ramps.\n\n"
             "**Camera**: Allied Vision Alvium 1800 C on MIPI CSI-2 via the native "
             "`isi_csi2` backend — JPEG capture, MJPEG streaming (`?fps=1..50`), the "
             "full dynamic control surface (`/api/camera/controls`), sensor ROI "
@@ -330,12 +341,21 @@ def create_app() -> FastAPI:
                             "ROI·프레임레이트는 V4L2 컨트롤이 아닌 별도 subdev API라 "
                             "/controls 목록에 없다."},
             {"name": "motor",
-             "description": "3축 벤치 모터 제어 — jog/move/home, E-STOP, PSU 프리셋, "
-                            "축별 캘리브레이션·모션 프로파일(/profiles: 물리 단위 "
-                            "가감속 mm/s²·°/s², linear|scurve 램프, max_speed 기계 "
-                            "한계)·영점 설정(/zero). 안전 상한(CS≤19, TOFF 1–8)은 "
-                            "서버가 강제."},
-            {"name": "bending", "description": "B-code 벤딩 시퀀스 실행/진행률/정지."},
+             "description": "3축 벤치 모터 제어. **축별 단위가 다릅니다**: "
+                            "FEED·BEND=deg(+=시계방향), LIFT=mm(**+=아래**, 홈=최상단 0). "
+                            "/move=상대, /move_to=절대(긴 이동 자동 분할, 가감속이 "
+                            "지정 위치 안에서 완결). /home=리밋 스위치 호밍(즉시 반환, "
+                            "/limits로 완료 확인), /protection=리밋 자동정지·LIFT 정지토크, "
+                            "/profiles=속도·물리단위 가감속·S-curve, /calibration=steps per unit. "
+                            "안전 상한(CS≤19, TOFF 1–8)은 서버가 강제."},
+            {"name": "cam",
+             "description": "CAD/CAM 진입점 — 3D 와이어 중심선(폴리라인)을 B-code로 "
+                            "변환(/generate, 모션 없음·프리뷰 안전)하거나 변환 후 즉시 "
+                            "실행(/execute). 재질별 스프링백 보정 포함."},
+            {"name": "bending", "description": "B-code 벤딩 시퀀스 실행/진행률/정지. "
+                                               "스텝 = Feed(L_mm) → Rotate(beta_deg) → "
+                                               "Bend(theta_deg). ROTATE 축 미장착이라 "
+                                               "현재 beta_deg는 모션으로 이어지지 않음."},
             {"name": "system", "description": "시스템 상태, PSU 프리셋, 재부팅."},
             {"name": "docs", "description": "오프라인 문서(md) 서빙."},
         ],

@@ -46,6 +46,13 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
 
 ## 2. `/api/motor` — 모터 직접 제어
 
+> 📐 **좌표를 보내기 전에 [06_AXIS_CONVENTIONS.md](06_AXIS_CONVENTIONS.md) 를 읽으세요.**
+> 축별 단위(FEED/BEND = deg, LIFT = mm), 부호(LIFT는 `+`가 **아래**), 홈 기준,
+> 캘리브레이션 값이 정리되어 있습니다.
+>
+> **axis 번호**: `0=FEED, 1=BEND, 2=ROTATE(미장착), 3=LIFT`
+
+
 ### GET `/api/motor/status`
 **Response (data)**
 ```json
@@ -67,21 +74,26 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
 - `driver_enabled`: TMC260C-PA `DRV_ENN` 라인 상태. `true`=코일 여자(ENERGIZED),
   `false`=코일 해제(FREE-WHEEL, 축 수동 회전 가능)
 
-### POST `/api/motor/move`
+### POST `/api/motor/move` — **상대 이동**
 ```json
-{ "axis": 0, "distance": 10.0, "speed": 5.0 }
+{ "axis": 1, "distance": 10.0, "speed": 60.0 }
 ```
-- `axis`: 0=FEED, 1=BEND, 2=ROTATE, 3=LIFT
-- `distance`: mm (FEED) 또는 ° (BEND/ROTATE)
-- `speed`: mm/s 또는 °/s, `> 0`
-- `distance`: non-zero (양수=정방향, 음수=역방향)
+현재 위치에서 `distance` **만큼** 움직입니다. 좌표로 가려면 아래 `/move_to` 를 쓰세요.
+- `distance`: deg(FEED·BEND·ROTATE) 또는 mm(LIFT). 0 불가, 양수/음수로 방향 지정
+- `speed`: deg/s 또는 mm/s, `> 0`
+- **1회 명령 상한**을 넘으면 잘립니다(FEED·BEND 360, LIFT 240, 이동시간 10 s).
+  긴 이동은 `/move_to` 를 쓰면 자동 분할됩니다.
 
 ### POST `/api/motor/move_to`
 ```json
 { "axis": 1, "position": 5.0, "speed": 8 }
 ```
-**절대 이동** — 현재 위치에서 `position`(사용자 단위)까지 이동. `/move`는
-상대(distance만큼) 이동임에 주의. 벤치 전용, 10초 이동시간 캡 적용.
+**절대 이동** — `position` 좌표까지 이동합니다(`/move` 는 상대 이동).
+- 단위는 축을 따릅니다: FEED·BEND·ROTATE = deg, LIFT = mm
+- **긴 이동은 자동 분할** 됩니다. 1회 펄스는 거리 상한과 10 s 시간 상한에 걸리지만,
+  `move_to` 는 목표에 닿을 때까지 반복 실행합니다(230 mm LIFT 이동 실측 오차 0.00 mm)
+- 가감속은 **지정 위치 안에서 완결** — 45°를 지령하면 45°를 지나치지 않고 45°에 정지
+- 도달 판정: 2 스텝 이내(BEND 0.09°, LIFT 0.01 mm). 축이 막히면 로그를 남기고 중단
 
 ### GET / PUT `/api/motor/protection`
 ```json
@@ -104,22 +116,21 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
 ```json
 { "axis_mask": 0 }
 ```
-**리밋 스위치 호밍** (2026-08 벤치: PM-L25 포토인터럽터, LIFT=J21 pin7 / BEND=J21 pin11).
-- `axis_mask=0` → 스위치 장착 축 전체(LIFT+BEND). 비트: `0x02=BEND, 0x08=LIFT`
-- **양방향 탐색** (CiA 402 methods 23-30 패턴 — 센서가 이동범위 중간의 '창'이라
-  축이 어느 쪽에 있는지 모름): ① 스위치 위면 선-후퇴 → ② `home_dir` 방향
-  1차 탐색(`home_search_range`=15u 유한) → ③ 미발견 시 **역방향으로 전체
-  travel 탐색** → ④ 양쪽 다 실패 = 센서 이상 에러(유한 이동 보장)
-- 창 발견 후: 항상 같은 쪽으로 빠져나와 **같은 방향·같은 에지·저속으로 래치**
-  (PM-L25 히스테리시스 0.05mm·비대칭 응답 때문 — 반복정밀도 ≤0.01mm 확보) →
-  **감지점 = 0 (datum) — 이 기계의 홈 포즈가 스위치 위치이므로 감지점에 정착**
-  (`home_park=0`; 관행적 이탈 대기 원하면 >0)
-- BEND는 호밍 중 **전류 저감**(`home_reduced_cs`=10) — 하드스톱 접촉 시 부드러운
-  스톨. LIFT는 중력축이라 풀전류 유지
-- **즉시 반환** (state=HOMING) — 완료는 `/ws/motor` 스트림 또는 `GET /limits`로 확인
-- `POST /jog/stop` 또는 E-STOP으로 취소. 스위치 없는 축 지정 시 `MOTOR_HOME_ERROR`
-- 파라미터는 서버 설정: `home_seek_speed`(4 u/s) / `home_latch_speed`(0.5) /
-  `home_backoff`(1.0) / `home_dir_lift·bend`(-1) / `home_timeout_s`(60)
+**리밋 스위치 호밍** (PM-L25 포토인터럽터: LIFT=J21 pin7, BEND=J21 pin11).
+- `axis_mask=0` → 스위치 장착 축 전체. 비트: `0x02=BEND, 0x08=LIFT`
+  (FEED는 센서가 없어 `axis_mask=0x01` 지정 시 `MOTOR_HOME_ERROR`)
+- **축 특성별 탐색** (2026-08 실기 확정):
+  - **BEND(회전축)**: 센서 창이 1회전에 1개 → 한 방향으로 **1회전 + 여유**만 탐색하면
+    반드시 만납니다. 역방향 탐색 없음, 하드스톱 없음
+  - **LIFT(직선축)**: 스위치가 **스트로크 최상단**에 있으므로 위 방향으로 **전체 스트로크**
+    를 한 번에 훑습니다(20 mm/s). 시작 위치가 어디든 안전
+- 창 발견 후 항상 같은 쪽으로 빠져나와 **같은 에지·같은 방향·저속으로 래치**해
+  반복정밀도를 확보하고, **감지점을 0(datum)** 으로 삼습니다. 이후 창 안쪽으로
+  살짝 정착해 센서가 확실히 감지 상태가 되게 합니다.
+- **즉시 반환**(state=HOMING). 완료는 `GET /api/motor/limits` 의 `homing:false`
+  또는 `/ws/motor` 스트림으로 확인하세요.
+- `POST /jog/stop` 또는 E-STOP으로 취소되며, 취소 시 `limits.error` 에 사유가 남습니다.
+- 홈 완료 축은 `limits.homed` 에 기록되고 **재부팅 후에도 유지**됩니다.
 
 ### GET `/api/motor/limits`
 **Response (data)**
@@ -136,9 +147,10 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
 { "axis": 1, "value": 0 }
 ```
 영점(기준점) 설정 — 현재 물리 위치를 `value`(기본 0, mm/°)로 선언합니다.
-- 모션 없음. 축을 기준 위치(기계적 스토퍼, 마킹, 추후 리밋 스위치)로 조그한 뒤 호출
+- 모션 없음. 축을 기준 위치(기계적 스토퍼, 마킹)로 조그한 뒤 호출
 - 위치 카운터는 재시작 후에도 유지됨
-- 리밋 스위치 배선 후 자동 호밍 루틴이 이 API 위에 구축될 예정
+- **센서가 있는 축(BEND·LIFT)은 `/home` 을 쓰세요.** 이 API는 주로 **FEED**(센서 없음)
+  의 원점을 잡거나, 좌표계를 임의 값으로 옮길 때 사용합니다
 
 ### GET `/api/motor/profiles`
 **Response (data)**
@@ -155,8 +167,8 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
 { "jog_speed": 12.0, "shape": "scurve" }
 ```
 부분 업데이트 — 생략한 필드는 유지.
-- `jog_speed` (0–40, mm/s 또는 °/s), `step_size` (0–360)
-- `max_speed` (0–40): 축별 **기계 속도 한계** (GRBL `$110-112` 상당) —
+- `jog_speed` (0–360, deg/s 또는 mm/s), `step_size` (0–360)
+- `max_speed` (0–360): 축별 **기계 속도 한계** (GRBL `$110-112` 상당) —
   jog/move 등 모든 모션 명령의 speed 가 커맨드 시점에 이 값으로 클램프됨.
   `jog_speed` 는 이 값을 넘을 수 없음
 - `start_hz` (50–2000): 램프 시작(플로어) STEP 주파수
