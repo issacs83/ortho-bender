@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
-import { motorApi, diagApi, type MotorStatus, type AxisStatus, type DriverProbeResult, type MotionProfile, type ProtectionSettings, type AxisHold } from '../api/client';
+import { motorApi, diagApi, type MotorStatus, type AxisStatus, type DriverProbeResult, type MotionProfile, type ProtectionSettings, type AxisHold, type StallGuardSettings } from '../api/client';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { SliderInput } from '../components/ui/SliderInput';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -871,43 +871,123 @@ function DriverConfig() {
 // ---------------------------------------------------------------------------
 
 function StallGuardTab({ motorStatus }: { motorStatus: MotorStatus | null }) {
-  const [sgThresholds, setSgThresholds] = usePersistentState<number[]>('stallguard.thresholds', [0, 0, 0, 0]);
+  // SGT lives on the DEVICE (written into SGCSCONF), not in the browser —
+  // a threshold that is only remembered locally tunes nothing.
+  const [sg, setSg] = useState<StallGuardSettings | null>(null);
+  const sgTimer = useRef<Record<number, number>>({});
+  const [busyAxis, setBusyAxis] = useState<number | null>(null);
+  const [testSpeed, setTestSpeed] = usePersistentState('stallguard.testSpeed', 60);
   const [sgHistory, setSgHistory] = useState<ChartPoint[]>([]);
   const tRef = useRef(0);
 
+  useEffect(() => { motorApi.stallguard().then(setSg).catch(() => null); }, []);
+
+  // Chart the LIVE load reading (0-1023) from the status stream.
   useEffect(() => {
     if (!motorStatus) return;
     const pt: ChartPoint = { t: tRef.current++ };
-    motorStatus.axes.forEach((ax) => { pt[`SG${ax.axis}`] = ax.sg_result; });
+    motorStatus.axes.forEach((ax) => {
+      pt[`SG${ax.axis}`] = ax.signals?.sg_value ?? ax.sg_result ?? 0;
+    });
     setSgHistory((prev) => [...prev.slice(-99), pt]);
   }, [motorStatus]);
 
+  function setSgt(axis: number, value: number) {
+    setSg((p) => (p ? { ...p, axes: { ...p.axes, [axis]: { ...p.axes[axis], sgt: value } } } : p));
+    if (sgTimer.current[axis]) window.clearTimeout(sgTimer.current[axis]);
+    sgTimer.current[axis] = window.setTimeout(() => {
+      motorApi.updateStallguard({ axis, sgt: value }).then(setSg).catch(() => null);
+    }, 400);
+  }
+
+  async function runTest(axis: number, dir: 1 | -1) {
+    setBusyAxis(axis);
+    try {
+      await motorApi.jogStart(axis, dir, testSpeed, { continuous: true });
+    } catch { /* surfaced by status */ }
+  }
+  async function stopTest() {
+    try { await motorApi.jogStop(); } finally { setBusyAxis(null); }
+  }
+
   const cardStyle = { background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 16, marginBottom: 16 };
+  const axes = motorStatus?.axes ?? [];
 
   return (
     <div>
       <div style={cardStyle}>
-        <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>StallGuard Thresholds (SGT)</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          {AXIS_NAMES.map((name, i) => (
-            <SliderInput
-              key={i}
-              label={`${name} SGT`}
-              value={sgThresholds[i]}
-              min={-64}
-              max={63}
-              onChange={(v) => setSgThresholds((prev) => { const next = [...prev]; next[i] = v; return next; })}
-            />
-          ))}
+        <h3 style={{ margin: '0 0 4px', fontSize: 14, color: TEXT_PRIMARY }}>StallGuard Thresholds (SGT)</h3>
+        <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 10 }}>
+          SGT는 <b>드라이버 레지스터(SGCSCONF)에 실제로 기록</b>되며 보드에 저장됩니다.
+          값이 <b>낮을수록 민감</b>합니다(+63 = 사실상 감지 안 함). 튜닝 방법: 아래
+          <b> 테스트 회전</b>으로 무부하 상태의 SG 값을 확인한 뒤, 실제 작업 부하에서
+          값이 0 근처로 떨어지도록 SGT를 조정합니다. SG는 <b>회전 중에만</b> 의미가 있습니다.
         </div>
+        {!sg && <div style={{ fontSize: 12, color: TEXT_MUTED }}>Loading…</div>}
+        {sg && (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {axes.filter((ax) => sg.axes[ax.axis]).map((ax) => {
+              const a = sg.axes[ax.axis];
+              const live = ax.signals?.sg_value ?? 0;
+              return (
+                <div key={ax.axis} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '6px 8px', background: BG_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 6 }}>
+                  <span style={{ color: AXIS_COLORS[ax.axis], fontWeight: 600, fontSize: 12, width: 58 }}>{AXIS_NAMES[ax.axis]}</span>
+                  <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 6, alignItems: 'center' }}>
+                    SGT
+                    <input type="range" min={-64} max={63} step={1} value={a.sgt}
+                      onChange={(e) => setSgt(ax.axis, Number(e.target.value))}
+                      style={{ width: 150 }} />
+                    <span style={{ width: 34, textAlign: 'right', fontFamily: 'monospace', color: TEXT_SECONDARY }}>{a.sgt}</span>
+                  </label>
+                  <span style={{ fontSize: 11, fontFamily: 'monospace', color: a.energized ? TEXT_PRIMARY : TEXT_MUTED }}
+                        title="SG_RESULT — 부하가 클수록 0에 가까워집니다">
+                    SG {String(live).padStart(4)} {a.energized ? '' : '(코일 off)'}
+                  </span>
+                  {ax.signals?.sg && ax.signals?.en && (
+                    <span style={{ fontSize: 11, color: '#f87171', fontWeight: 600 }}>STALL</span>
+                  )}
+                  <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                    <button onClick={() => runTest(ax.axis, -1)} disabled={busyAxis !== null}
+                      style={{ padding: '4px 10px', fontSize: 12, background: '#1e1b4b', color: '#a5b4fc', border: `1px solid ${BORDER}`, borderRadius: 4, cursor: 'pointer' }}
+                      title="테스트 회전 (반시계)">◀ 테스트</button>
+                    <button onClick={() => runTest(ax.axis, 1)} disabled={busyAxis !== null}
+                      style={{ padding: '4px 10px', fontSize: 12, background: '#1e1b4b', color: '#a5b4fc', border: `1px solid ${BORDER}`, borderRadius: 4, cursor: 'pointer' }}
+                      title="테스트 회전 (시계)">테스트 ▶</button>
+                    <button onClick={stopTest}
+                      style={{ padding: '4px 10px', fontSize: 12, background: '#78350f', color: '#fcd34d', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
+                    >STOP</button>
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
+              <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 6, alignItems: 'center' }}>
+                테스트 속도
+                <input type="number" value={testSpeed} min={1} max={360} step={1}
+                  onChange={(e) => setTestSpeed(Number(e.target.value))}
+                  style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '4px 6px', borderRadius: 4, fontSize: 12, width: 70 }} />
+                단위/s
+              </label>
+              <label style={{ fontSize: 11, color: TEXT_SECONDARY, display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}
+                     title="SFILT — 전기 주기 4회 평균. 값이 안정되지만 응답이 4배 느려집니다.">
+                <input type="checkbox" checked={sg.filter}
+                  onChange={(e) => motorApi.updateStallguard({ filter: e.target.checked }).then(setSg).catch(() => null)} />
+                SFILT (평활 필터)
+              </label>
+              <span style={{ fontSize: 10, color: TEXT_MUTED }}>
+                ※ 저속에서는 SG가 신뢰할 수 없습니다 — 실제 작업 속도로 튜닝하세요
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div style={cardStyle}>
         <h3 style={{ margin: '0 0 4px', fontSize: 14, color: TEXT_PRIMARY }}>SG_RESULT (live)</h3>
         <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
-          {AXIS_NAMES.map((name, i) => (
-            <div key={i} style={{ fontSize: 13, color: AXIS_COLORS[i] }}>
-              {name}: <strong>{motorStatus?.axes[i]?.sg_result ?? 0}</strong>
+          {axes.map((ax) => (
+            <div key={ax.axis} style={{ fontSize: 13, color: AXIS_COLORS[ax.axis] }}>
+              {AXIS_NAMES[ax.axis]}: <strong>{ax.signals?.sg_value ?? 0}</strong>
             </div>
           ))}
         </div>
@@ -915,26 +995,14 @@ function StallGuardTab({ motorStatus }: { motorStatus: MotorStatus | null }) {
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={sgHistory}>
               <XAxis dataKey="t" hide />
-              <YAxis stroke="#475569" tick={{ fill: '#64748b', fontSize: 10 }} />
+              <YAxis stroke="#475569" tick={{ fill: '#64748b', fontSize: 10 }} domain={[0, 1023]} />
               <Tooltip contentStyle={{ background: BG_PANEL, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY }} />
               <ReferenceLine y={0} stroke="#ef4444" strokeDasharray="4 4" />
-              {AXIS_NAMES.map((_, i) => (
-                <Line key={i} type="monotone" dataKey={`SG${i}`} stroke={AXIS_COLORS[i]} dot={false} isAnimationActive={false} strokeWidth={1.5} />
+              {axes.map((ax) => (
+                <Line key={ax.axis} type="monotone" dataKey={`SG${ax.axis}`} stroke={AXIS_COLORS[ax.axis]} dot={false} isAnimationActive={false} strokeWidth={1.5} />
               ))}
             </LineChart>
           </ResponsiveContainer>
-        </div>
-      </div>
-
-      <div style={cardStyle}>
-        <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Auto Calibrate</h3>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <select style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '6px 8px', borderRadius: 4, fontSize: 13 }}>
-            {AXIS_NAMES.map((n, i) => <option key={i}>{n}</option>)}
-          </select>
-          <button style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
-            Start Calibration
-          </button>
         </div>
       </div>
     </div>

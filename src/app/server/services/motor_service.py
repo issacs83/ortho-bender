@@ -764,6 +764,67 @@ class MotorService:
         log.info("protection updated: %s", self.get_protection())
         return self.get_protection()
 
+    # ------------------------------------------------------------------
+    # StallGuard2 threshold (sensorless load / stall measurement)
+    # ------------------------------------------------------------------
+    def get_stallguard(self) -> dict:
+        """Per-axis StallGuard threshold + live SG_RESULT."""
+        be = self._spi_backend
+        axes = {}
+        for axis in self._HOLDABLE:
+            cs = self._axis_to_cs.get(axis)
+            if cs is None:
+                continue
+            sig = be.get_axis_signals(cs) if hasattr(be, "get_axis_signals") else {}
+            axes[axis] = {
+                "sgt": int(be.sgt_for(cs)) if hasattr(be, "sgt_for") else 63,
+                "sg_result": int(be._last_sg_value.get(cs, 0))
+                             if hasattr(be, "_last_sg_value") else 0,
+                "stall": bool(sig.get("sg")),
+                "energized": bool(sig.get("en")),
+            }
+        return {"axes": axes, "filter": bool(getattr(be, "sg_filter", True))}
+
+    async def set_stallguard(self, axis: int | None = None, sgt: int | None = None,
+                             filter: bool | None = None) -> dict:
+        """Set the StallGuard threshold for one axis (or the SFILT flag).
+
+        SGT is a signed 7-bit value: LOWER = more sensitive. +63 (the
+        power-on default) effectively disables stall reporting, which is
+        why an untuned axis shows a flat SG_RESULT. Applied to the chip
+        immediately when the bench is idle, and on every subsequent
+        motion regardless.
+        """
+        if not self.has_bench:
+            raise RuntimeError("StallGuard tuning is bench-only")
+        be = self._spi_backend
+        if filter is not None:
+            be.sg_filter = bool(filter)
+        if axis is not None and sgt is not None:
+            if axis not in self._HOLDABLE:
+                raise ValueError(f"axis {axis} is not on this bench")
+            if not -64 <= int(sgt) <= 63:
+                raise ValueError("sgt must be within -64..63")
+            cs = self._axis_to_cs[axis]
+            be.sgt_map[cs] = int(sgt)
+            save = getattr(be, "_save_state", None)
+            if callable(save):
+                save()
+            idle = self._bench_jog_task is None or self._bench_jog_task.done()
+            if idle and not self._bench_estop_active:
+                try:
+                    # Re-init writes SGCSCONF with the new threshold; keep
+                    # a held axis held, silence the others as before.
+                    if cs in getattr(be, "hold_axes", set()):
+                        await be._hold_chip(cs)
+                    else:
+                        await be._init_chip(cs)
+                        await be._silence_chip(cs)
+                except Exception as exc:
+                    log.warning("SGT apply cs=%d failed: %s", cs, exc)
+        log.info("stallguard updated: %s", self.get_stallguard())
+        return self.get_stallguard()
+
     async def move_to(self, axis: int, position: float, speed: float) -> MotorStatusResponse:
         """Absolute move: travel to `position` (user units) from the
         current counter. The /move endpoint is RELATIVE — the UI's

@@ -336,6 +336,39 @@ async def update_protection(
         return err(str(exc), "MOTOR_PROTECTION_ERROR")
 
 
+class StallGuardUpdate(BaseModel):
+    """StallGuard2 tuning. LOWER sgt = more sensitive; +63 (power-on
+    default) effectively disables stall reporting."""
+    model_config = {"extra": "forbid"}
+    axis: int | None = Field(None, ge=0, le=3)
+    sgt: int | None = Field(None, ge=-64, le=63)
+    filter: bool | None = Field(
+        None, description="SFILT — average over 4 electrical periods "
+                          "(smoother, 4x slower response)")
+
+
+@router.get("/stallguard", response_model=ApiResponse)
+async def get_stallguard(svc: MotorService = Depends(_motor_service)) -> ApiResponse:
+    """Per-axis StallGuard threshold, live SG_RESULT and stall flag."""
+    try:
+        return ok(svc.get_stallguard())
+    except Exception as exc:
+        return err(str(exc), "MOTOR_SG_ERROR")
+
+
+@router.put("/stallguard", response_model=ApiResponse)
+async def update_stallguard(
+    body: StallGuardUpdate,
+    svc: MotorService = Depends(_motor_service),
+) -> ApiResponse:
+    """Set the StallGuard threshold for one axis (persisted on the board)."""
+    try:
+        return ok(await svc.set_stallguard(axis=body.axis, sgt=body.sgt,
+                                           filter=body.filter))
+    except (RuntimeError, ValueError) as exc:
+        return err(str(exc), "MOTOR_SG_ERROR")
+
+
 @router.post("/move_to", response_model=ApiResponse)
 async def motor_move_to(
     body: MoveToRequest,
