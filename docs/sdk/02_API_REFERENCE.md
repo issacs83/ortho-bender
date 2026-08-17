@@ -70,7 +70,9 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
   "state": 0,
   "axes": [
     { "axis": 0, "position": 12.345, "velocity": 0.0,
-      "drv_status": 0, "sg_result": 0, "cs_actual": 16 },
+      "drv_status": 0, "sg_result": 512, "cs_actual": 14,
+      "signals": { "vmot": true, "en": true, "sg": false, "dir": 1,
+                   "step": false, "limit": null, "sg_value": 512 } },
     { "axis": 1, "position": 45.0, "velocity": 0.0, ... }
   ],
   "current_step": 4,
@@ -79,8 +81,25 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
 }
 ```
 - `axis_mask` 비트: `0x01=FEED, 0x02=BEND, 0x04=ROTATE, 0x08=LIFT`
-- `drv_status`: TMC DRV_STATUS 원본 레지스터 값
-- `sg_result`: StallGuard2 로드 측정값
+- `cs_actual`: **그 축에 실제로 적용된 코일 전류 스케일**(PSU 캡 반영 후).
+  축마다 다를 수 있습니다 — `/api/motor/protection` 의 `run_cs` 참조
+- `sg_result` / `signals.sg_value`: **StallGuard2 부하 측정값 0–1023**.
+  부하가 클수록 0에 가까워집니다. **축이 회전 중일 때만 의미가 있습니다** —
+  정지 중이거나 코일이 꺼진 축의 값은 무시하세요
+- `drv_status`: TMC DRV_STATUS 원본 (벤치 구성에서는 0 고정 — 실제 드라이버
+  폴트 플래그는 `/ws/motor/diag` 를 구독하세요)
+
+**`signals`** (벤치 전용 하드웨어 상태)
+
+| 필드 | 뜻 |
+|---|---|
+| `vmot` | 칩이 SPI에 응답함. **전압 측정이 아닙니다** — VMot가 없어도 로직은 살아 있어 `true`로 남습니다 |
+| `en` | 이 축의 초퍼가 켜져 있음(통전 중) |
+| `sg` | 마지막 상태 읽기의 StallGuard 비트(스톨 플래그) |
+| `dir` | 마지막 구동 방향 `+1`/`-1`, `0`=미구동 |
+| `step` | PWM 출력 중이고 이 축이 대상임 |
+| `limit` | 리밋 스위치 작동 여부. `null`=센서 미장착(FEED) |
+| `sg_value` | SG 부하값 0–1023 (위 `sg_result` 와 동일) |
 - `driver_enabled`: TMC260C-PA `DRV_ENN` 라인 상태. `true`=코일 여자(ENERGIZED),
   `false`=코일 해제(FREE-WHEEL, 축 수동 회전 가능)
 
@@ -177,6 +196,41 @@ curl -X PUT http://<ip>:8000/api/motor/protection \
 curl -X PUT http://<ip>:8000/api/motor/protection \
      -H 'Content-Type: application/json' \
      -d '{"axes": {"0": {"hold_enabled": true, "hold_cs": 14}}}'
+```
+
+### GET / PUT `/api/motor/stallguard` — 센서리스 부하 감지
+
+```json
+{ "axis": 1, "sgt": 8, "filter": true }
+```
+
+StallGuard2는 **센서 없이 모터 부하(토크 여유)를 읽는** 기능입니다. 임계값 `sgt`는
+드라이버 레지스터(SGCSCONF)에 실제로 기록되고 보드에 영속됩니다.
+
+- `sgt`: **−64 ~ 63**, **낮을수록 민감**. 전원 기본값 `+63`은 사실상 감지 안 함
+- `filter`: SFILT — 전기 주기 4회 평균. 값이 안정되지만 응답이 4배 느려집니다
+- 응답: `{axes: {axis: {sgt, sg_result, stall, energized}}, filter}`
+
+**BEND 실측 (90 °/s, 무부하, SFILT on)**
+
+| SGT | SG_RESULT | 판정 |
+|---|---|---|
+| +63 | ~1008 | 포화 — 감지 불가 |
+| **+8** | **208–512** | **사용 가능 구간** |
+| 0 | ~2 | 스톨 임계 |
+| −20 | 2 | 과민 — 오탐 |
+
+**튜닝 절차**: 실제 작업 속도로 무부하 회전시켜 SG가 중간 대역에 오도록 `sgt`를
+잡고, 실부하에서 0 근처로 떨어지는지 확인합니다. **저속에서는 SG가 신뢰할 수
+없습니다.**
+
+**SG 트립은 고장이 아닙니다.** 래치가 없어 해제 절차도 없고, 부하가 줄면 다음 SPI
+읽기에서 자동으로 사라집니다. 진짜 고장(OT/S2G/OL)과 E-STOP만 `POST /api/motor/reset`
+이 필요합니다.
+
+```bash
+curl -X PUT http://<ip>:8000/api/motor/stallguard \
+     -H 'Content-Type: application/json' -d '{"axis": 1, "sgt": 8}'
 ```
 
 ### POST `/api/motor/jog`

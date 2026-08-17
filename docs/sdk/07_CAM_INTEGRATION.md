@@ -134,6 +134,38 @@ for ax in api("GET", "/api/motor/status")["axes"]:
 
 ---
 
+## 4-1. 축별 속도·토크 조정
+
+와이어 재질·직경이 바뀌면 굽힘축에는 토크가 더 필요하고 피드축은 그대로여도 됩니다.
+**축마다 따로** 지정할 수 있습니다.
+
+```python
+# 굽힘축 토크를 올리고 피드는 낮춘다 (운전 전류, 1-19)
+api("PUT", "/api/motor/protection",
+    json={"axes": {"1": {"run_cs": 14}, "0": {"run_cs": 5}}})
+
+# 가감속·조그 기본값 (물리 단위, 보드에 영속)
+api("PUT", "/api/motor/profiles/1",
+    json={"jog_speed": 120, "accel": 80, "decel": 80, "shape": "scurve"})
+```
+
+| 대상 | 엔드포인트 | 범위 |
+|---|---|---|
+| 운전 토크(움직일 때) | `PUT /api/motor/protection` `run_cs` | 1–19 |
+| 정지 토크(유휴 유지) | `PUT /api/motor/protection` `hold_cs` | 1–19 |
+| 가감속 / S커브 | `PUT /api/motor/profiles/{axis}` | accel 1–200 |
+| 명령별 속도 | `/move`, `/move_to`, `/jog` 의 `speed` | 축 상한 이내 |
+
+**전류 상한은 하드웨어 보호입니다.** 20 이상은 `422`로 거부되고, PSU 프리셋 캡을
+넘는 값은 거부가 아니라 자동으로 깎입니다. 응답의 `run_cs_effective` 가 실제 적용값이니
+**요청값이 아니라 이 값을 확인**하세요. (CS=31로 보드가 소손된 이력이 있어 상한 19는
+우회 불가입니다.)
+
+**속도 상한은 설정이 아니라 유도값**입니다 — STEP 8000 Hz ÷ `steps_per_unit`:
+BEND 347.6 °/s, FEED·LIFT 40. 초과 요청은 상한으로 잘립니다.
+
+---
+
 ## 5. 실시간 상태 구독 (WebSocket)
 
 ```javascript
@@ -163,6 +195,17 @@ ws.onmessage = (e) => {
    (마지막 명령 우선). 시퀀스를 보내려면 **완료를 확인하고 다음 명령**을 보내세요.
 4. **속도 하한 주의**: BEND는 아주 낮은 속도에서 공진으로 스텝이 유실될 수 있습니다.
    정밀 이동은 60 deg/s 이상 권장.
+5. **홈잉은 비동기**: `POST /api/motor/home` 은 즉시 반환합니다. `GET /api/motor/limits`
+   의 `homing` 이 `false` 가 될 때까지 기다리세요. **진행 중에 다른 모션을 걸면 홈잉이
+   취소**됩니다(`error: homing cancelled`).
+6. **드라이버 폴트 복구**: 이동이 `fault detected (0x00810)` 로 거부되면 드라이버의
+   단락 검출이 **래치**된 상태입니다. `POST /api/motor/reset` 이 래치를 해제하며,
+   응답의 `fault_clear.still_faulted` 가 비어 있으면 복구 완료입니다. 남아 있으면
+   그 축은 실제로 모터 전원을 내려야 합니다. `enable`/`disable` 로는 해제되지
+   않습니다(M7 경유라 벤치 칩에 닿지 않음).
+7. **세 축이 동시에 같은 폴트**를 내면 축이 아니라 공유 12 V 레일을 의심하세요.
+   `/api/motor/stallguard` 응답에 경고가 실립니다. 자세한 판별은
+   [05_TROUBLESHOOTING.md](05_TROUBLESHOOTING.md) 4.5 참조.
 
 ---
 
