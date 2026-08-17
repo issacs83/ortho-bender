@@ -214,3 +214,46 @@ async def test_move_to_is_absolute(svc):
     cs, steps, freq, direction = be.pulse_calls[0]
     assert cs == 1 and direction == -1
     assert steps == 600                 # 3.0 u × 200 steps/u
+
+
+@pytest.mark.asyncio
+async def test_move_to_queues_instead_of_preempting(svc):
+    """Three Move To presses run one after another, none cancelled."""
+    be = svc._spi_backend
+    order: list[int] = []
+
+    async def slow_pulse(cs, steps, freq, direction, profile=None):
+        order.append(cs)
+        await asyncio.sleep(0.05)
+        be.positions[cs] += steps * direction
+
+    be.pulse_step = slow_pulse
+    await asyncio.gather(
+        svc.move_to(0, 5.0, 10),    # FEED
+        svc.move_to(1, 5.0, 10),    # BEND
+        svc.move_to(3, 5.0, 10),    # LIFT
+    )
+    assert sorted(order[:3]) == [0, 1, 2]      # every axis actually ran
+    for axis, cs in ((0, 2), (1, 1), (3, 0)):
+        assert abs(be.positions[cs] / 200.0 - 5.0) < 0.05
+
+
+@pytest.mark.asyncio
+async def test_stop_drops_queued_moves(svc):
+    """STOP invalidates moves still waiting in the queue."""
+    be = svc._spi_backend
+    ran: list[int] = []
+
+    async def slow_pulse(cs, steps, freq, direction, profile=None):
+        ran.append(cs)
+        await asyncio.sleep(0.08)
+        be.positions[cs] += steps * direction
+
+    be.pulse_step = slow_pulse
+    first = asyncio.create_task(svc.move_to(1, 5.0, 10))
+    await asyncio.sleep(0.01)
+    queued = asyncio.create_task(svc.move_to(3, 5.0, 10))
+    await asyncio.sleep(0.01)
+    await svc.stop()                 # bumps the generation
+    await asyncio.gather(first, queued, return_exceptions=True)
+    assert 0 not in ran              # LIFT (cs0) never started

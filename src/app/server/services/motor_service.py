@@ -77,6 +77,15 @@ class MotorService:
         # pass jog_stop() while nothing runs yet and then start TWO
         # pulse_step coroutines on the shared PWM.
         self._motion_lock = _asyncio.Lock()
+        # Absolute moves QUEUE instead of pre-empting each other: the
+        # bench shares one STEP line, so two axes cannot run at once, but
+        # pressing "Move To" on three axes should still run all three —
+        # one after another — rather than each press cancelling the last.
+        self._queue_lock = _asyncio.Lock()
+        self._queue_depth: int = 0
+        # Bumped by stop()/estop(); a queued move whose generation is
+        # stale is dropped instead of starting after an abort.
+        self._motion_generation: int = 0
         # Sticky E-STOP flag — stays True until enable_drivers/reset clears it,
         # so the dashboard can show ESTOP instead of bouncing back to IDLE the
         # moment the jog task finishes. Without this the bar would keep moving
@@ -658,6 +667,7 @@ class MotorService:
         homed = set(self._homed_axes)
         homed |= set(getattr(self._spi_backend, "homed_persist", set()) or set())
         return {
+            "queued": self._queue_depth,
             "limits": limits,
             "homed": sorted(homed),
             "homing": self._bench_homing,
@@ -766,13 +776,35 @@ class MotorService:
             raise ValueError(f"Axis {axis} is not present on the bench")
         spu = (self._calibration.steps_per_unit(int(axis))
                if self._calibration else 200.0)
-        # A single bench pulse is bounded twice — by the per-axis
-        # distance cap (LIFT 100 mm, FEED 100 mm ...) and by a 10 s
-        # duration cap — so a long absolute move used to stop partway
-        # with no error (a 230 mm LIFT traverse ended at 100 mm).
-        # Absolute moves therefore run in chunks until the target is
-        # reached; each pass re-reads the counter, so a truncated chunk
-        # simply gets another one.
+        # Queue behind any absolute move already running (shared STEP
+        # line = one axis at a time). Jog / STOP / E-STOP do NOT take
+        # this lock, so they still pre-empt immediately.
+        generation = self._motion_generation
+        self._queue_depth += 1
+        try:
+            await self._queue_lock.acquire()
+        finally:
+            self._queue_depth -= 1
+        try:
+            if generation != self._motion_generation:
+                log.info("move_to axis=%d dropped — stop/E-STOP while queued",
+                         axis)
+                return await self.get_status()
+            self._ensure_not_estop("move_to")
+            return await self._move_to_locked(axis, position, speed, cs, spu)
+        finally:
+            self._queue_lock.release()
+
+    async def _move_to_locked(self, axis: int, position: float, speed: float,
+                              cs: int, spu: float) -> MotorStatusResponse:
+        """The actual absolute move; caller holds the queue lock.
+
+        A single bench pulse is bounded twice — by the per-axis distance
+        cap and by a 10 s duration cap — so a long absolute move used to
+        stop partway with no error (a 230 mm LIFT traverse ended at
+        100 mm). Absolute moves therefore run in chunks until the target
+        is reached; each pass re-reads the counter, so a truncated chunk
+        simply gets another one."""
         # Landing tolerance: 2 motor steps. Chasing anything finer just
         # trades one sub-step residue for another, since each corrective
         # pass has its own ramp.
@@ -795,11 +827,13 @@ class MotorService:
         return await self.get_status()
 
     async def stop(self) -> MotorStatusResponse:
-        """Controlled deceleration stop.
+        """Controlled deceleration stop. Also drops queued absolute moves.
 
         Bench mode: backend's pulse_step finalize handles silence + PWM disable.
         """
+        self._motion_generation += 1     # queued moves become stale
         if self.has_bench:
+            await self.jog_stop(nudge=False)
             return await self.get_status()
         await self._ipc.send_recv(MSG_MOTION_STOP)
         return await self.get_status()
@@ -811,6 +845,7 @@ class MotorService:
         of which axis (if any) is currently running. Critical safety path.
         Production: hardware E-STOP runs in parallel via M7 GPIO ISR + DRV_ENN.
         """
+        self._motion_generation += 1     # queued moves become stale
         if self.has_bench:
             # 1) Kill PWM + silence chips immediately. Coils dead first so the
             #    motor is mechanically safe even if step 2 raises.
