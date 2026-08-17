@@ -46,6 +46,7 @@ from .tmc260c_driver import (
     SAFETY_CS_MAX, SAFETY_TOFF_MAX,
     CHOPCONF_DEFAULT, SMARTEN_DEFAULT, DRVCONF_DEFAULT, SGCSCONF_DEFAULT,
     DRVCTRL_DEFAULT,
+    RESP_S2GA, RESP_S2GB, RESP_OLA, RESP_OLB, RESP_STST,
 )
 
 log = logging.getLogger(__name__)
@@ -198,6 +199,10 @@ class SpidevMotorBackend(MotorBackend):
         # value, because you pick the threshold from where the load
         # reading sits under real cutting/bending load.
         self._last_sg_value: dict[int, int] = {0: 0, 1: 0, 2: 0}
+        # Whole 20-bit response per cs. Comparing the full words across
+        # chips is what distinguishes a dead supply rail from real
+        # per-axis faults.
+        self._last_status: dict[int, int] = {}
         self._last_dir: int = 0   # 0 = unknown / not driven yet
         self._pwm_active: bool = False
         # E-STOP kill latch: once set, _pwm_set_hz refuses to touch the PWM
@@ -865,6 +870,26 @@ class SpidevMotorBackend(MotorBackend):
     # -------------------------------------------------------------------
     # Signal helpers (LED row on the dashboard)
     # -------------------------------------------------------------------
+    def rail_suspect(self) -> bool:
+        """True when the motor supply rail looks dead rather than the
+        axes being individually faulted.
+
+        Three independent driver boards share one VMot rail. With that
+        rail down they still answer on SPI (logic runs off VCC_IO) but
+        their output stages are off, so the short-detect comparators all
+        report the same fault and the standstill flag never sets. Three
+        bit-identical fault words with no standstill is therefore a rail
+        symptom, not three coincidental shorts -- and saying so turns a
+        multi-hour hunt into one voltage measurement.
+        """
+        words = [w for w in self._last_status.values() if w is not None]
+        if len(words) < 2 or len(set(words)) != 1:
+            return False
+        word = words[0]
+        faulted = bool(word & (RESP_S2GA | RESP_S2GB | RESP_OLA | RESP_OLB))
+        standstill = bool(word & RESP_STST)
+        return faulted and not standstill
+
     def get_axis_signals(self, cs: int) -> dict:
         """Return a snapshot of the five LED signals for one cs.
 
@@ -1217,6 +1242,10 @@ class SpidevMotorBackend(MotorBackend):
             log.info("SGCSCONF current cap: CS ≤ %d (PSU-derived)", capped)
         self._cs_scale_cap = capped
 
+    def effective_cs(self) -> int:
+        """Coil current scale actually written to the chips (0-31)."""
+        return min(SGCSCONF_DEFAULT & 0x1F, self._cs_scale_cap)
+
     def sgt_for(self, cs: int) -> int:
         """StallGuard threshold for one axis (-64..63, higher = less
         sensitive)."""
@@ -1329,6 +1358,7 @@ class SpidevMotorBackend(MotorBackend):
         self._chip_responsive[cs] = (status != 0xFFFFF and status != 0)
         self._last_sg[cs] = bool(status & 0x01)
         self._last_sg_value[cs] = (status >> 10) & 0x3FF
+        self._last_status[cs] = status
         return status
 
     @staticmethod

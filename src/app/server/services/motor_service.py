@@ -389,8 +389,12 @@ class MotorService:
                 position=pos_units,
                 velocity=0.0,
                 drv_status=0,
-                sg_result=int(bool(sig_dict.get("sg"))) if sig_dict else 0,
-                cs_actual=19,  # CS=19 hardcoded safety value
+                sg_result=(sig_dict.get("sg_value") or 0) if sig_dict else 0,
+                # Effective coil current after the PSU cap, not a constant.
+                # This field read 19 unconditionally, which made an axis
+                # look like it was running at the safety ceiling no matter
+                # what the PSU preset had clamped it to.
+                cs_actual=int(getattr(self._spi_backend, "effective_cs", lambda: 0)()),
                 signals=AxisSignals(**sig_dict) if sig_dict else None,
             ))
             axis_mask |= (1 << axis_int)
@@ -783,7 +787,16 @@ class MotorService:
                 "stall": bool(sig.get("sg")),
                 "energized": bool(sig.get("en")),
             }
-        return {"axes": axes, "filter": bool(getattr(be, "sg_filter", True))}
+        rail = getattr(be, "rail_suspect", None)
+        out = {"axes": axes, "filter": bool(getattr(be, "sg_filter", True))}
+        if callable(rail) and rail():
+            out["warning"] = (
+                "All driver boards report the same fault word with no "
+                "standstill flag — the shared 12 V motor supply is the "
+                "likely cause, not the individual axes. Measure VMot at a "
+                "driver board terminal before driving anything."
+            )
+        return out
 
     async def set_stallguard(self, axis: int | None = None, sgt: int | None = None,
                              filter: bool | None = None) -> dict:
