@@ -21,11 +21,16 @@
 
 ### 이동 한계 (서버가 강제)
 
-| axis | 1회 명령당 거리 상한 | 속도 상한 | 비고 |
-|:----:|---------------------|-----------|------|
-| 0 FEED | 360 deg | 40 deg/s | |
-| 1 BEND | 360 deg | 360 deg/s | 실제 상한은 STEP 8 kHz 클램프 |
-| 3 LIFT | 240 mm | 40 mm/s | 스트로크 230 mm |
+| axis | 1회 명령당 거리 상한 | 속도 상한 | 산출 근거 |
+|:----:|---------------------|-----------|-----------|
+| 0 FEED | 360 deg | **40 deg/s** | 8000 Hz ÷ 200 steps/deg |
+| 1 BEND | 360 deg | **347.6 deg/s** | 8000 Hz ÷ 23.0167 steps/deg |
+| 3 LIFT | 240 mm | **40 mm/s** | 8000 Hz ÷ 200 steps/mm |
+
+속도 상한은 **하드웨어 STEP 상한 8 kHz를 축 캘리브레이션으로 나눈 값**이며,
+`GET /api/motor/calibration` 의 `speed_limit` 에서 항상 최신 값을 읽을 수 있습니다.
+축마다 steps/unit이 다르므로 같은 숫자라도 실제 주파수가 다릅니다 — 캘리브레이션을
+바꾸면 상한도 자동으로 따라갑니다.
 
 상한을 넘는 값은 **조용히 잘리지 않고** `/api/motor/move_to` 가 자동으로 분할 실행해
 목표에 도달합니다. (`/api/motor/move` 는 1회 명령이라 상한에서 잘립니다.)
@@ -79,7 +84,7 @@ curl -X POST http://<ip>:8000/api/motor/home -d '{"axis_mask":0}'
 |---|---|---|
 | **E-STOP** | PWM 즉시 차단 + 전 축 초퍼 정지. 이후 모든 모션 명령 거부 | `POST /estop` → 해제는 `POST /reset` |
 | **리밋 가드** | 이동 중 리밋 창에 진입하면 감속 정지 (LIFT에 적용) | `PUT /protection {limit_stop}` |
-| **정지 토크** | LIFT는 유휴 시 코일 통전 유지(중력 침하 방지). 통전 중 초퍼 소음은 정상 | `PUT /protection {hold_enabled, hold_cs}` |
+| **정지 토크** | **축별로** 유휴 시 코일 통전 유지(LIFT 중력 침하·FEED 외력 방지). 통전 중 초퍼 소음은 정상 | `PUT /protection {axes:{0:{hold_enabled,hold_cs}}}` |
 | **모션 직렬화** | 새 모션 명령은 진행 중인 모션을 감속 취소하고 대체(마지막 명령 우선) | 자동 |
 
 E-STOP 상태에서는 모든 모션 API가 `MOTOR_ESTOP` 계열 에러를 반환합니다.

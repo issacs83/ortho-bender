@@ -141,6 +141,11 @@ class Settings(BaseSettings):
     # agrees that + / ▶ is clockwise. Operator-reported 2026-08-16.
     invert_feed: bool = True
     hold_lift: bool = True
+    # FEED/BEND also free-wheel when de-energized (no gravity load, so it
+    # is less obvious) — operator asked for per-axis holding, so they can
+    # be held too. Runtime toggle: PUT /api/motor/protection {axes:{...}}
+    hold_feed: bool = True
+    hold_bend: bool = False
     hold_cs: int = 8                 # holding current scale (< run CS)
     # Final resting position after homing, in units from the datum.
     # <0 = park |value| INSIDE the window (approach direction) — sensor

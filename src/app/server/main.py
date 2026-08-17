@@ -187,9 +187,26 @@ async def lifespan(app: FastAPI):
     if hasattr(diag_backend, "apply_current_cap"):
         diag_backend.apply_current_cap(psu_svc.cs_cap)
     # Gravity-axis idle holding (LIFT = cs0 sinks when de-energized)
-    if hasattr(diag_backend, "hold_axes") and cfg.hold_lift:
-        diag_backend.hold_axes = {0}
+    if hasattr(diag_backend, "hold_axes"):
         diag_backend.hold_cs = int(cfg.hold_cs)
+        held = set()
+        if cfg.hold_lift:
+            held.add(0)      # LIFT — gravity axis
+        if cfg.hold_feed:
+            held.add(2)      # FEED — free-wheels by hand otherwise
+        if cfg.hold_bend:
+            held.add(1)
+        diag_backend.hold_axes = held
+        log.info("Idle holding torque on cs=%s at CS=%d",
+                 sorted(held), diag_backend.hold_cs)
+        # Energize them NOW. Holding was previously only applied at the
+        # end of a motion, so a freshly started service left every axis
+        # free-wheeling until someone jogged it.
+        for _cs in sorted(held):
+            try:
+                await diag_backend._hold_chip(_cs)
+            except Exception as exc:
+                log.warning("initial hold cs=%d failed: %s", _cs, exc)
     # Limit guard: LIFT only — BEND's multi-slot disc would trip it
     # at every slot passage (rotary axis has no travel ends anyway).
     if hasattr(diag_backend, "guard_axes"):

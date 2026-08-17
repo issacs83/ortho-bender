@@ -52,25 +52,19 @@ DISTANCE_LIMIT: dict[int, float] = {
     3: 240.0,   # LIFT  ≤ 240 mm (full stroke + margin)
 }
 
-# Axis-specific maximum target rate (in user units / sec). Combined with
-# steps_per_unit this gives the freq cap. Default keeps backward-compat
-# with the prior 4000 Hz hard cap when steps_per_unit = 200.
-SPEED_LIMIT: dict[int, float] = {
-    0: 40.0,    # FEED  (with 200 step/mm  -> 8000 Hz, ~2400 RPM)
-    # BEND calibrated in true degrees 2026-08-16. Sensor-referenced
-    # measurement (home slot crossed twice at 253 Hz, inside the motor's
-    # self-start region so counted steps == physical steps):
-    # 1 rev = 8286 steps -> 23.0167 steps/deg, repeatable to 0.06 %.
-    # An earlier eyeballed mark test read 8000 and was 3.6 % low, which
-    # is why a commanded 360 deg physically turned ~372 deg.
-    # Per-speed check against the slot after this fix: 60/120/300 deg/s
-    # land exactly on the slot, 180 deg/s within 0.6 %.
-    # The pulse path's [200, 8000] Hz clamp stays the real safety bound
-    # (360 deg/s would ask for 8286 Hz and is clamped).
-    1: 360.0,   # BEND  (deg/s)
-    2: 40.0,    # ROTATE
-    3: 40.0,    # LIFT
-}
+# The pulse path clamps STEP output to [200, 8000] Hz, so the real speed
+# ceiling of an axis is 8000 / steps_per_unit — a different number in
+# user units for every axis. Hard-coding it went stale the moment BEND
+# was recalibrated (200 -> 23.0167 steps/deg turned a 40 deg/s cap into
+# 920 Hz, a fifth of what the hardware can do), so it is derived now.
+#   FEED  200 steps/deg -> 40 deg/s
+#   BEND  23.0167       -> 347.6 deg/s
+#   LIFT  200 steps/mm  -> 40 mm/s
+MAX_STEP_HZ = 8000.0
+
+# Floor for axes whose calibration is implausibly large (protects against
+# a mis-typed steps_per_unit locking the axis at a crawl).
+MIN_SPEED_LIMIT = 1.0
 
 _STATE_FILE = "/var/lib/ortho-bender/axis_calibration.json"
 
@@ -117,13 +111,22 @@ class CalibrationService:
         return DISTANCE_LIMIT.get(int(axis), 50.0)
 
     def speed_limit(self, axis: int) -> float:
-        return SPEED_LIMIT.get(int(axis), 20.0)
+        """Max commandable speed in this axis' own units.
+
+        Derived from the hardware STEP ceiling and the axis calibration,
+        so it stays correct when steps_per_unit changes.
+        """
+        spu = self.steps_per_unit(axis)
+        if spu <= 0:
+            return MIN_SPEED_LIMIT
+        return max(MIN_SPEED_LIMIT, round(MAX_STEP_HZ / spu, 1))
 
     def all(self) -> dict:
         return {
             "steps_per_unit": dict(self._steps),
             "distance_limit": dict(DISTANCE_LIMIT),
-            "speed_limit":    dict(SPEED_LIMIT),
+            "speed_limit":    {a: self.speed_limit(a)
+                               for a in DEFAULT_STEPS_PER_UNIT},
         }
 
     def update(self, axis: int, steps_per_unit: float) -> None:

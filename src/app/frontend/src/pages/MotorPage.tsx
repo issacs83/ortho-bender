@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
-import { motorApi, diagApi, type MotorStatus, type AxisStatus, type DriverProbeResult, type MotionProfile, type ProtectionSettings } from '../api/client';
+import { motorApi, diagApi, type MotorStatus, type AxisStatus, type DriverProbeResult, type MotionProfile, type ProtectionSettings, type AxisHold } from '../api/client';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { SliderInput } from '../components/ui/SliderInput';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -106,6 +106,20 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   const [prot, setProt] = useState<ProtectionSettings | null>(null);
   const protCsTimer = useRef<number>(0);
   useEffect(() => { motorApi.protection().then(setProt).catch(() => null); }, []);
+  // Per-axis holding torque. The server merges partial axis maps, so we
+  // only send the axis that changed.
+  function patchAxisHold(axis: number, patch: Partial<AxisHold>, debounceMs = 0) {
+    setProt((p) => (p ? { ...p, axes: { ...p.axes, [axis]: { ...p.axes[axis], ...patch } } } : p));
+    const send = () => motorApi.updateProtection({ axes: { [axis]: patch } } as never)
+      .then(setProt).catch(() => null);
+    if (debounceMs > 0) {
+      if (protCsTimer.current) window.clearTimeout(protCsTimer.current);
+      protCsTimer.current = window.setTimeout(send, debounceMs);
+    } else {
+      send();
+    }
+  }
+
   function patchProt(patch: Partial<ProtectionSettings>, debounceMs = 0) {
     setProt((p) => (p ? { ...p, ...patch } : p));
     const send = () => motorApi.updateProtection(patch).then(setProt).catch(() => null);
@@ -120,6 +134,11 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   const [targetPos, setTargetPos] = usePersistentState('motor.targetPos', 0);
   const [multiTarget, setMultiTarget] = usePersistentState<number[]>('motor.multiTarget', [0, 0, 0, 0]);
   const [softLimits] = useSoftLimits();
+  // Per-axis speed ceiling from the server (STEP 8 kHz / steps_per_unit):
+  // FEED·LIFT 40, BEND ~347 at the current calibration. Without this the
+  // inputs offered 360 on every axis and the server silently clamped back.
+  const { cal } = useAxisCalibration();
+  const axisMaxSpeed = (axis: number) => cal.speed_limit[axis] ?? 40;
   // Transient: modals + error
   const [showHomeModal, setShowHomeModal] = useState(false);
   const [showMoveAllModal, setShowMoveAllModal] = useState(false);
@@ -475,10 +494,10 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                 <div key={ax.axis} style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', padding: '6px 8px', background: BG_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 6 }}>
                   <span style={{ color: AXIS_COLORS[ax.axis], fontWeight: 600, fontSize: 12, width: 58 }}>{AXIS_NAMES[ax.axis]}</span>
                   <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
-                    Speed {numBox(p.jog_speed, 0.1, 360, 0.5, (v) => patchProfile(ax.axis, { jog_speed: v }))} {unit}/s
+                    Speed {numBox(p.jog_speed, 0.1, axisMaxSpeed(ax.axis), 0.5, (v) => patchProfile(ax.axis, { jog_speed: v }))} {unit}/s
                   </label>
                   <label title="Machine velocity limit — every motion command on this axis is clamped to it (GRBL $110-112 analog)" style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
-                    Vmax {numBox(p.max_speed ?? 40, 0.1, 360, 0.5, (v) => patchProfile(ax.axis, { max_speed: v }))} {unit}/s
+                    Vmax {numBox(p.max_speed ?? 40, 0.1, axisMaxSpeed(ax.axis), 0.5, (v) => patchProfile(ax.axis, { max_speed: v }))} {unit}/s
                   </label>
                   <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
                     Step {numBox(p.step_size, 0.01, 360, 0.1, (v) => patchProfile(ax.axis, { step_size: v }))} {unit}
@@ -516,7 +535,12 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
           </div>
         </div>
         <div style={cardStyle}>
-          <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Protection · 정지토크</h3>
+          <h3 style={{ margin: '0 0 4px', fontSize: 14, color: TEXT_PRIMARY }}>Protection · 정지토크</h3>
+          <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 10 }}>
+            정지토크는 <b>축별</b>로 켭니다. 꺼진 축은 코일이 풀려 손으로 돌아갑니다
+            (LIFT는 중력 침하, FEED/BEND는 외력에 밀림). 통전 중 초퍼 소음은 정상이며,
+            토크를 낮추면 조용해지고 발열도 줄지만 유지력이 약해집니다.
+          </div>
           {!prot && <div style={{ fontSize: 12, color: TEXT_MUTED }}>Loading…</div>}
           {prot && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -525,19 +549,31 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                   onChange={(e) => patchProt({ limit_stop: e.target.checked })} />
                 이동 중 리밋센서 감지 시 자동 정지
               </label>
-              <label style={{ fontSize: 12, color: TEXT_SECONDARY, display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}
-                title="유휴 시 LIFT 코일을 통전 유지해 중력 침하를 막습니다. 통전 중 초퍼 소음(지잉)이 나는 게 정상 — 시끄러우면 아래 토크를 낮추세요.">
-                <input type="checkbox" checked={prot.hold_enabled}
-                  onChange={(e) => patchProt({ hold_enabled: e.target.checked })} />
-                LIFT 정지토크(홀딩) — 중력 침하 방지
-              </label>
-              <SliderInput
-                label="Hold Torque"
-                value={prot.hold_cs}
-                min={1} max={14} step={1} unit="CS"
-                help="정지(홀딩) 전류 스케일. 낮출수록 조용하고 발열이 적지만 유지력이 줄어듭니다. LIFT가 흘러내리면 올리세요."
-                onChange={(v) => patchProt({ hold_cs: v }, 500)}
-              />
+              {(motorStatus?.axes ?? [])
+                .filter((ax) => prot.axes && prot.axes[ax.axis])
+                .map((ax) => {
+                  const h = prot.axes[ax.axis];
+                  return (
+                    <div key={ax.axis} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '6px 8px', background: BG_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 6 }}>
+                      <span style={{ color: AXIS_COLORS[ax.axis], fontWeight: 600, fontSize: 12, width: 58 }}>{AXIS_NAMES[ax.axis]}</span>
+                      <label style={{ fontSize: 11, color: TEXT_SECONDARY, display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={h.hold_enabled}
+                          onChange={(e) => patchAxisHold(ax.axis, { hold_enabled: e.target.checked })} />
+                        정지토크
+                      </label>
+                      <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 6, alignItems: 'center', marginLeft: 'auto' }}
+                             title="홀딩 전류 스케일 (1-19). PSU 상한이 우선 적용됩니다.">
+                        토크
+                        <input type="range" min={1} max={14} step={1} value={h.hold_cs}
+                          onChange={(e) => patchAxisHold(ax.axis, { hold_cs: Number(e.target.value) }, 400)}
+                          style={{ width: 110 }} />
+                        <span style={{ width: 46, textAlign: 'right', fontFamily: 'monospace', color: TEXT_SECONDARY }}>
+                          {h.hold_cs} CS
+                        </span>
+                      </label>
+                    </div>
+                  );
+                })}
             </div>
           )}
         </div>
