@@ -262,6 +262,60 @@ curl -X POST http://localhost:8000/api/motor/reset -d '{"axis_mask": 0}'
 
 ---
 
+### 4.4 모든 이동이 거부됨 — `fault detected (0x00810)`
+
+드라이버가 폴트를 잡은 상태입니다. **TMC26x의 단락 검출(S2GA/S2GB)은 래치**라서
+한번 서면 드라이버를 껐다 켤 때까지 유지되고, 그동안 모든 모션이 거부됩니다.
+축을 하드스톱에 밀어넣거나 급반전시켰을 때 잘 발생합니다.
+
+**해제:**
+```bash
+curl -s -X POST http://<ip>:8000/api/motor/reset \
+     -H 'Content-Type: application/json' -d '{"axis_mask":0}' \
+  | python3 -m json.tool | grep -A6 fault_clear
+```
+- `still_faulted` 가 비어 있으면 해제 완료 — 전원을 뽑을 필요 없습니다
+- 남아 있는 cs가 있으면 그 축은 **실제로 모터 전원을 내려야** 합니다
+
+> `/api/motor/enable` · `/api/motor/disable` 로는 해제되지 않습니다. 이 둘은 M7
+> 코어로 IPC를 보내는데, M7 펌웨어가 없는 벤치 구성에서는 드라이버 칩에 닿지
+> 않습니다. 폴트 해제는 반드시 `reset` 을 쓰세요.
+
+### 4.5 세 축이 **동시에** 똑같이 폴트 — 축이 아니라 전원을 보세요
+
+드라이버 보드 3장은 **하나의 12 V(VMot) 레일을 공유**합니다. 이 레일이 죽으면
+칩은 로직 전원(VCC_IO)으로 살아 SPI에 정상 응답하지만 출력단이 꺼져, 단락 검출기가
+세 칩에서 **똑같이** 오보고합니다.
+
+판별 기준 두 가지 — `/ws/motor/diag` 를 구독해 확인하세요:
+
+| 관찰 | 의미 |
+|---|---|
+| 세 칩의 폴트 워드가 **비트 단위로 동일** | 개별 축 고장은 이렇게 일치하지 않음 |
+| **`stst` 가 false 인데 축이 정지 중** | 정지 중인 칩은 STST가 서야 정상 |
+
+둘 다 해당하면 축을 하나씩 시험하지 말고 **드라이버 보드 단자에서 VMot를 직접
+측정**하세요. `/api/motor/stallguard` 응답에도 이 경고가 자동으로 실립니다.
+
+> ⚠️ 대시보드의 `signals.vmot` 은 **전압 측정이 아닙니다.** "SPI 응답이 있음"에서
+> 추론한 값이라 VMot가 없어도 `true` 로 남습니다. 이 판별에는 쓰지 마세요.
+
+### 4.6 홈잉을 걸었는데 끝나지 않음 / 다른 축을 움직였더니 취소됨
+
+`POST /api/motor/home` 은 **비동기**입니다. 즉시 반환하고 백그라운드에서 탐색하므로,
+응답을 받았다고 홈잉이 끝난 게 아닙니다. 진행 중에 다른 모션을 걸면 **홈잉이
+취소**됩니다(`error: homing cancelled`).
+
+```python
+requests.post(f"{BASE}/api/motor/home", json={"axis_mask": 1 << 3})
+while True:
+    lim = requests.get(f"{BASE}/api/motor/limits").json()["data"]
+    if not lim["homing"]:
+        break                      # lim["error"] 가 None 이면 성공
+    time.sleep(0.5)
+```
+여러 축을 홈잉할 때는 **한 축씩 완료를 기다린 뒤** 다음 축을 거세요.
+
 ## 5. 네트워크 / 프론트엔드
 
 ### 5.1 `CORS error` 브라우저 콘솔
