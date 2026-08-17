@@ -502,10 +502,20 @@ async def motor_reset(
     body: MotorResetRequest,
     svc: MotorService = Depends(_motor_service),
 ) -> ApiResponse:
-    """Clear fault state and re-enable motor drivers."""
+    """Clear fault state and re-enable motor drivers.
+
+    On the bench this also runs the TMC26x latch-clear sequence, so a
+    latched short-detect fault no longer needs a physical power cycle.
+    The response carries `fault_clear` naming any axis that stayed
+    faulted — those genuinely need power removed.
+    """
     try:
         status = await svc.reset()
-        return ok(status.model_dump())
+        data = status.model_dump()
+        report = getattr(svc, "_last_fault_clear", None)
+        if report:
+            data["fault_clear"] = report
+        return ok(data)
     except Exception as exc:
         log.error("Motor reset failed: %s", exc)
         return err(str(exc), "MOTOR_RESET_ERROR")

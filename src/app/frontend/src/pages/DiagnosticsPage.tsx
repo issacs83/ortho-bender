@@ -8,6 +8,8 @@
 import { useState, useEffect } from 'react';
 import { diagApi, motorApi, type SpiTestResultItem, type DiagDumpResult, type DriverProbeResult } from '../api/client';
 import { RegisterInspector } from '../components/RegisterInspector';
+import { useDiagWs, railSuspect, hasFault } from '../hooks/useDiagWs';
+import { AXIS_NAMES } from '../constants';
 import { StallGuardChart } from '../components/StallGuardChart';
 
 const CARD: React.CSSProperties = {
@@ -26,7 +28,19 @@ const BTN: React.CSSProperties = {
   fontSize: 13,
 };
 
-const DRIVERS = ['tmc260c_0', 'tmc260c_1', 'tmc5072'] as const;
+// cs 0/1/2 are LIFT/BEND/FEED. The old list dumped a TMC5072 that is
+// not fitted on this bench and left FEED out entirely.
+const DRIVERS = [
+  { id: 'tmc260c_0', axis: 3 },
+  { id: 'tmc260c_1', axis: 1 },
+  { id: 'tmc260c_2', axis: 0 },
+] as const;
+
+const JOG_AXES = [
+  { id: 0, name: 'FEED' },
+  { id: 1, name: 'BEND' },
+  { id: 3, name: 'LIFT' },
+];
 
 export function DiagnosticsPage() {
   // SPI Test state
@@ -43,10 +57,14 @@ export function DiagnosticsPage() {
   // Jog state
   const [jogAxis, setJogAxis] = useState(0);
   const [jogSpeed, setJogSpeed] = useState(10);
+  const [jogDist, setJogDist] = useState(5);
   const [jogStatus, setJogStatus] = useState('IDLE');
 
   // SG threshold
   const [sgThreshold, setSgThreshold] = useState<number | undefined>(undefined);
+
+  // Live chip flags
+  const diag = useDiagWs();
 
   // Driver probe
   const [probeResults, setProbeResults] = useState<DriverProbeResult[]>([]);
@@ -55,7 +73,11 @@ export function DiagnosticsPage() {
   // Fetch backend info + driver probe on mount
   useEffect(() => {
     diagApi.backend().then(info => {
-      setBackendInfo(`${info.backend} | ${info.spi_speed_hz ? (info.spi_speed_hz / 1e6).toFixed(0) + ' MHz' : 'N/A'}`);
+      const hz = info.spi_speed_hz;
+      const speed = !hz ? 'N/A'
+        : hz >= 1e6 ? `${(hz / 1e6).toFixed(1)} MHz`
+        : `${(hz / 1e3).toFixed(0)} kHz`;
+      setBackendInfo(`${info.backend} | ${speed}`);
     }).catch(() => setBackendInfo('error'));
     diagApi.probe().then(r => setProbeResults(r.drivers)).catch(() => {});
   }, []);
@@ -89,7 +111,7 @@ export function DiagnosticsPage() {
 
   async function handleJog(direction: 1 | -1) {
     try {
-      const r = await motorApi.jog(jogAxis, direction, jogSpeed, 100);
+      const r = await motorApi.jog(jogAxis, direction, jogSpeed, jogDist);
       setJogStatus(r.state === 3 ? 'JOGGING' : 'IDLE');
     } catch { setJogStatus('ERROR'); }
   }
@@ -100,6 +122,9 @@ export function DiagnosticsPage() {
       setJogStatus('IDLE');
     } catch { setJogStatus('ERROR'); }
   }
+
+  // LIFT is the only linear axis on this bench.
+  const jogUnit = jogAxis === 3 ? 'mm' : '\u00B0';
 
   return (
     <div style={{ padding: 12, maxWidth: 900, width: '100%', boxSizing: 'border-box' }}>
@@ -142,6 +167,40 @@ export function DiagnosticsPage() {
         </div>
       </div>
 
+      {/* Live driver fault flags */}
+      <div style={{ ...CARD, marginBottom: 12 }}>
+        <h3 style={{ margin: '0 0 8px', fontSize: 14, color: '#94a3b8' }}>드라이버 폴트 (live)</h3>
+        {railSuspect(diag) && (
+          <div style={{ padding: '6px 10px', marginBottom: 8, borderRadius: 6, background: '#450a0a', border: '1px solid #ef4444', fontSize: 12, color: '#fecaca' }}>
+            세 보드가 동일한 폴트 + STST 꺼짐 → 공유 12 V 레일을 먼저 측정하세요.
+          </div>
+        )}
+        {!diag && <span style={{ fontSize: 12, color: '#64748b' }}>수신 대기…</span>}
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {diag && DRIVERS.map(d => {
+            const c = diag.drivers[d.id];
+            if (!c) return null;
+            const bad = hasFault(c);
+            const flags = (['ot', 'otpw', 's2ga', 's2gb', 'ola', 'olb'] as const)
+              .filter(k => c[k]).map(k => k.toUpperCase());
+            return (
+              <div key={d.id} style={{
+                padding: '6px 12px', borderRadius: 6,
+                background: bad ? '#450a0a' : '#064e3b',
+                border: `1px solid ${bad ? '#ef4444' : '#10b981'}`,
+                fontSize: 12, color: '#f1f5f9',
+              }}>
+                <b>{AXIS_NAMES[d.axis]}</b>{' '}
+                <span style={{ color: bad ? '#fca5a5' : '#6ee7b7' }}>
+                  {bad ? flags.join(' ') : 'OK'}
+                </span>
+                <span style={{ color: '#64748b', marginLeft: 8 }}>SG {c.sg_result}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Row 1: SPI Test + Register Inspector */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12, marginBottom: 12 }}>
         {/* SPI Test */}
@@ -174,7 +233,10 @@ export function DiagnosticsPage() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <h3 style={{ margin: 0, fontSize: 14, color: '#94a3b8' }}>StallGuard2 Live</h3>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <label style={{ fontSize: 12, color: '#64748b' }}>Threshold:</label>
+            <label style={{ fontSize: 12, color: '#64748b' }}
+                   title="차트에 기준선만 그립니다. 드라이버의 SGT 레지스터가 아닙니다 — SGT는 Motor Control → StallGuard 에서 설정하세요.">
+              기준선(표시용):
+            </label>
             <input
               type="number"
               min={0}
@@ -198,10 +260,7 @@ export function DiagnosticsPage() {
             onChange={e => setJogAxis(Number(e.target.value))}
             style={{ background: '#0f172a', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 4, padding: '4px 8px' }}
           >
-            <option value={0}>FEED</option>
-            <option value={1}>BEND</option>
-            <option value={2}>ROTATE</option>
-            <option value={3}>LIFT</option>
+            {JOG_AXES.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
           <input
             type="number"
@@ -209,7 +268,14 @@ export function DiagnosticsPage() {
             onChange={e => setJogSpeed(Number(e.target.value))}
             style={{ width: 60, background: '#0f172a', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 4, padding: '4px 8px', fontFamily: 'monospace' }}
           />
-          <span style={{ fontSize: 12, color: '#64748b' }}>mm/s</span>
+          <span style={{ fontSize: 12, color: '#64748b' }}>{jogUnit}/s</span>
+          <input
+            type="number"
+            value={jogDist}
+            onChange={e => setJogDist(Number(e.target.value))}
+            style={{ width: 60, background: '#0f172a', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 4, padding: '4px 8px', fontFamily: 'monospace' }}
+          />
+          <span style={{ fontSize: 12, color: '#64748b' }}>{jogUnit}</span>
           <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 'auto' }}>Status: {jogStatus}</span>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -225,12 +291,12 @@ export function DiagnosticsPage() {
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
           {DRIVERS.map(d => (
             <button
-              key={d}
-              onClick={() => handleDump(d)}
+              key={d.id}
+              onClick={() => handleDump(d.id)}
               disabled={dumpLoading}
               style={{ ...BTN, background: '#334155', color: '#f1f5f9', fontSize: 12 }}
             >
-              Dump {d}
+              Dump {AXIS_NAMES[d.axis]}
             </button>
           ))}
         </div>

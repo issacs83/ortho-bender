@@ -91,6 +91,7 @@ class MotorService:
         # moment the jog task finishes. Without this the bar would keep moving
         # because _bench_status returned JOGGING while the cancel was in flight.
         self._bench_estop_active: bool = False
+        self._last_fault_clear: dict | None = None
         # Limit-switch homing state (bench): flag while the homing sequence
         # runs (status shows HOMING), axes homed since server start, and
         # the last homing failure (surfaced via GET /api/motor/limits).
@@ -978,6 +979,15 @@ class MotorService:
         """
         if self.has_bench:
             self._bench_estop_active = False
+            # Actually clear latched driver faults. Previously this only
+            # dropped the E-STOP flag, so a latched S2G left the bench
+            # refusing every move until someone power-cycled it.
+            clear = getattr(self._spi_backend, "clear_driver_faults", None)
+            if callable(clear):
+                try:
+                    self._last_fault_clear = await clear()
+                except Exception as exc:
+                    log.warning("driver fault clear failed: %s", exc)
             return await self.get_status()
         payload = build_drv_enable_payload(True, axis_mask)
         await self._ipc.send_recv(MSG_MOTION_SET_DRV_ENABLE, payload)
@@ -1004,6 +1014,16 @@ class MotorService:
         """
         if self.has_bench:
             self._bench_estop_active = False
+            # Reset is the documented way out of a fault, so it has to
+            # actually clear one. Before this it only dropped the E-STOP
+            # flag, and a latched short-detect kept refusing every move
+            # until someone walked over and cut the motor supply.
+            clear = getattr(self._spi_backend, "clear_driver_faults", None)
+            if callable(clear):
+                try:
+                    self._last_fault_clear = await clear()
+                except Exception as exc:
+                    log.warning("driver fault clear failed: %s", exc)
             return await self.get_status()
         # TODO: add axis_mask payload if M7 firmware supports per-axis reset
         await self._ipc.send_recv(MSG_MOTION_RESET)
