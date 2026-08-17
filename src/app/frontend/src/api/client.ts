@@ -26,13 +26,17 @@ export interface AxisSignals {
 
 /** GET/PUT /api/motor/protection — motion protection + holding torque. */
 export interface AxisHold {
-  hold_enabled: boolean;  // idle holding current on this axis
-  hold_cs: number;        // holding torque current scale 1-19
+  hold_enabled: boolean;      // idle holding current on this axis
+  hold_cs: number;            // holding torque current scale 1-19
+  run_cs?: number;            // current while MOVING, as requested
+  run_cs_effective?: number;  // ...and what survives the PSU cap
 }
 
 export interface ProtectionSettings {
   limit_stop: boolean;              // stop axis entering its limit window
-  axes: Record<number, AxisHold>;   // per-axis holding torque
+  axes: Record<number, AxisHold>;   // per-axis torque
+  cs_cap?: number;                  // PSU-derived ceiling for this bench
+  cs_max?: number;                  // absolute ceiling (boards burned above)
   hold_enabled: boolean;            // legacy LIFT alias
   hold_cs: number;                  // legacy LIFT alias
 }
