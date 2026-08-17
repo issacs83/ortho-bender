@@ -272,10 +272,19 @@ async def motor_limits(
 
 
 class AxisHoldUpdate(BaseModel):
-    """Holding torque for one axis."""
+    """Torque settings for one axis."""
     model_config = {"extra": "forbid"}
     hold_enabled: bool | None = None
-    hold_cs: int | None = Field(None, ge=1, le=19)
+    hold_cs: int | None = Field(
+        None, ge=1, le=19,
+        description="Idle holding current scale (1-19).")
+    run_cs: int | None = Field(
+        None, ge=1, le=19,
+        description="Coil current while this axis MOVES (1-19). Still "
+                    "clamped by the PSU preset cap: ask for more than the "
+                    "supply allows and run_cs_effective reports what you "
+                    "actually get. 19 is the ceiling -- two boards were "
+                    "destroyed at CS=31.")
 
 
 class ProtectionUpdate(BaseModel):

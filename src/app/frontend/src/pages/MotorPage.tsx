@@ -546,13 +546,17 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
             토크를 낮추면 조용해지고 발열도 줄지만 유지력이 약해집니다.
           </div>
           {!prot && <div style={{ fontSize: 12, color: TEXT_MUTED }}>Loading…</div>}
-          {prot && (
+          {prot && (() => { const csCap = prot.cs_cap ?? prot.cs_max ?? 19; return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <label style={{ fontSize: 12, color: TEXT_SECONDARY, display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
                 <input type="checkbox" checked={prot.limit_stop}
                   onChange={(e) => patchProt({ limit_stop: e.target.checked })} />
                 이동 중 리밋센서 감지 시 자동 정지
               </label>
+              <div style={{ fontSize: 10, color: TEXT_MUTED }}>
+                전류 스케일 상한: PSU {prot.cs_cap ?? '—'} / 하드웨어 {prot.cs_max ?? 19}
+                &nbsp;— 상한 초과는 자동으로 깎입니다(보드 소손 방지)
+              </div>
               {(motorStatus?.axes ?? [])
                 .filter((ax) => prot.axes && prot.axes[ax.axis])
                 .map((ax) => {
@@ -565,21 +569,36 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                           onChange={(e) => patchAxisHold(ax.axis, { hold_enabled: e.target.checked })} />
                         정지토크
                       </label>
-                      <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 6, alignItems: 'center', marginLeft: 'auto' }}
-                             title="홀딩 전류 스케일 (1-19). PSU 상한이 우선 적용됩니다.">
-                        토크
-                        <input type="range" min={1} max={14} step={1} value={h.hold_cs}
+                      <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 6, alignItems: 'center' }}
+                             title="정지 중 코일에 흘리는 전류 (1-19). PSU 상한이 우선 적용됩니다.">
+                        정지
+                        <input type="range" min={1} max={csCap} step={1} value={Math.min(h.hold_cs, csCap)}
                           onChange={(e) => patchAxisHold(ax.axis, { hold_cs: Number(e.target.value) }, 400)}
-                          style={{ width: 110 }} />
-                        <span style={{ width: 46, textAlign: 'right', fontFamily: 'monospace', color: TEXT_SECONDARY }}>
+                          style={{ width: 96 }} />
+                        <span style={{ width: 40, textAlign: 'right', fontFamily: 'monospace', color: TEXT_SECONDARY }}>
                           {h.hold_cs} CS
+                        </span>
+                      </label>
+                      <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 6, alignItems: 'center', marginLeft: 'auto' }}
+                             title="이 축이 움직일 때의 코일 전류 (1-19). 굽힘축처럼 토크가 필요한 축만 올리세요. PSU 상한을 넘겨 요청하면 자동으로 깎입니다.">
+                        운전
+                        <input type="range" min={1} max={csCap} step={1}
+                          value={Math.min(h.run_cs ?? csCap, csCap)}
+                          onChange={(e) => patchAxisHold(ax.axis, { run_cs: Number(e.target.value) }, 400)}
+                          style={{ width: 96 }} />
+                        <span style={{ width: 62, textAlign: 'right', fontFamily: 'monospace', color: TEXT_SECONDARY }}>
+                          {h.run_cs_effective ?? h.run_cs ?? '—'} CS
+                          {h.run_cs !== undefined && h.run_cs_effective !== undefined
+                            && h.run_cs !== h.run_cs_effective && (
+                            <span style={{ color: '#fbbf24' }} title="PSU 상한에 걸려 깎였습니다"> ▼</span>
+                          )}
                         </span>
                       </label>
                     </div>
                   );
                 })}
             </div>
-          )}
+          ); })()}
         </div>
         <div style={cardStyle}>
           <h3 style={{ margin: '0 0 4px', fontSize: 14, color: TEXT_PRIMARY }}>Move To Position</h3>

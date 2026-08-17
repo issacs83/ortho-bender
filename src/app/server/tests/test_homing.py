@@ -181,12 +181,15 @@ async def test_protection_get_and_set(svc):
     p = svc.get_protection()
     assert p["limit_stop"] is True
     assert p["hold_enabled"] is True        # legacy LIFT alias
-    assert p["axes"][3] == {"hold_enabled": True, "hold_cs": 8}
-    assert p["axes"][0] == {"hold_enabled": False, "hold_cs": 8}   # FEED
+    assert p["axes"][3]["hold_enabled"] is True
+    assert p["axes"][3]["hold_cs"] == 8
+    assert p["axes"][0]["hold_enabled"] is False   # FEED
+    assert p["axes"][0]["hold_cs"] == 8
 
     p = await svc.set_protection(limit_stop=False, hold_enabled=False, hold_cs=5)
     assert p["limit_stop"] is False
-    assert p["axes"][3] == {"hold_enabled": False, "hold_cs": 5}
+    assert p["axes"][3]["hold_enabled"] is False
+    assert p["axes"][3]["hold_cs"] == 5
     assert be.limit_guard is False and be.hold_axes == set()
 
 
@@ -195,7 +198,8 @@ async def test_protection_per_axis_hold(svc):
     """FEED can be held independently of LIFT, with its own current."""
     be = svc._spi_backend
     p = await svc.set_protection(axes={0: {"hold_enabled": True, "hold_cs": 14}})
-    assert p["axes"][0] == {"hold_enabled": True, "hold_cs": 14}
+    assert p["axes"][0]["hold_enabled"] is True
+    assert p["axes"][0]["hold_cs"] == 14
     assert be.hold_axes == {2}              # FEED is cs2
     assert p["axes"][3]["hold_enabled"] is False   # LIFT untouched
 

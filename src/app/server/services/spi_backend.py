@@ -240,6 +240,13 @@ class SpidevMotorBackend(MotorBackend):
         # insensitivity), which is why SG_RESULT never moved usefully
         # until an axis was tuned. Persisted with the position state.
         self.sgt_map: dict[int, int] = {}
+
+        # Per-axis RUNNING coil current (SGCSCONF bits 0-4). Holding
+        # current was already per-axis; the current used while an axis
+        # actually moves was a single global value, so a bending axis
+        # that needs torque and a feed roller that does not had to share
+        # one setting. Always clamped by the PSU cap and SAFETY_CS_MAX.
+        self.run_cs_map: dict[int, int] = {}
         self.sg_filter: bool = bool((SGCSCONF_DEFAULT >> 16) & 1)
 
         # Limit guard: stop an axis that ENTERS its limit window during
@@ -289,6 +296,9 @@ class SpidevMotorBackend(MotorBackend):
             try:
                 self.sgt_map = {int(k): int(v)
                                 for k, v in (d.get("sgt") or {}).items()}
+                self.run_cs_map = {
+                    int(k): max(0, min(int(v), SAFETY_CS_MAX))
+                    for k, v in (d.get("run_cs") or {}).items()}
                 if "sg_filter" in d:
                     self.sg_filter = bool(d["sg_filter"])
             except (TypeError, ValueError):
@@ -309,6 +319,8 @@ class SpidevMotorBackend(MotorBackend):
                     "positions": {str(k): int(v) for k, v in self.positions.items()},
                     "homed": sorted(self.homed_persist),
                     "sgt": {str(k): int(v) for k, v in self.sgt_map.items()},
+                    "run_cs": {str(k): int(v)
+                               for k, v in self.run_cs_map.items()},
                     "sg_filter": bool(self.sg_filter),
                 }, f)
             os.replace(tmp, _STATE_FILE)
@@ -1290,9 +1302,23 @@ class SpidevMotorBackend(MotorBackend):
             log.info("SGCSCONF current cap: CS ≤ %d (PSU-derived)", capped)
         self._cs_scale_cap = capped
 
-    def effective_cs(self) -> int:
-        """Coil current scale actually written to the chips (0-31)."""
-        return min(SGCSCONF_DEFAULT & 0x1F, self._cs_scale_cap)
+    def run_cs_for(self, cs: int) -> int:
+        """Running current for one axis, after every clamp.
+
+        Two boards were destroyed at CS=31 (2026-05-08), so the axis
+        setting is only ever allowed to *narrow*: it is bounded by the
+        PSU-derived cap and then by SAFETY_CS_MAX, in that order. No
+        caller can widen it, including this one.
+        """
+        want = int(self.run_cs_map.get(cs, SGCSCONF_DEFAULT & 0x1F))
+        return max(0, min(want, self._cs_scale_cap, SAFETY_CS_MAX))
+
+    def effective_cs(self, cs: int | None = None) -> int:
+        """Coil current scale actually written to the chip (0-31)."""
+        if cs is None:
+            return min(SGCSCONF_DEFAULT & 0x1F, self._cs_scale_cap,
+                       SAFETY_CS_MAX)
+        return self.run_cs_for(cs)
 
     def sgt_for(self, cs: int) -> int:
         """StallGuard threshold for one axis (-64..63, higher = less
@@ -1307,7 +1333,8 @@ class SpidevMotorBackend(MotorBackend):
 
         Layout: bit16 SFILT, bits 8-14 SGT (signed 7-bit), bits 0-4 CS.
         """
-        current = min(SGCSCONF_DEFAULT & 0x1F, self._cs_scale_cap)
+        current = self.run_cs_for(cs) if cs is not None else min(
+            SGCSCONF_DEFAULT & 0x1F, self._cs_scale_cap, SAFETY_CS_MAX)
         sgt = self.sgt_for(cs) if cs is not None else (
             (SGCSCONF_DEFAULT >> 8) & 0x7F)
         return ((1 if self.sg_filter else 0) << 16) | ((sgt & 0x7F) << 8) | current

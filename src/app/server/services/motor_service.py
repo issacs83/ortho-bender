@@ -20,6 +20,7 @@ from ..models.schemas import (
     MotionState,
     MotorStatusResponse,
 )
+from .tmc260c_driver import SAFETY_CS_MAX, SGCSCONF_DEFAULT
 from .ipc_client import (
     IpcClient,
     MSG_MOTION_EXECUTE_BCODE,
@@ -395,7 +396,8 @@ class MotorService:
                 # This field read 19 unconditionally, which made an axis
                 # look like it was running at the safety ceiling no matter
                 # what the PSU preset had clamped it to.
-                cs_actual=int(getattr(self._spi_backend, "effective_cs", lambda: 0)()),
+                cs_actual=int(self._spi_backend.effective_cs(cs))
+                          if hasattr(self._spi_backend, "effective_cs") else 0,
                 signals=AxisSignals(**sig_dict) if sig_dict else None,
             ))
             axis_mask |= (1 << axis_int)
@@ -703,10 +705,21 @@ class MotorService:
                 "hold_enabled": cs in held,
                 "hold_cs": int(be.hold_cs_for(cs)) if hasattr(be, "hold_cs_for")
                            else int(getattr(be, "hold_cs", 0)),
+                # What the axis is set to, and what it will actually get
+                # after the PSU cap -- they differ whenever the request
+                # asks for more than the supply allows, and hiding that
+                # would make a clamped axis look like a configured one.
+                "run_cs": int(be.run_cs_map.get(cs, SGCSCONF_DEFAULT & 0x1F))
+                          if hasattr(be, "run_cs_map")
+                          else (SGCSCONF_DEFAULT & 0x1F),
+                "run_cs_effective": int(be.run_cs_for(cs))
+                                    if hasattr(be, "run_cs_for") else 0,
             }
         lift_cs = self._axis_to_cs.get(int(AxisId.LIFT))
         return {
             "limit_stop": bool(getattr(be, "limit_guard", False)),
+            "cs_cap": int(getattr(be, "_cs_scale_cap", 0)),
+            "cs_max": SAFETY_CS_MAX,
             "axes": axes,
             # legacy aliases (LIFT)
             "hold_enabled": lift_cs in held,
@@ -749,6 +762,11 @@ class MotorService:
                 continue
             if "hold_cs" in v and v["hold_cs"] is not None:
                 be.hold_cs_map[cs] = max(1, min(int(v["hold_cs"]), 19))
+            if "run_cs" in v and v["run_cs"] is not None:
+                # Clamped again in run_cs_for() against the live PSU cap.
+                # Clamping here too means a stored value can never sit
+                # above the ceiling even if the file is edited by hand.
+                be.run_cs_map[cs] = max(1, min(int(v["run_cs"]), 19))
             if "hold_enabled" in v and v["hold_enabled"] is not None:
                 if v["hold_enabled"]:
                     be.hold_axes = set(be.hold_axes) | {cs}
@@ -766,6 +784,9 @@ class MotorService:
                         await be._silence_chip(cs)
                 except Exception as exc:
                     log.warning("hold re-apply cs=%d failed: %s", cs, exc)
+        save = getattr(be, "_save_state", None)
+        if callable(save):
+            save()
         log.info("protection updated: %s", self.get_protection())
         return self.get_protection()
 
