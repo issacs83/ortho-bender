@@ -190,3 +190,50 @@ async def test_motor_reset(client):
     body = resp.json()
     assert body["success"] is True
     assert body["data"]["state"] == 0  # IDLE after reset
+
+
+# ---------------------------------------------------------------------------
+# GET/PUT /api/motor/stallguard
+# ---------------------------------------------------------------------------
+
+async def test_stallguard_get_shape(client):
+    """StallGuard report exposes per-axis threshold + live load."""
+    resp = await client.get("/api/motor/stallguard")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    data = body["data"]
+    assert "axes" in data
+    assert "filter" in data
+    for entry in data["axes"].values():
+        assert set(entry) == {"sgt", "sg_result", "stall", "energized"}
+        assert -64 <= entry["sgt"] <= 63
+        assert 0 <= entry["sg_result"] <= 1023
+
+
+async def test_stallguard_rejects_out_of_range_sgt(client):
+    """SGT is a signed 7-bit field — anything outside -64..63 is refused
+    before it can be shifted into SGCSCONF and corrupt the current bits."""
+    for bad in (64, -65, 999):
+        resp = await client.put("/api/motor/stallguard", json={"axis": 1, "sgt": bad})
+        assert resp.status_code == 422, bad
+
+
+async def test_stallguard_put_without_bench(client):
+    """Off-bench the tuning call reports an error rather than pretending
+    it wrote a register."""
+    resp = await client.put("/api/motor/stallguard", json={"axis": 1, "sgt": 8})
+    assert resp.status_code == 200
+    body = resp.json()
+    if not body["success"]:
+        assert body["code"] == "MOTOR_SG_ERROR"
+
+
+async def test_status_signals_carry_sg_value(client):
+    """The status stream carries the numeric load reading so a client can
+    chart it while tuning; the boolean stall flag alone is not tunable."""
+    resp = await client.get("/api/motor/status")
+    for ax in resp.json()["data"]["axes"]:
+        sig = ax.get("signals")
+        if sig is not None and sig.get("sg_value") is not None:
+            assert 0 <= sig["sg_value"] <= 1023

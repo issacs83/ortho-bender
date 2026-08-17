@@ -46,6 +46,7 @@ from .tmc260c_driver import (
     SAFETY_CS_MAX, SAFETY_TOFF_MAX,
     CHOPCONF_DEFAULT, SMARTEN_DEFAULT, DRVCONF_DEFAULT, SGCSCONF_DEFAULT,
     DRVCTRL_DEFAULT,
+    RESP_S2GA, RESP_S2GB, RESP_OLA, RESP_OLB, RESP_STST,
 )
 
 log = logging.getLogger(__name__)
@@ -193,6 +194,15 @@ class SpidevMotorBackend(MotorBackend):
         self._chip_active: dict[int, bool] = {0: False, 1: False, 2: False}
         self._chip_responsive: dict[int, bool] = {0: False, 1: False, 2: False}
         self._last_sg: dict[int, bool] = {0: False, 1: False, 2: False}
+        # Numeric StallGuard load reading (0-1023, RDSEL=01 -> bits 19:10).
+        # The boolean above is only the stall FLAG; tuning SGT needs the
+        # value, because you pick the threshold from where the load
+        # reading sits under real cutting/bending load.
+        self._last_sg_value: dict[int, int] = {0: 0, 1: 0, 2: 0}
+        # Whole 20-bit response per cs. Comparing the full words across
+        # chips is what distinguishes a dead supply rail from real
+        # per-axis faults.
+        self._last_status: dict[int, int] = {}
         self._last_dir: int = 0   # 0 = unknown / not driven yet
         self._pwm_active: bool = False
         # E-STOP kill latch: once set, _pwm_set_hz refuses to touch the PWM
@@ -224,6 +234,13 @@ class SpidevMotorBackend(MotorBackend):
         # no gravity load to make it obvious.
         self.hold_cs: int = 8                       # default for any axis
         self.hold_cs_map: dict[int, int] = {}       # per-cs override
+
+        # StallGuard2 threshold per cs (SGCSCONF bits 8-14, signed 7-bit).
+        # Higher = LESS sensitive. The module default is +63 (maximum
+        # insensitivity), which is why SG_RESULT never moved usefully
+        # until an axis was tuned. Persisted with the position state.
+        self.sgt_map: dict[int, int] = {}
+        self.sg_filter: bool = bool((SGCSCONF_DEFAULT >> 16) & 1)
 
         # Limit guard: stop an axis that ENTERS its limit window during
         # normal motion (edge-triggered; starting inside the window keeps
@@ -269,6 +286,13 @@ class SpidevMotorBackend(MotorBackend):
                 self.homed_persist = {int(x) for x in d.get("homed", [])}
             except (TypeError, ValueError):
                 self.homed_persist = set()
+            try:
+                self.sgt_map = {int(k): int(v)
+                                for k, v in (d.get("sgt") or {}).items()}
+                if "sg_filter" in d:
+                    self.sg_filter = bool(d["sg_filter"])
+            except (TypeError, ValueError):
+                self.sgt_map = {}
             log.info("Restored motor positions from %s: %s (homed=%s)",
                      _STATE_FILE, self.positions, sorted(self.homed_persist))
         except FileNotFoundError:
@@ -284,6 +308,8 @@ class SpidevMotorBackend(MotorBackend):
                 json.dump({
                     "positions": {str(k): int(v) for k, v in self.positions.items()},
                     "homed": sorted(self.homed_persist),
+                    "sgt": {str(k): int(v) for k, v in self.sgt_map.items()},
+                    "sg_filter": bool(self.sg_filter),
                 }, f)
             os.replace(tmp, _STATE_FILE)
         except Exception as exc:
@@ -844,6 +870,26 @@ class SpidevMotorBackend(MotorBackend):
     # -------------------------------------------------------------------
     # Signal helpers (LED row on the dashboard)
     # -------------------------------------------------------------------
+    def rail_suspect(self) -> bool:
+        """True when the motor supply rail looks dead rather than the
+        axes being individually faulted.
+
+        Three independent driver boards share one VMot rail. With that
+        rail down they still answer on SPI (logic runs off VCC_IO) but
+        their output stages are off, so the short-detect comparators all
+        report the same fault and the standstill flag never sets. Three
+        bit-identical fault words with no standstill is therefore a rail
+        symptom, not three coincidental shorts -- and saying so turns a
+        multi-hour hunt into one voltage measurement.
+        """
+        words = [w for w in self._last_status.values() if w is not None]
+        if len(words) < 2 or len(set(words)) != 1:
+            return False
+        word = words[0]
+        faulted = bool(word & (RESP_S2GA | RESP_S2GB | RESP_OLA | RESP_OLB))
+        standstill = bool(word & RESP_STST)
+        return faulted and not standstill
+
     def get_axis_signals(self, cs: int) -> dict:
         """Return a snapshot of the five LED signals for one cs.
 
@@ -868,6 +914,7 @@ class SpidevMotorBackend(MotorBackend):
             "dir":  int(self._last_dir),
             "step": bool(self._pwm_active and self._active_axis == cs),
             "limit": self.limit_active(cs),
+            "sg_value": int(self._last_sg_value.get(cs, 0)),
         }
 
     # -------------------------------------------------------------------
@@ -1195,11 +1242,27 @@ class SpidevMotorBackend(MotorBackend):
             log.info("SGCSCONF current cap: CS ≤ %d (PSU-derived)", capped)
         self._cs_scale_cap = capped
 
-    def _sgcs_on_value(self) -> int:
-        """SGCSCONF with the current scale limited to the PSU cap."""
-        default_cs = SGCSCONF_DEFAULT & 0x1F
-        cs = min(default_cs, self._cs_scale_cap)
-        return (SGCSCONF_DEFAULT & ~0x1F) | cs
+    def effective_cs(self) -> int:
+        """Coil current scale actually written to the chips (0-31)."""
+        return min(SGCSCONF_DEFAULT & 0x1F, self._cs_scale_cap)
+
+    def sgt_for(self, cs: int) -> int:
+        """StallGuard threshold for one axis (-64..63, higher = less
+        sensitive)."""
+        default_sgt = (SGCSCONF_DEFAULT >> 8) & 0x7F
+        if default_sgt > 63:
+            default_sgt -= 128
+        return int(self.sgt_map.get(cs, default_sgt))
+
+    def _sgcs_on_value(self, cs: int | None = None) -> int:
+        """SGCSCONF for one axis: PSU-capped current scale + its SGT.
+
+        Layout: bit16 SFILT, bits 8-14 SGT (signed 7-bit), bits 0-4 CS.
+        """
+        current = min(SGCSCONF_DEFAULT & 0x1F, self._cs_scale_cap)
+        sgt = self.sgt_for(cs) if cs is not None else (
+            (SGCSCONF_DEFAULT >> 8) & 0x7F)
+        return ((1 if self.sg_filter else 0) << 16) | ((sgt & 0x7F) << 8) | current
 
     async def _init_chip(self, cs: int) -> None:
         """Lazy init: full SEQ on first call, fast chopper re-enable after.
@@ -1218,7 +1281,7 @@ class SpidevMotorBackend(MotorBackend):
         if self._initialized.get(cs, False):
             # Fast re-enable: chopper on + current scale
             chopconf_on = self._encode(0x04, CHOPCONF_DEFAULT)
-            sgcs_on     = self._encode(0x06, self._sgcs_on_value())
+            sgcs_on     = self._encode(0x06, self._sgcs_on_value(cs))
             tx_chop = bytes([(chopconf_on >> 16) & 0xFF, (chopconf_on >> 8) & 0xFF, chopconf_on & 0xFF])
             tx_sgcs = bytes([(sgcs_on >> 16) & 0xFF, (sgcs_on >> 8) & 0xFF, sgcs_on & 0xFF])
             for _ in range(_REENABLE_CYCLES):
@@ -1233,8 +1296,8 @@ class SpidevMotorBackend(MotorBackend):
         for cycle in range(_INIT_SEQ_CYCLES_FULL):
             rx = b"\x00\x00\x00"
             for _name, tag, value in _INIT_SEQ:
-                if tag == 0x06:  # SGCSCONF: substitute PSU-capped value
-                    value = self._sgcs_on_value()
+                if tag == 0x06:  # SGCSCONF: PSU-capped current + per-axis SGT
+                    value = self._sgcs_on_value(cs)
                 datagram = self._encode(tag, value)
                 tx = bytes([
                     (datagram >> 16) & 0xFF,
@@ -1294,6 +1357,8 @@ class SpidevMotorBackend(MotorBackend):
         # to 0xFF when VMot is dead, so a 0xFFFFF read means "no power".
         self._chip_responsive[cs] = (status != 0xFFFFF and status != 0)
         self._last_sg[cs] = bool(status & 0x01)
+        self._last_sg_value[cs] = (status >> 10) & 0x3FF
+        self._last_status[cs] = status
         return status
 
     @staticmethod

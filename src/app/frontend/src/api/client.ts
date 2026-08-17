@@ -21,6 +21,7 @@ export interface AxisSignals {
   dir:  number;    // +1 / -1, 0 = never driven yet
   step: boolean;   // PWM enabled AND this axis is the active target
   limit?: boolean | null;  // limit switch tripped; null/undefined = none fitted
+  sg_value?: number;       // StallGuard2 load reading 0-1023 (SGT tuning)
 }
 
 /** GET/PUT /api/motor/protection — motion protection + holding torque. */
@@ -34,6 +35,19 @@ export interface ProtectionSettings {
   axes: Record<number, AxisHold>;   // per-axis holding torque
   hold_enabled: boolean;            // legacy LIFT alias
   hold_cs: number;                  // legacy LIFT alias
+}
+
+/** GET/PUT /api/motor/stallguard — StallGuard2 tuning + live load. */
+export interface StallGuardAxis {
+  sgt: number;         // threshold -64..63 (LOWER = more sensitive)
+  sg_result: number;   // live load reading 0-1023
+  stall: boolean;      // stall flag at the last read
+  energized: boolean;  // chopper on (SG is meaningless when off)
+}
+
+export interface StallGuardSettings {
+  axes: Record<number, StallGuardAxis>;
+  filter: boolean;     // SFILT — smoother but 4x slower response
 }
 
 /** GET /api/motor/limits — live switch states + homing bookkeeping. */
@@ -255,6 +269,15 @@ export const motorApi = {
     request("/api/motor/move_to", {
       method: "POST",
       body: JSON.stringify({ axis, position, speed }),
+    }),
+
+  stallguard: (): Promise<StallGuardSettings> =>
+    request("/api/motor/stallguard"),
+
+  updateStallguard: (patch: { axis?: number; sgt?: number; filter?: boolean }): Promise<StallGuardSettings> =>
+    request("/api/motor/stallguard", {
+      method: "PUT",
+      body: JSON.stringify(patch),
     }),
 
   protection: (): Promise<ProtectionSettings> =>

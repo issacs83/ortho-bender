@@ -144,6 +144,7 @@ class AxisSignals(BaseModel):
     dir:  int           # +1 / -1 (logical), 0 = never driven
     step: bool          # PWM4 enabled AND this axis is the active target
     limit: bool | None = None   # limit switch tripped; None = no switch fitted
+    sg_value: int | None = None # StallGuard2 load reading 0-1023 (SGT tuning)
 
 
 class AxisStatus(BaseModel):
