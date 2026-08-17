@@ -27,6 +27,7 @@ class _StubBench:
         self.limit_guard = True
         self.hold_axes: set[int] = set()
         self.hold_cs = 8
+        self.hold_cs_map: dict[int, int] = {}
         self.homed_persist: set[int] = set()
 
     async def pulse_step(self, cs, steps, freq, direction, profile=None):
@@ -40,6 +41,9 @@ class _StubBench:
 
     def _save_state(self):
         pass
+
+    def hold_cs_for(self, cs):
+        return self.hold_cs_map.get(cs, self.hold_cs)
 
     def limit_active(self, cs):
         return self.limit.get(cs)
@@ -173,12 +177,33 @@ async def test_homed_flag_persisted_to_backend(svc):
 @pytest.mark.asyncio
 async def test_protection_get_and_set(svc):
     be = svc._spi_backend
-    be.hold_axes = {0}
-    assert svc.get_protection() == {
-        "limit_stop": True, "hold_enabled": True, "hold_cs": 8}
+    be.hold_axes = {0}                      # cs0 = LIFT
+    p = svc.get_protection()
+    assert p["limit_stop"] is True
+    assert p["hold_enabled"] is True        # legacy LIFT alias
+    assert p["axes"][3] == {"hold_enabled": True, "hold_cs": 8}
+    assert p["axes"][0] == {"hold_enabled": False, "hold_cs": 8}   # FEED
+
     p = await svc.set_protection(limit_stop=False, hold_enabled=False, hold_cs=5)
-    assert p == {"limit_stop": False, "hold_enabled": False, "hold_cs": 5}
+    assert p["limit_stop"] is False
+    assert p["axes"][3] == {"hold_enabled": False, "hold_cs": 5}
     assert be.limit_guard is False and be.hold_axes == set()
+
+
+@pytest.mark.asyncio
+async def test_protection_per_axis_hold(svc):
+    """FEED can be held independently of LIFT, with its own current."""
+    be = svc._spi_backend
+    p = await svc.set_protection(axes={0: {"hold_enabled": True, "hold_cs": 14}})
+    assert p["axes"][0] == {"hold_enabled": True, "hold_cs": 14}
+    assert be.hold_axes == {2}              # FEED is cs2
+    assert p["axes"][3]["hold_enabled"] is False   # LIFT untouched
+
+
+@pytest.mark.asyncio
+async def test_protection_rejects_unheldable_axis(svc):
+    with pytest.raises(ValueError):
+        await svc.set_protection(axes={2: {"hold_enabled": True}})   # ROTATE
 
 
 @pytest.mark.asyncio

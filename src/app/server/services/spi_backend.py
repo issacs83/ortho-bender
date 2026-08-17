@@ -219,7 +219,11 @@ class SpidevMotorBackend(MotorBackend):
         # so held axes are released for the duration of other-axis motion
         # and re-held afterwards. main.py populates from config.
         self.hold_axes: set[int] = set()
-        self.hold_cs: int = 8
+        # Holding current per cs. Any axis may be held — FEED and BEND
+        # free-wheel when de-energized just like LIFT, they simply have
+        # no gravity load to make it obvious.
+        self.hold_cs: int = 8                       # default for any axis
+        self.hold_cs_map: dict[int, int] = {}       # per-cs override
 
         # Limit guard: stop an axis that ENTERS its limit window during
         # normal motion (edge-triggered; starting inside the window keeps
@@ -869,11 +873,15 @@ class SpidevMotorBackend(MotorBackend):
     # -------------------------------------------------------------------
     # Gravity-axis holding
     # -------------------------------------------------------------------
+    def hold_cs_for(self, cs: int) -> int:
+        """Holding current scale for one axis (per-axis override first)."""
+        return int(self.hold_cs_map.get(cs, self.hold_cs))
+
     async def _hold_chip(self, cs: int) -> None:
-        """Energize `cs` at reduced holding current (idle gravity hold)."""
+        """Energize `cs` at its holding current (idle anti-backdrive)."""
         cap = self._cs_scale_cap
         try:
-            self.apply_current_cap(min(cap, int(self.hold_cs)))
+            self.apply_current_cap(min(cap, self.hold_cs_for(cs)))
             await self._init_chip(cs)
         finally:
             self.apply_current_cap(cap)

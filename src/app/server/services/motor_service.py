@@ -667,42 +667,90 @@ class MotorService:
     # ------------------------------------------------------------------
     # Protection / holding-torque settings (bench)
     # ------------------------------------------------------------------
+    # Axes that can be held. ROTATE is not fitted on this bench.
+    _HOLDABLE = (int(AxisId.FEED), int(AxisId.BEND), int(AxisId.LIFT))
+
     def get_protection(self) -> dict:
-        """Runtime motion-protection settings."""
+        """Runtime motion-protection settings.
+
+        `axes` carries the per-axis holding torque; `hold_enabled` /
+        `hold_cs` remain as LIFT-shaped aliases so older clients keep
+        working.
+        """
         be = self._spi_backend
+        held = getattr(be, "hold_axes", set()) or set()
+        axes = {}
+        for axis in self._HOLDABLE:
+            cs = self._axis_to_cs.get(axis)
+            if cs is None:
+                continue
+            axes[axis] = {
+                "hold_enabled": cs in held,
+                "hold_cs": int(be.hold_cs_for(cs)) if hasattr(be, "hold_cs_for")
+                           else int(getattr(be, "hold_cs", 0)),
+            }
+        lift_cs = self._axis_to_cs.get(int(AxisId.LIFT))
         return {
             "limit_stop": bool(getattr(be, "limit_guard", False)),
-            "hold_enabled": 0 in (getattr(be, "hold_axes", set()) or set()),
-            "hold_cs": int(getattr(be, "hold_cs", 0)),
+            "axes": axes,
+            # legacy aliases (LIFT)
+            "hold_enabled": lift_cs in held,
+            "hold_cs": axes.get(int(AxisId.LIFT), {}).get(
+                "hold_cs", int(getattr(be, "hold_cs", 0))),
         }
 
     async def set_protection(self, limit_stop=None, hold_enabled=None,
-                             hold_cs=None) -> dict:
-        """Update protection settings; hold changes apply immediately
-        when the bench is idle (energize / release the LIFT chopper)."""
+                             hold_cs=None, axes=None) -> dict:
+        """Update protection settings.
+
+        `axes` is a per-axis map {axis: {hold_enabled?, hold_cs?}};
+        `hold_enabled`/`hold_cs` without it apply to LIFT (legacy shape).
+        Holding changes take effect immediately while the bench is idle.
+        """
         if not self.has_bench:
             raise RuntimeError("protection settings are bench-only")
         be = self._spi_backend
         if limit_stop is not None:
             be.limit_guard = bool(limit_stop)
-        if hold_cs is not None:
-            be.hold_cs = max(1, min(int(hold_cs), 19))
-        if hold_enabled is not None:
-            if hold_enabled:
-                be.hold_axes = {0}
-            else:
-                be.hold_axes = set()
+
+        # Normalise every request into a per-axis map.
+        patch: dict[int, dict] = {}
+        if axes:
+            for k, v in axes.items():
+                patch[int(k)] = dict(v or {})
+        if hold_enabled is not None or hold_cs is not None:
+            lift = patch.setdefault(int(AxisId.LIFT), {})
+            if hold_enabled is not None:
+                lift.setdefault("hold_enabled", bool(hold_enabled))
+            if hold_cs is not None:
+                lift.setdefault("hold_cs", int(hold_cs))
+
+        touched: list[int] = []
+        for axis, v in patch.items():
+            if axis not in self._HOLDABLE:
+                raise ValueError(f"axis {axis} cannot be held on this bench")
+            cs = self._axis_to_cs.get(axis)
+            if cs is None:
+                continue
+            if "hold_cs" in v and v["hold_cs"] is not None:
+                be.hold_cs_map[cs] = max(1, min(int(v["hold_cs"]), 19))
+            if "hold_enabled" in v and v["hold_enabled"] is not None:
+                if v["hold_enabled"]:
+                    be.hold_axes = set(be.hold_axes) | {cs}
+                else:
+                    be.hold_axes = set(be.hold_axes) - {cs}
+            touched.append(cs)
+
         idle = self._bench_jog_task is None or self._bench_jog_task.done()
-        if idle and not self._bench_estop_active and (
-                hold_enabled is not None or hold_cs is not None):
-            # Re-apply the new holding state right away.
-            try:
-                if 0 in be.hold_axes:
-                    await be._hold_chip(0)
-                elif hold_enabled is not None:
-                    await be._silence_chip(0)
-            except Exception as exc:
-                log.warning("hold re-apply failed: %s", exc)
+        if touched and idle and not self._bench_estop_active:
+            for cs in touched:
+                try:
+                    if cs in be.hold_axes:
+                        await be._hold_chip(cs)
+                    else:
+                        await be._silence_chip(cs)
+                except Exception as exc:
+                    log.warning("hold re-apply cs=%d failed: %s", cs, exc)
         log.info("protection updated: %s", self.get_protection())
         return self.get_protection()
 

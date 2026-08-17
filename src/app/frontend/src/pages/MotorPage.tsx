@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
-import { motorApi, diagApi, type MotorStatus, type AxisStatus, type DriverProbeResult, type MotionProfile, type ProtectionSettings } from '../api/client';
+import { motorApi, diagApi, type MotorStatus, type AxisStatus, type DriverProbeResult, type MotionProfile, type ProtectionSettings, type AxisHold } from '../api/client';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { SliderInput } from '../components/ui/SliderInput';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -106,6 +106,20 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   const [prot, setProt] = useState<ProtectionSettings | null>(null);
   const protCsTimer = useRef<number>(0);
   useEffect(() => { motorApi.protection().then(setProt).catch(() => null); }, []);
+  // Per-axis holding torque. The server merges partial axis maps, so we
+  // only send the axis that changed.
+  function patchAxisHold(axis: number, patch: Partial<AxisHold>, debounceMs = 0) {
+    setProt((p) => (p ? { ...p, axes: { ...p.axes, [axis]: { ...p.axes[axis], ...patch } } } : p));
+    const send = () => motorApi.updateProtection({ axes: { [axis]: patch } } as never)
+      .then(setProt).catch(() => null);
+    if (debounceMs > 0) {
+      if (protCsTimer.current) window.clearTimeout(protCsTimer.current);
+      protCsTimer.current = window.setTimeout(send, debounceMs);
+    } else {
+      send();
+    }
+  }
+
   function patchProt(patch: Partial<ProtectionSettings>, debounceMs = 0) {
     setProt((p) => (p ? { ...p, ...patch } : p));
     const send = () => motorApi.updateProtection(patch).then(setProt).catch(() => null);
@@ -120,6 +134,11 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   const [targetPos, setTargetPos] = usePersistentState('motor.targetPos', 0);
   const [multiTarget, setMultiTarget] = usePersistentState<number[]>('motor.multiTarget', [0, 0, 0, 0]);
   const [softLimits] = useSoftLimits();
+  // Per-axis speed ceiling from the server (STEP 8 kHz / steps_per_unit):
+  // FEED·LIFT 40, BEND ~347 at the current calibration. Without this the
+  // inputs offered 360 on every axis and the server silently clamped back.
+  const { cal } = useAxisCalibration();
+  const axisMaxSpeed = (axis: number) => cal.speed_limit[axis] ?? 40;
   // Transient: modals + error
   const [showHomeModal, setShowHomeModal] = useState(false);
   const [showMoveAllModal, setShowMoveAllModal] = useState(false);
@@ -475,10 +494,10 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                 <div key={ax.axis} style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', padding: '6px 8px', background: BG_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 6 }}>
                   <span style={{ color: AXIS_COLORS[ax.axis], fontWeight: 600, fontSize: 12, width: 58 }}>{AXIS_NAMES[ax.axis]}</span>
                   <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
-                    Speed {numBox(p.jog_speed, 0.1, 360, 0.5, (v) => patchProfile(ax.axis, { jog_speed: v }))} {unit}/s
+                    Speed {numBox(p.jog_speed, 0.1, axisMaxSpeed(ax.axis), 0.5, (v) => patchProfile(ax.axis, { jog_speed: v }))} {unit}/s
                   </label>
                   <label title="Machine velocity limit — every motion command on this axis is clamped to it (GRBL $110-112 analog)" style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
-                    Vmax {numBox(p.max_speed ?? 40, 0.1, 360, 0.5, (v) => patchProfile(ax.axis, { max_speed: v }))} {unit}/s
+                    Vmax {numBox(p.max_speed ?? 40, 0.1, axisMaxSpeed(ax.axis), 0.5, (v) => patchProfile(ax.axis, { max_speed: v }))} {unit}/s
                   </label>
                   <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
                     Step {numBox(p.step_size, 0.01, 360, 0.1, (v) => patchProfile(ax.axis, { step_size: v }))} {unit}
@@ -516,7 +535,12 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
           </div>
         </div>
         <div style={cardStyle}>
-          <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Protection · 정지토크</h3>
+          <h3 style={{ margin: '0 0 4px', fontSize: 14, color: TEXT_PRIMARY }}>Protection · 정지토크</h3>
+          <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 10 }}>
+            정지토크는 <b>축별</b>로 켭니다. 꺼진 축은 코일이 풀려 손으로 돌아갑니다
+            (LIFT는 중력 침하, FEED/BEND는 외력에 밀림). 통전 중 초퍼 소음은 정상이며,
+            토크를 낮추면 조용해지고 발열도 줄지만 유지력이 약해집니다.
+          </div>
           {!prot && <div style={{ fontSize: 12, color: TEXT_MUTED }}>Loading…</div>}
           {prot && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -525,42 +549,88 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                   onChange={(e) => patchProt({ limit_stop: e.target.checked })} />
                 이동 중 리밋센서 감지 시 자동 정지
               </label>
-              <label style={{ fontSize: 12, color: TEXT_SECONDARY, display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}
-                title="유휴 시 LIFT 코일을 통전 유지해 중력 침하를 막습니다. 통전 중 초퍼 소음(지잉)이 나는 게 정상 — 시끄러우면 아래 토크를 낮추세요.">
-                <input type="checkbox" checked={prot.hold_enabled}
-                  onChange={(e) => patchProt({ hold_enabled: e.target.checked })} />
-                LIFT 정지토크(홀딩) — 중력 침하 방지
-              </label>
-              <SliderInput
-                label="Hold Torque"
-                value={prot.hold_cs}
-                min={1} max={14} step={1} unit="CS"
-                help="정지(홀딩) 전류 스케일. 낮출수록 조용하고 발열이 적지만 유지력이 줄어듭니다. LIFT가 흘러내리면 올리세요."
-                onChange={(v) => patchProt({ hold_cs: v }, 500)}
-              />
+              {(motorStatus?.axes ?? [])
+                .filter((ax) => prot.axes && prot.axes[ax.axis])
+                .map((ax) => {
+                  const h = prot.axes[ax.axis];
+                  return (
+                    <div key={ax.axis} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '6px 8px', background: BG_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 6 }}>
+                      <span style={{ color: AXIS_COLORS[ax.axis], fontWeight: 600, fontSize: 12, width: 58 }}>{AXIS_NAMES[ax.axis]}</span>
+                      <label style={{ fontSize: 11, color: TEXT_SECONDARY, display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={h.hold_enabled}
+                          onChange={(e) => patchAxisHold(ax.axis, { hold_enabled: e.target.checked })} />
+                        정지토크
+                      </label>
+                      <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 6, alignItems: 'center', marginLeft: 'auto' }}
+                             title="홀딩 전류 스케일 (1-19). PSU 상한이 우선 적용됩니다.">
+                        토크
+                        <input type="range" min={1} max={14} step={1} value={h.hold_cs}
+                          onChange={(e) => patchAxisHold(ax.axis, { hold_cs: Number(e.target.value) }, 400)}
+                          style={{ width: 110 }} />
+                        <span style={{ width: 46, textAlign: 'right', fontFamily: 'monospace', color: TEXT_SECONDARY }}>
+                          {h.hold_cs} CS
+                        </span>
+                      </label>
+                    </div>
+                  );
+                })}
             </div>
           )}
         </div>
         <div style={cardStyle}>
-          <h3 style={{ margin: '0 0 12px', fontSize: 14, color: TEXT_PRIMARY }}>Move To Position</h3>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-            <select value={targetAxis} onChange={(e) => setTargetAxis(Number(e.target.value))} style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '6px 8px', borderRadius: 4, fontSize: 13 }}>
-              {AXIS_NAMES.map((n, i) => <option key={i} value={i}>{n}</option>)}
-            </select>
-            <input type="number" step="any" value={targetPos} onChange={(e) => setTargetPos(Number(e.target.value))} style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '6px 8px', borderRadius: 4, fontSize: 13, width: 80 }} />
-            {/* Axes do not share a unit: FEED/LIFT are mm, BEND/ROTATE deg.
-                Showing it next to the field (and the range below) stops the
-                operator entering degrees into a millimetre axis. */}
-            <span style={{ fontSize: 13, color: TEXT_SECONDARY, paddingBottom: 6 }}>
-              {AXIS_UNITS[targetAxis]}
-            </span>
-            <button onClick={moveTo} style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Move To</button>
+          <h3 style={{ margin: '0 0 4px', fontSize: 14, color: TEXT_PRIMARY }}>Move To Position</h3>
+          <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 10 }}>
+            좌표를 입력하면 그 위치로 <b>절대 이동</b>합니다(현재 위치 기준 상대 이동이 아님).
+            단위는 축을 따릅니다 — 회전축 °, LIFT mm(<b>+ 는 아래</b>, 홈=최상단 0).
+            가감속은 지정 위치 안에서 완결됩니다.
           </div>
-          <div style={{ fontSize: 11, color: TEXT_MUTED, marginTop: 8 }}>
-            {AXIS_NAMES[targetAxis]} 범위 {targetAxis === 3 ? '0' : `±${softLimits[targetAxis]}`}
-            {targetAxis === 3 ? ` … ${softLimits[targetAxis]}` : ''} {AXIS_UNITS[targetAxis]}
-            {targetAxis === 3 ? ' (홈=최상단 0, + 아래로)' : ''}
+          <div style={{ display: 'grid', gap: 6 }}>
+            {(motorStatus?.axes ?? []).map((ax) => {
+              const axisId = ax.axis;
+              const unit = AXIS_UNITS[axisId];
+              const limit = softLimits[axisId];
+              const range = axisId === 3 ? `0 … ${limit}` : `±${limit}`;
+              return (
+                <div key={axisId} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '6px 8px', background: BG_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 6 }}>
+                  <span style={{ color: AXIS_COLORS[axisId], fontWeight: 600, fontSize: 12, width: 58 }}>
+                    {AXIS_NAMES[axisId]}
+                  </span>
+                  <span style={{ fontSize: 11, color: TEXT_MUTED, fontFamily: 'monospace', width: 92 }}
+                        title="현재 위치">
+                    현재 {ax.position.toFixed(2)}
+                  </span>
+                  <input
+                    type="number" step="any"
+                    value={multiTarget[axisId]}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      if (!Number.isFinite(v)) return;
+                      const next = [...multiTarget];
+                      next[axisId] = v;
+                      setMultiTarget(next);
+                    }}
+                    style={{ background: BG_PANEL, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '4px 6px', borderRadius: 4, fontSize: 12, width: 84 }}
+                  />
+                  <span style={{ fontSize: 11, color: TEXT_SECONDARY, width: 26 }}>{unit}</span>
+                  <span style={{ fontSize: 10, color: TEXT_MUTED }} title="이동 가능 범위">
+                    {range} {unit}
+                  </span>
+                  <button
+                    onClick={() => {
+                      setError(null);
+                      motorApi.moveTo(axisId, multiTarget[axisId], axisSpeed(axisId))
+                        .catch((e) => setError(String(e)));
+                    }}
+                    style={{ marginLeft: 'auto', background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '5px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+                  >Move To</button>
+                </div>
+              );
+            })}
           </div>
+          <button
+            onClick={() => setShowMoveAllModal(true)}
+            style={{ marginTop: 10, background: '#1e293b', color: TEXT_SECONDARY, border: `1px solid ${BORDER}`, borderRadius: 4, padding: '6px 14px', cursor: 'pointer', fontSize: 12 }}
+          >Move All (전 축 순차 이동)</button>
         </div>
       </div>
 

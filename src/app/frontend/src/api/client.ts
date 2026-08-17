@@ -24,10 +24,16 @@ export interface AxisSignals {
 }
 
 /** GET/PUT /api/motor/protection — motion protection + holding torque. */
-export interface ProtectionSettings {
-  limit_stop: boolean;    // stop axis entering its limit window mid-motion
-  hold_enabled: boolean;  // LIFT idle holding current (anti-gravity-sink)
+export interface AxisHold {
+  hold_enabled: boolean;  // idle holding current on this axis
   hold_cs: number;        // holding torque current scale 1-19
+}
+
+export interface ProtectionSettings {
+  limit_stop: boolean;              // stop axis entering its limit window
+  axes: Record<number, AxisHold>;   // per-axis holding torque
+  hold_enabled: boolean;            // legacy LIFT alias
+  hold_cs: number;                  // legacy LIFT alias
 }
 
 /** GET /api/motor/limits — live switch states + homing bookkeeping. */

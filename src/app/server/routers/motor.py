@@ -271,6 +271,13 @@ async def motor_limits(
         return err(str(exc), "MOTOR_LIMITS_ERROR")
 
 
+class AxisHoldUpdate(BaseModel):
+    """Holding torque for one axis."""
+    model_config = {"extra": "forbid"}
+    hold_enabled: bool | None = None
+    hold_cs: int | None = Field(None, ge=1, le=19)
+
+
 class ProtectionUpdate(BaseModel):
     """Partial protection/holding settings update (omitted = keep)."""
     model_config = {"extra": "forbid"}
@@ -285,6 +292,11 @@ class ProtectionUpdate(BaseModel):
         None, ge=1, le=19,
         description="Holding torque current scale (1-19, PSU cap still "
                     "applies). Lower = quieter + less holding torque")
+    axes: dict[int, AxisHoldUpdate] | None = Field(
+        None,
+        description="Per-axis holding torque, e.g. "
+                    "{\"0\": {\"hold_enabled\": true, \"hold_cs\": 12}}. "
+                    "Axis ids: 0=FEED, 1=BEND, 3=LIFT (ROTATE not fitted)")
 
 
 class MoveToRequest(BaseModel):
@@ -316,7 +328,9 @@ async def update_protection(
         result = await svc.set_protection(
             limit_stop=body.limit_stop,
             hold_enabled=body.hold_enabled,
-            hold_cs=body.hold_cs)
+            hold_cs=body.hold_cs,
+            axes={k: v.model_dump(exclude_none=True)
+                  for k, v in (body.axes or {}).items()} or None)
         return ok(result)
     except (RuntimeError, ValueError) as exc:
         return err(str(exc), "MOTOR_PROTECTION_ERROR")

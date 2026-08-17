@@ -95,15 +95,52 @@ Ortho-Bender SDK 백엔드의 전체 REST + WebSocket 엔드포인트 레퍼런�
 - 가감속은 **지정 위치 안에서 완결** — 45°를 지령하면 45°를 지나치지 않고 45°에 정지
 - 도달 판정: 2 스텝 이내(BEND 0.09°, LIFT 0.01 mm). 축이 막히면 로그를 남기고 중단
 
+### GET `/api/motor/calibration`
+**Response (data)**
+```json
+{
+  "steps_per_unit": { "0": 200.0, "1": 23.0167, "2": 200.0, "3": 200.0 },
+  "distance_limit": { "0": 360.0, "1": 360.0, "2": 360.0, "3": 240.0 },
+  "speed_limit":    { "0": 40.0,  "1": 347.6,  "2": 40.0,  "3": 40.0 }
+}
+```
+- `steps_per_unit`: 축의 단위(deg 또는 mm)당 STEP 수. **모든 좌표·속도 변환의 기준**
+- `distance_limit`: 1회 명령당 이동 거리 상한 (초과분은 `/move` 에서 잘리고,
+  `/move_to` 는 자동 분할)
+- `speed_limit`: **하드웨어 STEP 상한(8 kHz) ÷ `steps_per_unit`** 으로 자동 산출된
+  축별 최대 속도. 캘리브레이션을 바꾸면 이 값도 따라 바뀌므로, 클라이언트는
+  하드코딩하지 말고 이 필드를 읽으세요.
+  (예: FEED 200 steps/deg → 40 deg/s, BEND 23.0167 → 347.6 deg/s)
+
+### POST `/api/motor/calibration`
+```json
+{ "axis": 1, "steps_per_unit": 23.0167 }
+```
+축 캘리브레이션 변경 — 보드에 영속 저장됩니다
+(`/var/lib/ortho-bender/axis_calibration.json`). 측정 방법은
+[06_AXIS_CONVENTIONS.md](06_AXIS_CONVENTIONS.md) §7 참고.
+
 ### GET / PUT `/api/motor/protection`
 ```json
 { "limit_stop": true, "hold_enabled": true, "hold_cs": 8 }
 ```
 - `limit_stop`: **이동 중 리밋센서 감지 시 자동 정지** (에지 트리거 —
   홈(창 안)에서 출발할 땐 창을 벗어날 때까지 가드 비활성이라 이탈은 항상 허용)
-- `hold_enabled` / `hold_cs`: LIFT **정지토크(홀딩 전류)** — 유휴 시 코일
-  통전 유지로 중력 침하 방지. `hold_cs` 1–19 (PSU 캡 우선), 낮출수록
-  조용·저발열·저토크. PUT은 부분 업데이트, 유휴 상태면 즉시 적용
+- `axes`: **축별 정지토크** `{axis: {hold_enabled, hold_cs}}`
+  (axis 0=FEED, 1=BEND, 3=LIFT). 유휴 시 코일을 통전 유지해 축이 외력·중력에
+  밀리지 않게 합니다. `hold_cs` 1–19(PSU 캡 우선) — 낮출수록 조용·저발열·저토크.
+  PUT은 부분 업데이트(보낸 축만 변경), 유휴 상태면 즉시 반영되고 서버 기동 시에도
+  설정된 축이 바로 통전됩니다.
+- `hold_enabled` / `hold_cs`(최상위): LIFT 전용 레거시 별칭 — 신규 클라이언트는
+  `axes` 를 사용하세요.
+- 기본값: LIFT·FEED 홀딩 ON, BEND OFF (`hold_lift`/`hold_feed`/`hold_bend` 설정)
+
+**예시 — FEED 홀딩을 최대 토크로**
+```bash
+curl -X PUT http://<ip>:8000/api/motor/protection \
+     -H 'Content-Type: application/json' \
+     -d '{"axes": {"0": {"hold_enabled": true, "hold_cs": 14}}}'
+```
 
 ### POST `/api/motor/jog`
 ```json
