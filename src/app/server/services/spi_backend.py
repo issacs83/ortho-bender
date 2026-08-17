@@ -870,6 +870,54 @@ class SpidevMotorBackend(MotorBackend):
     # -------------------------------------------------------------------
     # Signal helpers (LED row on the dashboard)
     # -------------------------------------------------------------------
+    async def clear_driver_faults(self) -> dict:
+        """Clear latched driver faults without cutting power.
+
+        TMC26x short-to-ground detection latches: once the comparator
+        fires the flag stays set until the driver is disabled and
+        re-enabled, so the fault survives a re-init and every subsequent
+        move is refused. Until now the only way out was a physical power
+        cycle, because /api/motor/{enable,disable} dispatch an IPC
+        message to the M7 and never reach the bench chips at all.
+
+        The sequence is chopper-off on every chip, a dwell long enough
+        for the outputs to actually stop switching, then re-init only the
+        axes that are supposed to hold. Re-initialising all three would
+        chopper-ON the whole bench and the next jog would drive every
+        motor off the shared STEP line (the 2026-05-09 incident).
+        """
+        before = dict(self._last_status)
+        for cs in (0, 1, 2):
+            try:
+                await self._silence_chip(cs)
+            except Exception as exc:
+                log.warning("fault clear: silence cs=%d failed: %s", cs, exc)
+
+        await asyncio.sleep(0.3)   # outputs must genuinely stop switching
+
+        cleared, still = [], []
+        for cs in (0, 1, 2):
+            try:
+                await self._init_chip(cs)
+                status = await self._read_status(cs)
+                (still if self._has_fault(status) else cleared).append(cs)
+                if cs in self.hold_axes:
+                    await self._hold_chip(cs)
+                else:
+                    await self._silence_chip(cs)
+            except Exception as exc:
+                log.warning("fault clear: probe cs=%d failed: %s", cs, exc)
+                still.append(cs)
+
+        log.info("driver fault clear: cleared=%s still_faulted=%s", cleared, still)
+        return {
+            "cleared": cleared,
+            "still_faulted": still,
+            "before": {str(k): f"0x{v:05X}" for k, v in before.items()},
+            "after": {str(k): f"0x{v:05X}"
+                      for k, v in self._last_status.items()},
+        }
+
     def rail_suspect(self) -> bool:
         """True when the motor supply rail looks dead rather than the
         axes being individually faulted.

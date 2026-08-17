@@ -259,11 +259,28 @@ body 없음. **가장 우선순위가 높은 명령**입니다.
 ### POST `/api/motor/stop`
 모든 축 즉시 감속 정지. body 없음.
 
-### POST `/api/motor/reset`
+### POST `/api/motor/reset` — 폴트 해제
 ```json
 { "axis_mask": 0 }
 ```
-DRV_STATUS 폴트 클리어. 재홈잉 필요할 수 있음.
+E-STOP 래치를 풀고, **벤치에서는 드라이버의 래치된 폴트까지 실제로 해제**합니다.
+
+TMC26x의 단락 검출(S2GA/S2GB)은 **래치**됩니다 — 한번 서면 드라이버를 껐다 켤
+때까지 유지되고 그동안 모든 이동이 거부됩니다. reset은 전 칩 초퍼 off → 300 ms
+유지 → 재초기화 순서로 이 래치를 해제합니다. 모터 전원을 뽑을 필요가 없습니다.
+
+응답의 `fault_clear`로 결과를 확인하세요:
+```json
+{ "fault_clear": { "cleared": [0,1,2], "still_faulted": [], "after": {"0":"0xFC800"} } }
+```
+- `still_faulted`가 비어 있으면 해제 성공
+- 남아 있는 cs는 **진짜로 전원을 내려야** 합니다 (또는 배선 고장)
+
+> 홈잉 기준은 유지되지 않을 수 있으니, 폴트 후에는 재홈잉을 권장합니다.
+
+**주의:** `/api/motor/enable`·`/api/motor/disable`은 M7 코어로 IPC를 보냅니다.
+M7 펌웨어가 없는 벤치 구성에서는 드라이버 칩에 직접 작용하지 않으므로,
+폴트 해제 용도로는 `reset`을 쓰세요.
 
 ### POST `/api/motor/enable`
 TMC260C-PA `DRV_ENN` 라인을 active(LOW)로 내려 코일을 여자시킵니다. body 없음.

@@ -16,6 +16,7 @@ import { usePsuConfig } from '../hooks/usePsuConfig';
 import { useAxisCalibration, AXIS_PHYSICAL_UNIT } from '../hooks/useAxisCalibration';
 import { useToast } from '../components/ui/ToastSystem';
 import { SignalLed } from '../components/ui/SignalLed';
+import { useDiagWs, railSuspect, hasFault, DRIVER_AXIS, type DriverFlags } from '../hooks/useDiagWs';
 
 type MotorSubTab = 'position' | 'driver' | 'stallguard' | 'diagnostics';
 
@@ -1014,68 +1015,150 @@ function StallGuardTab({ motorStatus }: { motorStatus: MotorStatus | null }) {
 // ---------------------------------------------------------------------------
 
 function DiagnosticsTab({ motorStatus }: { motorStatus: MotorStatus | null }) {
-  const [regJson, setRegJson] = useState<string | null>(null);
+  // Chip flags come from /ws/motor/diag. The previous version read
+  // ax.drv_status, which the bench backend hardcodes to 0 -- so every
+  // fault chip rendered green no matter what the drivers reported.
+  const diag = useDiagWs();
+  const rail = railSuspect(diag);
+  const [busy, setBusy] = useState(false);
+  const [clearMsg, setClearMsg] = useState<string | null>(null);
+  const toast = useToast();
 
-  function readAllRegisters() {
-    setRegJson(JSON.stringify(motorStatus?.axes ?? [], null, 2));
+  async function clearFaults() {
+    setBusy(true);
+    setClearMsg(null);
+    try {
+      const r = await motorApi.reset();
+      const fc = (r as unknown as { fault_clear?: { cleared: number[]; still_faulted: number[] } }).fault_clear;
+      if (!fc) setClearMsg('리셋 완료');
+      else if (fc.still_faulted.length === 0)
+        setClearMsg(`래치 해제 완료 — ${fc.cleared.length}개 드라이버 정상`);
+      else
+        setClearMsg(`cs ${fc.still_faulted.join(', ')} 는 해제 실패 — 모터 전원을 껐다 켜야 합니다`);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setBusy(false);
+    }
   }
 
   const cardStyle = { background: BG_PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 16, marginBottom: 16 };
+  // TMC260C 20-bit response, low byte. This is the chip's actual bit
+  // order -- the old table was shifted by one and mislabelled every flag.
+  const FLAGS: { key: keyof DriverFlags; label: string; desc: string }[] = [
+    { key: 'ot',   label: 'OT',   desc: '과열 차단 — 코일 전류 차단됨' },
+    { key: 'otpw', label: 'OTPW', desc: '과열 예비경고 — 전류를 낮추세요' },
+    { key: 's2ga', label: 'S2GA', desc: '코일 A 접지 단락 (래치됨)' },
+    { key: 's2gb', label: 'S2GB', desc: '코일 B 접지 단락 (래치됨)' },
+    { key: 'ola',  label: 'OLA',  desc: '코일 A 단선 — 정지 중에는 오보고 가능' },
+    { key: 'olb',  label: 'OLB',  desc: '코일 B 단선 — 정지 중에는 오보고 가능' },
+    { key: 'stst', label: 'STST', desc: '정지 상태 — 정지 중이면 켜져 있어야 정상' },
+  ];
 
   return (
     <div>
-      {(motorStatus?.axes ?? []).map((ax: AxisStatus) => (
-        <div key={ax.axis} style={cardStyle}>
-          <h3 style={{ margin: '0 0 12px', fontSize: 14, color: AXIS_COLORS[ax.axis] }}>
-            {AXIS_NAMES[ax.axis]} — DRV_STATUS
-          </h3>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
-            {DRV_BITS.map(({ bit, name, desc }) => {
-              const isSet = !!(ax.drv_status & (1 << bit));
-              const isOk = name === 'STST' ? !isSet : name === 'SG' ? isSet : !isSet;
-              return (
-                <div
-                  key={name}
-                  title={desc}
-                  style={{
-                    padding: '3px 10px',
-                    borderRadius: 4,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    background: isSet ? '#7f1d1d' : '#065f46',
-                    color: isSet ? '#fca5a5' : '#6ee7b7',
-                    cursor: 'default',
-                  }}
-                >
-                  {name}
-                </div>
-              );
-            })}
+      {rail && (
+        <div style={{ ...cardStyle, background: '#450a0a', border: '1px solid #ef4444' }}>
+          <div style={{ fontSize: 13, color: '#fca5a5', fontWeight: 600, marginBottom: 4 }}>
+            공급 레일 의심 — 축 문제가 아닙니다
           </div>
-          <div style={{ marginTop: 8, fontSize: 12, color: TEXT_MUTED }}>
-            CS_ACTUAL: {ax.cs_actual} &nbsp;|&nbsp; SG_RESULT: {ax.sg_result}
+          <div style={{ fontSize: 12, color: '#fecaca', lineHeight: 1.6 }}>
+            드라이버 3장이 <b>완전히 동일한 폴트</b>를 보고하면서 <b>STST가 꺼져</b> 있습니다.
+            정지 중인 칩은 STST가 켜지고, 개별 축 고장은 비트 단위로 일치하지 않습니다.
+            축을 하나씩 시험하지 말고 <b>드라이버 보드 단자에서 12 V(VMot)를 직접 측정</b>하세요.
           </div>
         </div>
-      ))}
-
-      {(!motorStatus || motorStatus.axes.length === 0) && (
-        <div style={{ fontSize: 13, color: TEXT_MUTED, textAlign: 'center', padding: 24 }}>No motor data</div>
       )}
 
-      <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
-        <button
-          onClick={readAllRegisters}
-          style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '8px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
-        >
-          Read All Registers
-        </button>
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+          <h3 style={{ margin: 0, fontSize: 14, color: TEXT_PRIMARY }}>드라이버 폴트 상태</h3>
+          <span style={{ fontSize: 11, color: diag ? '#6ee7b7' : TEXT_MUTED }}>
+            {diag ? 'live' : '연결 대기…'}
+          </span>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+            {clearMsg && <span style={{ fontSize: 11, color: TEXT_SECONDARY }}>{clearMsg}</span>}
+            <button onClick={clearFaults} disabled={busy}
+              style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+              title="TMC26x 래치 해제 시퀀스 — 전원을 끄지 않고 폴트를 지웁니다">
+              {busy ? '해제 중…' : '폴트 해제'}
+            </button>
+          </div>
+        </div>
+        <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 10 }}>
+          S2GA/S2GB는 <b>래치</b>됩니다 — 한번 서면 드라이버를 껐다 켤 때까지 유지되고,
+          그동안 모든 이동이 거부됩니다. 아래 <b>폴트 해제</b>가 그 시퀀스를 수행합니다.
+        </div>
+
+        {!diag && <div style={{ fontSize: 12, color: TEXT_MUTED }}>드라이버 상태 수신 대기 중…</div>}
+        {diag && Object.entries(DRIVER_AXIS).map(([driverId, axisId]) => {
+          const c = diag.drivers[driverId];
+          if (!c) return null;
+          return (
+            <div key={driverId} style={{ padding: '8px 10px', marginBottom: 6, background: BG_PRIMARY, border: `1px solid ${hasFault(c) ? '#ef4444' : BORDER}`, borderRadius: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                <span style={{ color: AXIS_COLORS[axisId], fontWeight: 600, fontSize: 13, width: 58 }}>
+                  {AXIS_NAMES[axisId]}
+                </span>
+                <span style={{ fontSize: 11, color: TEXT_MUTED, fontFamily: 'monospace' }}>{driverId}</span>
+                <span style={{ fontSize: 11, color: TEXT_SECONDARY, fontFamily: 'monospace', marginLeft: 'auto' }}>
+                  SG_RESULT {c.sg_result}
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
+                {FLAGS.map(({ key, label, desc }) => {
+                  const set = !!c[key];
+                  // STST is the one flag where "set" is the healthy state.
+                  const good = key === 'stst' ? set : !set;
+                  return (
+                    <div key={label} title={desc} style={{
+                      padding: '3px 10px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                      background: good ? '#065f46' : '#7f1d1d',
+                      color: good ? '#6ee7b7' : '#fca5a5', cursor: 'help',
+                    }}>{label}</div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
-      {regJson && (
-        <div style={cardStyle}>
-          <pre style={{ fontSize: 11, color: '#6ee7b7', margin: 0, overflowX: 'auto', maxHeight: 200, overflowY: 'auto' }}>{regJson}</pre>
-        </div>
-      )}
+      <div style={cardStyle}>
+        <h3 style={{ margin: '0 0 10px', fontSize: 14, color: TEXT_PRIMARY }}>축 상태</h3>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr style={{ color: TEXT_MUTED, textAlign: 'left' }}>
+              <th style={{ padding: '4px 6px' }}>축</th>
+              <th style={{ padding: '4px 6px' }}>위치</th>
+              <th style={{ padding: '4px 6px' }}>코일전류(CS)</th>
+              <th style={{ padding: '4px 6px' }}>부하(SG)</th>
+              <th style={{ padding: '4px 6px' }}>초퍼</th>
+              <th style={{ padding: '4px 6px' }}>리밋</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(motorStatus?.axes ?? []).map((ax: AxisStatus) => (
+              <tr key={ax.axis} style={{ borderTop: `1px solid ${BORDER}`, color: TEXT_SECONDARY }}>
+                <td style={{ padding: '5px 6px', color: AXIS_COLORS[ax.axis], fontWeight: 600 }}>{AXIS_NAMES[ax.axis]}</td>
+                <td style={{ padding: '5px 6px', fontFamily: 'monospace' }}>
+                  {ax.position.toFixed(2)} {AXIS_UNITS[ax.axis]}
+                </td>
+                <td style={{ padding: '5px 6px', fontFamily: 'monospace' }}>{ax.cs_actual}</td>
+                <td style={{ padding: '5px 6px', fontFamily: 'monospace' }}>{ax.signals?.sg_value ?? '—'}</td>
+                <td style={{ padding: '5px 6px' }}>{ax.signals?.en ? 'ON' : 'off'}</td>
+                <td style={{ padding: '5px 6px' }}>
+                  {ax.signals?.limit === null || ax.signals?.limit === undefined
+                    ? '—' : ax.signals.limit ? '작동' : '해제'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {(!motorStatus || motorStatus.axes.length === 0) && (
+          <div style={{ fontSize: 13, color: TEXT_MUTED, textAlign: 'center', padding: 24 }}>No motor data</div>
+        )}
+      </div>
     </div>
   );
 }
