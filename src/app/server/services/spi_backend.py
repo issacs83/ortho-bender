@@ -62,6 +62,9 @@ _SPI_IOC_WR_MODE = 0x40016B01
 _SPI_NO_CS = 0x40
 
 # Verified working timings
+_RAMP_SUBSLEEP_S = 0.01     # nominal guard/abort poll inside a ramp tick
+_RAMP_SUBSLEEP_MIN_S = 0.001  # floor: below this the event loop dominates
+
 _CS_SETTLE_S = 0.0005      # 500 us — required for BEND chip on SAI5_RXD1 pad
 _DIR_SETUP_S = 0.000010    # 10 us
 _INIT_SEQ_CYCLES_FULL = 50      # full init worst case: only when chip is
@@ -826,7 +829,9 @@ class SpidevMotorBackend(MotorBackend):
                                  track=(axis, direction),
                                  abort_cb=lambda: abs(
                                      self.positions.get(axis, 0) - pos_before
-                                 ) >= count)
+                                 ) >= count,
+                                 remaining_cb=lambda: count - abs(
+                                     self.positions.get(axis, 0) - pos_before))
 
                 # ---- trim: land exactly on the commanded distance ----
                 # Accel + cruise + decel are budgeted, but ramp timing is
@@ -843,7 +848,12 @@ class SpidevMotorBackend(MotorBackend):
                         await self._pwm_set_hz(floor_hz)
                         try:
                             while True:
-                                await asyncio.sleep(0.005)
+                                left = short - min(
+                                    int((time.monotonic() - t_trim) * floor_hz),
+                                    short)
+                                await asyncio.sleep(max(
+                                    _RAMP_SUBSLEEP_MIN_S,
+                                    min(0.005, left / float(floor_hz))))
                                 el = time.monotonic() - t_trim
                                 emitted = min(int(el * floor_hz), short)
                                 self.positions[axis] = base_pos + emitted * direction
@@ -1465,7 +1475,7 @@ class SpidevMotorBackend(MotorBackend):
     async def _ramp(self, f_from: int, f_to: int, rate_hz_s: float,
                     shape: str = "linear",
                     track: tuple[int, int] | None = None,
-                    guard_cb=None, abort_cb=None) -> int:
+                    guard_cb=None, abort_cb=None, remaining_cb=None) -> int:
         """Slew the PWM frequency f_from → f_to. Returns the estimated
         STEP edges emitted (trapezoid integral of the schedule);
         track=(cs, direction) live-updates the position counter each tick.
@@ -1517,8 +1527,19 @@ class SpidevMotorBackend(MotorBackend):
                 # in a few tens of ms.
                 slept = 0.0
                 while slept < _RAMP_TICK_S:
-                    await asyncio.sleep(0.01)
-                    slept += 0.01
+                    # Never sleep past the target. A fixed slice emits
+                    # f_cur x slice steps before abort_cb is consulted --
+                    # 4 steps at 400 Hz, which is the entire error budget
+                    # of a 0.1 mm move. Shrinking the slice as the axis
+                    # closes in bounds the overshoot to about one step.
+                    slice_s = _RAMP_SUBSLEEP_S
+                    if remaining_cb is not None and f_cur > 0:
+                        rem = remaining_cb()
+                        if rem > 0:
+                            slice_s = min(slice_s, rem / f_cur)
+                        slice_s = max(_RAMP_SUBSLEEP_MIN_S, slice_s)
+                    await asyncio.sleep(slice_s)
+                    slept += slice_s
                     account(time.monotonic())
                     if guard_cb is not None and guard_cb():
                         aborted = True
