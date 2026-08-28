@@ -140,11 +140,19 @@ class Settings(BaseSettings):
     # BEND turned CW). Same fix: flip that axis' DIR line so every axis
     # agrees that + / ▶ is clockwise. Operator-reported 2026-08-16.
     invert_feed: bool = True
-    hold_lift: bool = True
+    # Idle holding is OFF for every axis: a motor that nobody commanded
+    # must not be energised. Only the axis being driven lights up, and it
+    # goes dark again when the move ends.
+    #
+    # LIFT rides a T8 leadscrew that is not self-locking, so with this off
+    # the carriage can sink under its own weight. Set hold_lift = True (or
+    # PUT /api/motor/protection {"axes":{"3":{"hold_enabled":true}}}) if
+    # that turns out to matter for a given setup.
+    hold_lift: bool = False
     # FEED/BEND also free-wheel when de-energized (no gravity load, so it
     # is less obvious) — operator asked for per-axis holding, so they can
     # be held too. Runtime toggle: PUT /api/motor/protection {axes:{...}}
-    hold_feed: bool = True
+    hold_feed: bool = False
     hold_bend: bool = False
     hold_cs: int = 8
     # LIFT carries the carriage against gravity on a T8 leadscrew, which

@@ -211,6 +211,17 @@ async def lifespan(app: FastAPI):
                 await diag_backend._hold_chip(_cs)
             except Exception as exc:
                 log.warning("initial hold cs=%d failed: %s", _cs, exc)
+        # And silence the rest. A restart does not reset the drivers, so
+        # a chip left energised by the previous run stays energised --
+        # which reads on the dashboard as a motor nobody commanded being
+        # live. Whatever is not configured to hold starts dark.
+        for _cs in (0, 1, 2):
+            if _cs in held:
+                continue
+            try:
+                await diag_backend._silence_chip(_cs)
+            except Exception as exc:
+                log.warning("initial silence cs=%d failed: %s", _cs, exc)
     # Limit guard: LIFT only — BEND's multi-slot disc would trip it
     # at every slot passage (rotary axis has no travel ends anyway).
     if hasattr(diag_backend, "guard_axes"):
