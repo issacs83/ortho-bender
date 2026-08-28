@@ -37,7 +37,9 @@ export const AXIS_NAMES = ['FEED', 'BEND', 'ROTATE', 'LIFT'] as const;
 // Only LIFT is linear (vertical lead screw, mm). FEED is the wire-feed
 // ROLLER and BEND/ROTATE are dies — all three are rotary, so they read
 // in degrees (operator-confirmed 2026-08-16).
-export const AXIS_UNITS = ['°', '°', '°', 'mm'] as const;
+// FEED feeds wire, so it is measured in mm like LIFT — only the
+// two genuinely rotary axes are in degrees.
+export const AXIS_UNITS = ['mm', '°', '°', 'mm'] as const;
 
 // ---------------------------------------------------------------------------
 // Motor driver hardware-safety limits (TMC260C-PA)
@@ -83,7 +85,7 @@ export const PSU_DEFAULT_ID = '12v2.9a';
 // the TOP limit switch (datum 0) and travel runs DOWNWARD (negative), so
 // the bar measures |position| against the full stroke — 100 was a
 // placeholder that a real 240-unit stroke overflowed immediately.
-export const AXIS_SOFT_LIMITS = [360, 360, 360, 230] as const; // FEED, BEND, ROTATE, LIFT
+export const AXIS_SOFT_LIMITS = [200, 360, 360, 230] as const; // FEED mm, BEND/ROTATE deg, LIFT mm
 
 // ---------------------------------------------------------------------------
 // Motion state

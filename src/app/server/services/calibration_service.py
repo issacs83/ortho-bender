@@ -33,7 +33,20 @@ log = logging.getLogger(__name__)
 
 # Bench defaults — configurable via /api/motor/calibration.
 DEFAULT_STEPS_PER_UNIT: dict[int, float] = {
-    0: 200.0,   # FEED   (mm)
+    # FEED feeds WIRE, so its unit is mm of wire, not degrees of roller.
+    # 1600 PWM cycles per motor revolution (1/16 microstepping with DEDGE,
+    # two microsteps per cycle -- the same figure the LIFT note below
+    # relies on) divided by the roller circumference.
+    #
+    # PROVISIONAL: the roller diameter has never been measured. This
+    # assumes 20 mm, which is the placeholder the feed test script also
+    # carries. One measurement fixes it for good -- feed a commanded
+    # length, measure the wire that came out, and POST the corrected
+    # value to /api/motor/calibration:
+    #
+    #     new_steps_per_mm = old * (commanded_mm / measured_mm)
+    #
+    0: 25.4648,   # FEED   (mm of wire) — 1600 / (pi * 20 mm)
     1: 200.0,   # BEND   (deg)
     2: 200.0,   # ROTATE (deg)
     3: 200.0,   # LIFT   (mm)
@@ -43,7 +56,7 @@ DEFAULT_STEPS_PER_UNIT: dict[int, float] = {
 # Keep these conservative — exceeding them would push step counts into
 # multi-second runs that are easy to start by accident.
 DISTANCE_LIMIT: dict[int, float] = {
-    0: 360.0,   # FEED  ≤ 360 deg (rotary feed roller)
+    0: 200.0,   # FEED  ≤ 200 mm of wire (matches BcodeStep L_mm max)
     1: 360.0,   # BEND  ≤ 360 deg
     2: 360.0,   # ROTATE ≤ 360 deg
     # LIFT stroke measured 2026-08-16: top limit switch -> bottom =
