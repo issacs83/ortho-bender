@@ -146,7 +146,12 @@ class Settings(BaseSettings):
     # be held too. Runtime toggle: PUT /api/motor/protection {axes:{...}}
     hold_feed: bool = True
     hold_bend: bool = False
-    hold_cs: int = 8                 # holding current scale (< run CS)
+    hold_cs: int = 8
+    # LIFT carries the carriage against gravity on a T8 leadscrew, which
+    # is not self-locking. It was holding at 8 while FEED — which only
+    # has to resist a wire — held at 14. Per-axis defaults, still capped
+    # by the PSU preset.
+    hold_cs_lift: int = 14                 # holding current scale (< run CS)
     # Final resting position after homing, in units from the datum.
     # <0 = park |value| INSIDE the window (approach direction) — sensor
     # reads solidly tripped at the home pose (the trip edge itself sits

@@ -189,6 +189,10 @@ async def lifespan(app: FastAPI):
     # Gravity-axis idle holding (LIFT = cs0 sinks when de-energized)
     if hasattr(diag_backend, "hold_axes"):
         diag_backend.hold_cs = int(cfg.hold_cs)
+        # Per-axis holding defaults, applied only where the operator has
+        # not already set one (those are restored from the state file).
+        if hasattr(diag_backend, "hold_cs_map"):
+            diag_backend.hold_cs_map.setdefault(0, int(cfg.hold_cs_lift))
         held = set()
         if cfg.hold_lift:
             held.add(0)      # LIFT — gravity axis
