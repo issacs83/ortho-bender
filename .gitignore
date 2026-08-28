@@ -50,7 +50,6 @@ kc_test/
 
 # Internal dev tooling / project management (do not publish)
 .claude/
-CLAUDE.md
 MEMORY.md
 output/
 ref/
