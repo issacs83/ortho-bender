@@ -299,6 +299,9 @@ class SpidevMotorBackend(MotorBackend):
                 self.run_cs_map = {
                     int(k): max(0, min(int(v), SAFETY_CS_MAX))
                     for k, v in (d.get("run_cs") or {}).items()}
+                self.hold_cs_map = {
+                    int(k): max(0, min(int(v), SAFETY_CS_MAX))
+                    for k, v in (d.get("hold_cs") or {}).items()}
                 if "sg_filter" in d:
                     self.sg_filter = bool(d["sg_filter"])
             except (TypeError, ValueError):
@@ -321,6 +324,12 @@ class SpidevMotorBackend(MotorBackend):
                     "sgt": {str(k): int(v) for k, v in self.sgt_map.items()},
                     "run_cs": {str(k): int(v)
                                for k, v in self.run_cs_map.items()},
+                    # Holding torque was configured per axis but never
+                    # written down, so every restart silently reverted it
+                    # -- including on the gravity axis, where losing it is
+                    # the difference between parked and sliding.
+                    "hold_cs": {str(k): int(v)
+                                for k, v in self.hold_cs_map.items()},
                     "sg_filter": bool(self.sg_filter),
                 }, f)
             os.replace(tmp, _STATE_FILE)
@@ -503,6 +512,39 @@ class SpidevMotorBackend(MotorBackend):
 
         async with self._spi_lock:
             return await asyncio.to_thread(_xfer_blocking)
+
+    async def spi_transfer_batch(self, cs: int, frames: list[bytes]) -> list[bytes]:
+        """Send several datagrams to one chip inside a single thread hop.
+
+        Byte-for-byte identical on the wire to calling spi_transfer() per
+        frame: same CS toggling, same settle times, same order. What it
+        removes is the event-loop round trip between frames, which
+        measured larger than the SPI traffic itself -- ten frames should
+        cost about 20 ms of bus time and were costing 60-90 ms, and that
+        overhead is what keeps LIFT de-energised for 0.44 s while another
+        axis moves.
+        """
+        if self._spi is None:
+            raise RuntimeError("SPI not opened — call open() first")
+
+        cs_name = self._cs_to_name.get(cs)
+        if cs_name is None:
+            raise ValueError(f"cs={cs} out of range (0=LIFT, 1=BEND, 2=FEED)")
+
+        def _xfer_all() -> list[bytes]:
+            out: list[bytes] = []
+            for data in frames:
+                self._gpio_set(cs_name, False)          # CS active LOW
+                time.sleep(_CS_SETTLE_S)
+                rx = self._spi.xfer2(list(data))
+                time.sleep(_CS_SETTLE_S)
+                self._gpio_set(cs_name, True)           # CS idle HIGH
+                time.sleep(_CS_SETTLE_S)
+                out.append(bytes(rx))
+            return out
+
+        async with self._spi_lock:
+            return await asyncio.to_thread(_xfer_all)
 
     async def set_gpio(self, pin: str, value: bool) -> None:
         for name, gpio_str in self._gpio_names.items():
@@ -1359,9 +1401,8 @@ class SpidevMotorBackend(MotorBackend):
             sgcs_on     = self._encode(0x06, self._sgcs_on_value(cs))
             tx_chop = bytes([(chopconf_on >> 16) & 0xFF, (chopconf_on >> 8) & 0xFF, chopconf_on & 0xFF])
             tx_sgcs = bytes([(sgcs_on >> 16) & 0xFF, (sgcs_on >> 8) & 0xFF, sgcs_on & 0xFF])
-            for _ in range(_REENABLE_CYCLES):
-                await self.spi_transfer(cs, tx_chop)
-                await self.spi_transfer(cs, tx_sgcs)
+            await self.spi_transfer_batch(
+                cs, [tx_chop, tx_sgcs] * _REENABLE_CYCLES)
             self._chip_active[cs] = True
             self._chip_responsive[cs] = True
             return
@@ -1409,9 +1450,8 @@ class SpidevMotorBackend(MotorBackend):
         tx_sgcs = bytes([
             (sgcs_off >> 16) & 0xFF, (sgcs_off >> 8) & 0xFF, sgcs_off & 0xFF,
         ])
-        for _ in range(_SILENCE_CYCLES):
-            await self.spi_transfer(cs, tx_chop)
-            await self.spi_transfer(cs, tx_sgcs)
+        await self.spi_transfer_batch(
+            cs, [tx_chop, tx_sgcs] * _SILENCE_CYCLES)
         # NOTE: do NOT clear self._initialized — chip's CHOPCONF/SMARTEN/
         # DRVCONF/DRVCTRL are still in their initialized values. The next
         # _init_chip() takes the fast re-enable path.
