@@ -793,6 +793,71 @@ class MotorService:
     # ------------------------------------------------------------------
     # StallGuard2 threshold (sensorless load / stall measurement)
     # ------------------------------------------------------------------
+    async def set_axis_enable(self, axis: int, on: bool,
+                             exclusive: bool = False) -> dict:
+        """Energize or de-energize one axis' coils.
+
+        /api/motor/enable and /disable dispatch to the M7, which this
+        bench does not run, so until now there was no way to control a
+        single chip's chopper -- the only lever was holding torque, which
+        is a different thing with a different purpose.
+
+        `exclusive` silences every other axis first. That is the safe
+        default for manual work: the three drivers share one STEP line,
+        so anything energised when a pulse arrives moves with the
+        commanded axis.
+        """
+        if not self.has_bench:
+            raise RuntimeError("per-axis enable is bench-only")
+        if axis not in self._HOLDABLE:
+            raise ValueError(f"axis {axis} is not on this bench")
+        be = self._spi_backend
+        cs = self._axis_to_cs[axis]
+
+        idle = self._bench_jog_task is None or self._bench_jog_task.done()
+        if not idle:
+            raise RuntimeError("axis is moving — stop it first")
+        if self._bench_estop_active:
+            raise RuntimeError("E-STOP active — reset before energizing")
+
+        if on and exclusive:
+            for other in self._HOLDABLE:
+                if other == axis:
+                    continue
+                ocs = self._axis_to_cs.get(other)
+                if ocs is not None:
+                    try:
+                        await be._silence_chip(ocs)
+                    except Exception as exc:
+                        log.warning("silence cs=%d failed: %s", ocs, exc)
+
+        try:
+            if on:
+                await be._hold_chip(cs)
+            else:
+                await be._silence_chip(cs)
+        except Exception as exc:
+            raise RuntimeError(f"axis {axis} enable failed: {exc}") from exc
+
+        log.info("axis %d coils %s%s", axis, "ON" if on else "off",
+                 " (exclusive)" if on and exclusive else "")
+        return self.axis_enable_state()
+
+    def axis_enable_state(self) -> dict:
+        """Which axes currently have their chopper on."""
+        be = self._spi_backend
+        out = {}
+        for axis in self._HOLDABLE:
+            cs = self._axis_to_cs.get(axis)
+            if cs is None:
+                continue
+            sig = be.get_axis_signals(cs) if hasattr(be, "get_axis_signals") else {}
+            out[axis] = {
+                "enabled": bool(sig.get("en")),
+                "holding": cs in getattr(be, "hold_axes", set()),
+            }
+        return {"axes": out}
+
     def get_stallguard(self) -> dict:
         """Per-axis StallGuard threshold + live SG_RESULT."""
         be = self._spi_backend

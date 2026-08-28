@@ -461,6 +461,44 @@ async def motor_estop(
 # POST /api/motor/enable  /  /api/motor/disable  (TMC260C-PA DRV_ENN)
 # ---------------------------------------------------------------------------
 
+class AxisEnableUpdate(BaseModel):
+    """Coil enable for a single axis."""
+    model_config = {"extra": "forbid"}
+    axis: int = Field(..., ge=0, le=3)
+    enabled: bool = Field(..., description="True energizes the coils")
+    exclusive: bool = Field(
+        True,
+        description="Silence every other axis first. The three drivers "
+                    "share one STEP line, so anything else left energized "
+                    "moves along with the commanded axis.")
+
+
+@router.get("/axis-enable", response_model=ApiResponse)
+async def get_axis_enable(svc: MotorService = Depends(_motor_service)) -> ApiResponse:
+    """Per-axis coil state: energized now, and whether it holds at idle."""
+    try:
+        return ok(svc.axis_enable_state())
+    except Exception as exc:
+        return err(str(exc), "MOTOR_ENABLE_ERROR")
+
+
+@router.put("/axis-enable", response_model=ApiResponse)
+async def set_axis_enable(
+    body: AxisEnableUpdate,
+    svc: MotorService = Depends(_motor_service),
+) -> ApiResponse:
+    """Energize or de-energize one axis.
+
+    Unlike /enable and /disable, which dispatch to the M7, this drives
+    the bench driver chip directly.
+    """
+    try:
+        return ok(await svc.set_axis_enable(
+            body.axis, body.enabled, exclusive=body.exclusive))
+    except (RuntimeError, ValueError) as exc:
+        return err(str(exc), "MOTOR_ENABLE_ERROR")
+
+
 @router.post("/enable", response_model=ApiResponse)
 async def motor_enable(
     svc: MotorService = Depends(_motor_service),
