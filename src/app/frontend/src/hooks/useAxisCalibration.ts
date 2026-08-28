@@ -17,9 +17,9 @@ import { usePersistentState } from './usePersistentState';
 const CACHE_KEY = 'settings.axisCalibration';
 
 // idx-aligned with AXIS_NAMES = [FEED, BEND, ROTATE, LIFT]
-export const AXIS_PHYSICAL_UNIT = ['deg', 'deg', 'deg', 'mm'] as const;
-export const DEFAULT_STEPS_PER_UNIT = [200, 200, 200, 200] as const;
-export const DEFAULT_DISTANCE_LIMIT = [100, 360, 360, 100] as const;
+export const AXIS_PHYSICAL_UNIT = ['mm', 'deg', 'deg', 'mm'] as const;
+export const DEFAULT_STEPS_PER_UNIT = [25.4648, 200, 200, 200] as const;
+export const DEFAULT_DISTANCE_LIMIT = [200, 360, 360, 240] as const;
 export const DEFAULT_SPEED_LIMIT    = [20, 20, 20, 20] as const;
 
 export interface AxisCalibration {
