@@ -143,12 +143,46 @@ changing anything that writes a register; and prefer measuring with the
 probes below over reasoning about timing, because several confident
 guesses in this codebase turned out wrong.
 
+### One entry point: `tools/dev.sh`
+
+Build, test, deploy and debug all go through it; the VS Code tasks and
+launch configurations call the same script. Full guide in
+[docs/DEBUGGING.md](docs/DEBUGGING.md).
+
+```bash
+tools/dev.sh setup            # toolchain check + .clangd + .vscode + compile_commands.json
+tools/dev.sh status           # board service/ports/clock + host build trees
+tools/dev.sh build all --clean
+tools/dev.sh deploy server    # rsync + restart + md5 sync check
+tools/dev.sh debug py         # board FastAPI under debugpy :5678, then attach from VS Code
+tools/dev.sh debug py --stop  # ← always, when finished
+tools/dev.sh debug cpp <bin>  # cross-built binary under gdbserver :2345 on the board
+```
+
+Debug builds are `-O0 -g3 -fno-inline` so a breakpoint lands on the line
+you set it on. Do not debug a `--release` build.
+
+Under debugpy the backend takes **40–60 s** to answer on `:8000`
+(pydevd traces every import) instead of the usual 7 s. It is not hung.
+
 ### Tests
 
 ```bash
-cd src/app/server && python -m pytest -q     # 171 tests, no hardware needed
+tools/dev.sh test py                         # BOTH suites, no hardware needed
+tools/dev.sh test safety                     # current-safety suite, before any register work
+tools/dev.sh test cpp                        # host gtest
+tools/dev.sh test cpp-board                  # cross-built gtest, run on the board
 cd src/app/frontend && npx tsc --noEmit -p tsconfig.json && npm run build
 ```
+
+**The Python tests live in two directories** — the repo-root `tests/`
+(motor backend, TMC drivers, SPI safety) and `src/app/server/tests/`. The
+root `pytest.ini` added in #49 names both, so `pytest` from the repo root
+runs the full set. It does **not** close the other half of the trap:
+`cd src/app/server && pytest` still collects only that directory, because
+pytest falls back to cwd when it is not started from the rootdir. Run it
+from the root, or use `tools/dev.sh test py`, which runs both explicitly
+and fails if either does.
 
 Mock mode (`OB_MOCK_MODE=true`) serves the identical API with no
 hardware — build clients against it.
