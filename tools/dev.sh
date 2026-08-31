@@ -599,24 +599,24 @@ cmd_test() {
     local suite="${1:-py}"
     case "$suite" in
         py)
-            # 파이썬 테스트는 두 군데에 흩어져 있고, 어느 한쪽만 돌리면 조용히 놓친다.
-            #  - src/app/server/pytest.ini 는 testpaths=tests 라서 거기서 돌리면
-            #    저장소 루트의 tests/*.py (모터 백엔드·드라이버·안전 테스트)를 통째로 뺀다.
-            #  - 반대로 루트에서 인자 없이 pytest 를 돌리면 src/dev/*.py 를 수집하다
-            #    spidev 가 없어서 수집 단계에서 죽는다.
-            # 그래서 두 스위트를 명시적으로 각각 돌리고, 하나라도 깨지면 실패로 끝낸다.
-            local rc=0
-            step "pytest 1/2 — src/app/server (mock 모드, 하드웨어 불필요)"
-            (cd "$ROOT/src/app/server" && OB_MOCK_MODE=true "$ROOT/.venv/bin/python" -m pytest -q) || rc=1
-            step "pytest 2/2 — 저장소 루트 tests/"
-            (cd "$ROOT" && OB_MOCK_MODE=true "$ROOT/.venv/bin/python" -m pytest -q tests) || rc=1
-            (( rc == 0 )) || die "파이썬 테스트 실패 (위 두 스위트 중 하나 이상)"
-            log "두 스위트 모두 통과" ;;
+            # PR #49 로 저장소 루트에 pytest.ini 가 생겼고, 거기 testpaths 가
+            # 두 디렉터리(tests, src/app/server/tests)를 모두 지정한다. 그러니
+            # 전체 집합의 정의는 그 파일 하나뿐이다 — 여기서 경로를 다시 나열하면
+            # testpaths 가 바뀔 때 dev.sh 와 CI 가 조용히 어긋난다. #49 가 없애려던
+            # 실패 모드가 바로 그것이므로, 루트에서 인자 없이 한 번만 돌린다.
+            #
+            # 주의: rootdir 밖에서 실행하면 testpaths 가 적용되지 않는다(pytest 문서화
+            # 동작). `cd src/app/server && pytest` 는 여전히 부분 실행이다 — 아래
+            # py-server 가 그 경우이고, 진단용으로만 쓴다.
+            step "pytest — 저장소 루트 (mock 모드, 하드웨어 불필요)"
+            (cd "$ROOT" && OB_MOCK_MODE=true "$ROOT/.venv/bin/python" -m pytest -q) \
+                || die "파이썬 테스트 실패"
+            log "전체 스위트 통과" ;;
         py-server)
-            step "pytest — src/app/server 만 (루트 tests/ 는 빠진다)"
+            step "pytest — src/app/server 만 (진단용, 루트 tests/ 는 빠진다)"
             (cd "$ROOT/src/app/server" && OB_MOCK_MODE=true "$ROOT/.venv/bin/python" -m pytest -q) ;;
         py-root)
-            step "pytest — tests/ (저장소 루트)"
+            step "pytest — tests/ 만 (진단용)"
             (cd "$ROOT" && OB_MOCK_MODE=true "$ROOT/.venv/bin/python" -m pytest -q tests) ;;
         cpp)
             step "ctest — 호스트 네이티브"

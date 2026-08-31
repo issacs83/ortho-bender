@@ -1,0 +1,9 @@
+# Shell scripts execute inside WSL and on the board. A CRLF in one is not
+# an untidiness issue: it becomes part of the shebang and of every line
+# continuation, so the script fails with "bad interpreter" or a syntax
+# error at the first backslash.
+#
+# Other file types in this tree also carry CRLF (Yocto recipes, kas YAML,
+# CMakeLists). They tolerate it, and normalising them is a separate change
+# with a much larger diff - deliberately not done here.
+*.sh text eol=lf

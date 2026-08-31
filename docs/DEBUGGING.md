@@ -13,6 +13,20 @@ tools/dev.sh status         # 보드 상태(서비스/포트/시계) + 호스트
 
 ---
 
+## 0. 폴더는 WSL 안에서 열 것
+
+코드는 Ubuntu 안에서 실행된다 — cmake, sshpass, `.venv`, 보드 스크립트가
+전부 거기에 있다. Windows 쪽 VS Code 로 `\\wsl.localhost\...` 경로를 열면
+태스크는 (내부적으로 `wsl.exe` 를 거치므로) 돌아가지만, **clangd·파이썬
+인터프리터·로컬 디버거는 공유 경로 너머의 리눅스 툴체인에 닿지 못한다.**
+
+> `Ctrl+Shift+P` → **WSL: Reopen Folder in WSL**
+
+아래 네 레인은 전부 이 전제 위에 서 있다. 이걸 건너뛰면 태스크는 도는데
+중단점이 안 걸리는, 원인 찾기 어려운 상태가 된다.
+
+---
+
 ## 1. 디버깅 레인 4개
 
 | 레인 | 대상 | 실제로 도는 곳 | 상태 |
@@ -160,17 +174,28 @@ tools/dev.sh deploy bin             # 크로스빌드 바이너리 → /opt/orth
 `deploy server` 는 배포 후 `tools/check-board-sync.py` 로 트리 전체 md5 를
 대조한다. **배포 성공은 반영을 뜻하지 않는다** — 이 대조가 실제 확인이다.
 
-### 파이썬 테스트는 두 군데에 있다
+### 파이썬 테스트는 두 디렉터리에 있다 — 루트에서 돌릴 것
 
-`tools/dev.sh test py` 가 **두 스위트를 모두** 돌리는 이유:
+테스트는 저장소 루트 `tests/` (모터 백엔드, TMC 드라이버, SPI 안전)와
+`src/app/server/tests/` 두 군데에 있다. PR #49 로 **저장소 루트에
+`pytest.ini`** 가 생겼고 그 `testpaths` 가 둘 다 지정하므로, 루트에서
+인자 없이 `pytest` 한 번이면 전체 집합이다. `tools/dev.sh test py` 와
+CI 가 하는 것도 정확히 그것이다.
 
-- `src/app/server/pytest.ini` 에 `testpaths = tests` 가 있어서, 그 디렉터리에서
-  pytest 를 돌리면 저장소 루트의 `tests/*.py` (모터 백엔드, TMC 드라이버,
-  SPI 안전 테스트)를 **통째로 건너뛴다.** 조용히 빠지므로 눈치채기 어렵다.
-- 반대로 저장소 루트에서 인자 없이 `pytest` 를 돌리면 `src/dev/*.py` 를
-  수집하다가 `spidev` 가 없어 **수집 단계에서 죽는다.**
+닫히지 않은 함정이 하나 남아 있다. **`testpaths` 는 rootdir 에서 실행할
+때만 적용된다**(pytest 의 문서화된 동작). 그래서
 
-한쪽만 보고 싶으면 `test py-server` / `test py-root` 를 쓴다.
+```bash
+cd src/app/server && pytest      # 여전히 부분 실행 — 루트 tests/ 가 빠진다
+```
+
+는 지금도 절반만 돈다. #49 이전과 이유가 다르다 — 예전에는 중첩된
+`src/app/server/pytest.ini` 가 범위를 좁혔고(그 파일은 #49 가 삭제했다),
+지금은 rootdir 밖에서 실행해 `testpaths` 자체가 적용되지 않기 때문이다.
+**저장소 루트에서 돌리거나 `tools/dev.sh test py` 를 쓸 것.**
+
+한쪽만 따로 보고 싶을 때만 `test py-server` / `test py-root` 를 쓴다.
+진단용이며, 이 둘의 결과로 "통과"를 판단하지 않는다.
 
 ## 8. 보드 IP
 
