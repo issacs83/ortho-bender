@@ -34,19 +34,28 @@ log = logging.getLogger(__name__)
 # Bench defaults — configurable via /api/motor/calibration.
 DEFAULT_STEPS_PER_UNIT: dict[int, float] = {
     # FEED feeds WIRE, so its unit is mm of wire, not degrees of roller.
-    # 1600 PWM cycles per motor revolution (1/16 microstepping with DEDGE,
-    # two microsteps per cycle -- the same figure the LIFT note below
-    # relies on) divided by the roller circumference.
     #
-    # PROVISIONAL: the roller diameter has never been measured. This
-    # assumes 20 mm, which is the placeholder the feed test script also
-    # carries. One measurement fixes it for good -- feed a commanded
-    # length, measure the wire that came out, and POST the corrected
-    # value to /api/motor/calibration:
+    #   1600 PWM cycles per MOTOR revolution (1.8 deg = 200 full steps,
+    #   1/16 microstepping, DEDGE puts two microsteps in each cycle)
+    #   x 2.5:1 reduction from motor to roller
+    #   = 4000 cycles per ROLLER revolution
+    #   / (pi x roller diameter) = steps per mm of wire
     #
-    #     new_steps_per_mm = old * (commanded_mm / measured_mm)
+    # The 2.5:1 was missing from the first version of this constant, which
+    # therefore under-fed by exactly that factor: a 10 mm command paid out
+    # about 4 mm and nothing reported an error, because an open-loop axis
+    # cannot know. The same arithmetic on BEND is what validates it --
+    # 23.0167 steps/deg measured against its limit disc implies 5.179:1
+    # through a gearbox sold as 5:1, i.e. the 5.18:1 a planetary actually
+    # turns, matching to 0.02%.
     #
-    0: 25.4648,   # FEED   (mm of wire) — 1600 / (pi * 20 mm)
+    # STILL PROVISIONAL: the roller diameter has never been measured. 20 mm
+    # is a placeholder and the only remaining unknown. One measurement
+    # settles it -- feed a commanded length, measure the wire that came out:
+    #
+    #     python3 tools/calibrate-feed.py --base http://<ip>:8000 --mm 100
+    #
+    0: 63.662,   # FEED (mm of wire) — 1600 x 2.5 / (pi * 20 mm)
     1: 200.0,   # BEND   (deg)
     2: 200.0,   # ROTATE (deg)
     3: 200.0,   # LIFT   (mm)
