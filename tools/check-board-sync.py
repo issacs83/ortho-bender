@@ -38,7 +38,26 @@ def local_md5(p: Path):
 
 # ---- server source -------------------------------------------------------
 SRC = ROOT / "src/app/server"
-print("=== 서버 소스 대조 (repo main vs board) ===")
+# The comparison is against the WORKING TREE, which is only "main" when the
+# checkout happens to be on it. Saying "main" unconditionally is how a board
+# running an unmerged branch tip got reported as matching main.
+_head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+                       capture_output=True, text=True).stdout.strip()
+_desc = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--abbrev-ref", "HEAD"],
+                       capture_output=True, text=True).stdout.strip()
+_dirty = bool(subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain",
+                              "src/app/server"],
+                             capture_output=True, text=True).stdout.strip())
+_upstream = subprocess.run(
+    ["git", "-C", str(ROOT), "rev-list", "--count", "HEAD..origin/main"],
+    capture_output=True, text=True).stdout.strip() or "?"
+
+print(f"=== 서버 소스 대조 (working tree {_desc} @ {_head} vs board) ===")
+if _dirty:
+    print("  !! working tree has uncommitted changes under src/app/server")
+if _upstream not in ("0", "?"):
+    print(f"  !! this tree is {_upstream} commits behind origin/main — "
+          f"'match' here does NOT mean the board matches main")
 mismatch, missing = [], []
 for f in sorted(SRC.rglob("*.py")):
     if "__pycache__" in str(f) or "/tests/" in str(f):
