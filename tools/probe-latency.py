@@ -11,27 +11,60 @@ reasons and only one of them is fixable in software:
 Run on the board (loopback, removes the network) and from the PC (adds
 it) and compare: the gap is the network, everything else is us.
 """
+import http.client
 import json
 import sys
 import time
-import urllib.request
+import urllib.parse
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000"
 N = int(sys.argv[2]) if len(sys.argv) > 2 else 60
 
+# ONE connection, reused. urllib opens a fresh TCP connection per request,
+# which over the board's WiFi added ~7 ms to the median and produced 1 s
+# outliers -- this tool was measuring its own connection setup and
+# reporting it as board latency. A real client (the dashboard's fetch,
+# any HTTP session) keeps the connection alive, so this now measures what
+# a client actually experiences. Run with --no-keepalive to see the
+# difference the connection reuse itself makes.
+_KEEPALIVE = "--no-keepalive" not in sys.argv
+_u = urllib.parse.urlparse(BASE)
+_conn = None
+
+
+def _connect():
+    global _conn
+    cls = (http.client.HTTPSConnection if _u.scheme == "https"
+           else http.client.HTTPConnection)
+    _conn = cls(_u.hostname, _u.port or (443 if _u.scheme == "https" else 80),
+                timeout=30)
+    return _conn
+
 
 def call(path, method="GET", body=None):
+    global _conn
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(BASE + path, data=data, method=method,
-                                 headers={"Content-Type": "application/json"})
+    headers = {"Content-Type": "application/json"}
+    conn = _conn if (_KEEPALIVE and _conn is not None) else _connect()
     t0 = time.perf_counter()
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            r.read()
+        conn.request(method, _u.path + path, body=data, headers=headers)
+        conn.getresponse().read()
         ok = True
     except Exception:
         ok = False
-    return (time.perf_counter() - t0) * 1000.0, ok
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _conn = None          # poisoned connection: reconnect next call
+    elapsed = (time.perf_counter() - t0) * 1000.0
+    if not _KEEPALIVE:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return elapsed, ok
 
 
 def report(name, samples, target_ms=None):
@@ -51,7 +84,8 @@ def report(name, samples, target_ms=None):
               f"({100*over/n:.0f}%)")
 
 
-print(f"target: {BASE}   samples: {N}\n")
+print(f"target: {BASE}   samples: {N}   "
+      f"connection: {'keep-alive' if _KEEPALIVE else 'new per request'}\n")
 
 print("=== 1. HTTP floor (no hardware touched) ===")
 health = [call("/health")[0] for _ in range(N)]
