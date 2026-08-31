@@ -44,9 +44,56 @@ AXIS = 0
 DIRECTION = 1
 
 
+class _VirtualClock:
+    """Deterministic time for _ramp: sleeps advance a counter, not the wall.
+
+    _ramp credits steps from elapsed time x frequency, so with real sleeps
+    this file measures host scheduling as much as the algorithm. A real
+    asyncio.sleep(1 ms) -- the _RAMP_SUBSLEEP_MIN_S floor -- returns late
+    under load, and late means extra steps credited: [100,400] failed about
+    one run in three on main that way, always at +3 against a tolerance
+    of 2, because a 100-step target reaches a higher f_cur before aborting
+    and each millisecond of slop costs proportionally more.
+
+    Advancing time by exactly the requested amount removes the host from
+    the measurement without weakening it: the overshoot the fix targets is
+    a function of slice length x frequency, and both are preserved here.
+    Verified by mutation -- reverting the adaptive slice to a fixed 10 ms
+    still fails the load-bearing cases under this clock.
+    """
+
+    def __init__(self, real_module):
+        self._real = real_module
+        self.t = 0.0
+
+    def monotonic(self) -> float:
+        return self.t
+
+    def __getattr__(self, name):          # everything else is the real time
+        return getattr(self._real, name)
+
+
+class _VirtualAsyncio:
+    """asyncio with sleep() replaced by 'advance the clock, yield once'."""
+
+    def __init__(self, real_module, clock: _VirtualClock):
+        self._real = real_module
+        self._clock = clock
+
+    async def sleep(self, delay, result=None):
+        self._clock.t += max(0.0, float(delay))
+        await self._real.sleep(0)         # let the loop run, cost no wall time
+        return result
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
 def _run_ramp(target_steps: int, f_from=200, f_to=4000, rate=8000.0):
     """Accelerate toward f_to but abort once target_steps are emitted,
     exactly as pulse_step does. Returns steps actually credited."""
+    from server.services import spi_backend as sb
+
     be = _RampOnlyBackend()
     be.positions[AXIS] = 0
     start = 0
@@ -62,7 +109,13 @@ def _run_ramp(target_steps: int, f_from=200, f_to=4000, rate=8000.0):
             remaining_cb=lambda: target_steps - travelled(),
         )
 
-    asyncio.run(go())
+    clock = _VirtualClock(sb.time)
+    real_time, real_asyncio = sb.time, sb.asyncio
+    sb.time, sb.asyncio = clock, _VirtualAsyncio(real_asyncio, clock)
+    try:
+        asyncio.run(go())
+    finally:
+        sb.time, sb.asyncio = real_time, real_asyncio
     return travelled()
 
 
@@ -74,16 +127,18 @@ def _run_ramp(target_steps: int, f_from=200, f_to=4000, rate=8000.0):
 # already reached roughly 400 Hz when it passed its 20-step target, which
 # is where a fixed 10 ms slice costs four steps; starting from the 200 Hz
 # floor the same target only costs two and the bug hides.
-# LOAD-BEARING: only [20,800] and [40,400] actually fail when the adaptive
-# slice is reverted to a fixed 10 ms. The rest pass on broken code too --
-# at low f_cur a fixed slice emits fewer steps than the tolerance, which is
-# the same blind spot the comment above describes. They are kept as guards
-# against a different regression, but if you trim this list, keep those two
-# or the file stops detecting the bug it exists for.
+# LOAD-BEARING, re-measured under the virtual clock: reverting the adaptive
+# slice to a fixed 10 ms fails [20,400], [20,800], [100,400] and
+# test_overshoot_does_not_grow_with_speed. Under real sleeps it failed only
+# [20,800] and [40,400] -- host jitter was masking the reported case itself,
+# which is the second reason the clock is virtual. [40,400] and [10,200] pass
+# on broken code and are kept as guards against a different regression; if
+# you trim this list, keep the three above or the file stops detecting the
+# bug it exists for. Re-run the mutation after any change here.
 @pytest.mark.parametrize("target,f_from", [
     (20, 400),    # 0.1 mm on LIFT at 200 steps/mm — the reported failure
     (20, 800),    # load-bearing
-    (40, 400),    # load-bearing
+    (40, 400),
     (100, 400),
     (10, 200),
 ])
