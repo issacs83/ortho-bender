@@ -94,6 +94,14 @@ Each of these cost real diagnostic time. Do not trust them.
   driver's shadow copy of what it last wrote.
 - **`sg_result`** — StallGuard load, meaningful **only while the shaft
   turns**.
+- **Board log timestamps** — the board's clock is years behind (seen at
+  `2022-05-25`; RTC sits at `1970-01-01`, `System clock synchronized: no`,
+  NTP running but never reaching a server). Every `journalctl` line is
+  stamped with that wrong time, so `--since` is useless and **no board log
+  can be matched to a host-side measurement by time**. Correlate by
+  content, or `date -s` before a debugging session. Check it with
+  `ssh root@<ip> date -u` — the same shape of trap as `signals.vmot`: a
+  reading that looks authoritative and is not.
 - **Never call** `GET /api/motor/diag/register/…` on a TMC260C —
   "reading" is implemented as writing zero to the register.
 
