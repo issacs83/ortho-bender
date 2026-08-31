@@ -29,4 +29,4 @@ jobs:
                       -r src/app/server/tests/requirements-dev.txt
 
       - name: Run test suite
-        run: python -m pytest tests/ src/app/server/tests -q
+        run: python -m pytest -q          # 경로는 루트 pytest.ini 의 testpaths 가 정한다
