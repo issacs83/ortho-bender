@@ -20,9 +20,9 @@ Two driver boards were destroyed on 2026-05-08 running CS=31.
 | Chopper off-time | **TOFF 1–8** | module-level `assert` at import |
 | `CHOPCONF` | **frozen `0x99548`** | written as a constant, never parameterised |
 
-`tests/test_current_safety.py` attacks every path that can energise a
-coil and fails loudly if one opens. Run it before touching anything in
-`spi_backend.py` or `tmc260c_driver.py`.
+`src/app/server/tests/test_current_safety.py` attacks every path that can
+energise a coil and fails loudly if one opens. Run it before touching
+anything in `spi_backend.py` or `tmc260c_driver.py`.
 
 The PSU preset (`/api/system/psu`) narrows CS further. Requests above
 the ceiling are refused; requests between the ceiling and the PSU cap
