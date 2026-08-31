@@ -76,6 +76,30 @@ for m in mismatch:
 for m in missing:
     print("    *** 보드에 없음:", m)
 
+# ---- files on the board that are NOT in the checkout ----------------------
+# The walk above only asks "is each of MY files present and identical", so a
+# hand-edited module dropped into the deployed tree is invisible to it. Ask
+# the opposite question too.
+print("\n=== 보드에만 있는 파일 ===")
+_r = subprocess.run(
+    SSH + ["find /opt/ortho-bender/server -name '*.py' -o -name '*.bak*' "
+           "| sed 's|/opt/ortho-bender/server/||'"],
+    capture_output=True, text=True, timeout=90)
+_board_files = {ln.strip() for ln in _r.stdout.splitlines() if ln.strip()}
+_local_files = {
+    str(f.relative_to(SRC)) for f in SRC.rglob("*.py")
+    if "__pycache__" not in str(f) and "/tests/" not in str(f)
+}
+_extra = sorted(f for f in _board_files - _local_files
+                if "__pycache__" not in f and not f.startswith("tests/"))
+if not _extra:
+    print("  없음")
+else:
+    for f in _extra:
+        print(f"  *** {f}")
+    print("  (배포 트리에 없어야 할 파일입니다 — 백업본이면 지우고, "
+          "손으로 고친 모듈이면 그게 실제로 도는 코드입니다)")
+
 # ---- frontend bundle -----------------------------------------------------
 print("\n=== 프론트엔드 번들 ===")
 dist = ROOT / "src/app/frontend/dist"
@@ -118,4 +142,15 @@ for path, needle in (("/api/motor/protection", "run_cs_effective"),
 
 total = len(mismatch) + len(missing) + len(stale)
 print(f"\n요약: 소스 불일치 {len(mismatch) + len(missing)}건, 문서 불일치 {len(stale)}건")
-print("보드는 main과" + (" 일치합니다." if total == 0 else f" {total}건 어긋나 있습니다."))
+# Name the same ref the header named. Saying "main" here regardless is how
+# a stale tree reports a correctly-deployed board as broken, and a stale
+# board as fine -- and this verdict line is the one that gets quoted.
+_ref = "main" if (_upstream == "0" and _desc == "main" and not _dirty) else f"이 트리({_desc} @ {_head})와"
+if _ref == "main":
+    print("보드는 main과" + (" 일치합니다." if total == 0
+                            else f" {total}건 어긋나 있습니다."))
+else:
+    print(f"보드는 {_ref}" + (" 일치합니다." if total == 0
+                              else f" {total}건 어긋나 있습니다."))
+    print("  (이 트리는 origin/main이 아닙니다 — 위 결과는 main에 대해 아무것도 "
+          "말해주지 않습니다)")
