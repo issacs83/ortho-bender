@@ -140,8 +140,17 @@ for path, needle in (("/api/motor/protection", "run_cs_effective"),
     except Exception as exc:
         print(f"  {path:26s} 실패: {exc}")
 
-total = len(mismatch) + len(missing) + len(stale)
-print(f"\n요약: 소스 불일치 {len(mismatch) + len(missing)}건, 문서 불일치 {len(stale)}건")
+# Extras count. Printing them and then declaring a match is the same
+# contradiction this tool was fixed for twice already: the section is
+# honest and the verdict overrides it. A .bak is noise, but a hand-edited
+# .py in the deployed tree IS the code that runs, and the verdict is the
+# line that gets quoted.
+_extra_py = [f for f in _extra if not (".bak" in f or f.endswith(".pyc"))]
+total = len(mismatch) + len(missing) + len(stale) + len(_extra)
+print(f"\n요약: 소스 불일치 {len(mismatch) + len(missing)}건, "
+      f"문서 불일치 {len(stale)}건, 보드에만 있는 파일 {len(_extra)}건"
+      + (f" (그중 .py {len(_extra_py)}건 — 실제로 도는 코드일 수 있음)"
+         if _extra_py else ""))
 # Name the same ref the header named. Saying "main" here regardless is how
 # a stale tree reports a correctly-deployed board as broken, and a stale
 # board as fine -- and this verdict line is the one that gets quoted.
