@@ -1,8 +1,8 @@
 """
-motor_service.py — Motor control service layer.
+motor_service.py — 모터 제어 서비스 계층.
 
-Translates REST API calls into IPC commands sent to the M7 FreeRTOS core.
-Decodes MSG_STATUS_MOTION responses into AxisStatus objects.
+REST API 호출을 M7 FreeRTOS 코어로 보내는 IPC 명령으로 변환한다.
+MSG_STATUS_MOTION 응답을 AxisStatus 객체로 디코딩한다.
 
 IEC 62304 SW Class: B
 """
@@ -40,7 +40,7 @@ from .ipc_client import (
 
 log = logging.getLogger(__name__)
 
-# Payload struct formats (must mirror ipc_protocol.h)
+# 페이로드 struct 포맷 (ipc_protocol.h 와 반드시 일치해야 한다)
 _MOTION_STATUS_FMT  = "<B4f4fHHBB"    # state + pos[4] + vel[4] + curr_step + total + axis_mask + drv_enabled
 _MOTION_STATUS_SIZE = struct.calcsize(_MOTION_STATUS_FMT)
 _TMC_STATUS_FMT     = "<4I4H4H4i"     # drv_status[4] + sg_result[4] + cs_actual[4] + xactual[4]
@@ -49,60 +49,59 @@ _TMC_STATUS_SIZE    = struct.calcsize(_TMC_STATUS_FMT)
 
 class MotorService:
     """
-    High-level motor control interface.
+    상위 레벨 모터 제어 인터페이스.
 
-    All methods are async and safe to call from FastAPI route handlers.
+    모든 메서드는 async 이며 FastAPI 라우트 핸들러에서 바로 호출해도 안전하다.
     """
 
     def __init__(self, ipc: IpcClient, spidev_backend=None) -> None:
         self._ipc = ipc
-        # Optional spidev backend — when M7 IPC is in mock mode and a
-        # SpidevMotorBackend is provided, motor commands run on the real
-        # Veyron 1×2A bench instead of dispatching IPC commands to a
-        # non-existent M7. Allows the FastAPI server to drive motors
-        # directly on the EVK test bench.
+        # 선택적 spidev 백엔드 — M7 IPC 가 mock 모드이고 SpidevMotorBackend 가
+        # 주어지면, 모터 명령이 존재하지 않는 M7 로 IPC 를 보내는 대신 실제
+        # Veyron 1×2A 벤치에서 실행된다. FastAPI 서버가 EVK 테스트 벤치의
+        # 모터를 직접 구동할 수 있게 해 준다.
         self._spi_backend = spidev_backend
-        # Axis ID → spidev cs (cs=0 LIFT, 1 BEND, 2 FEED). ROTATE not on bench.
+        # 축 ID → spidev cs (cs=0 LIFT, 1 BEND, 2 FEED). ROTATE 는 벤치에 없다.
         self._axis_to_cs = {
             int(AxisId.LIFT):   0,
             int(AxisId.BEND):   1,
             int(AxisId.FEED):   2,
             int(AxisId.ROTATE): None,
         }
-        # Long-press jog: a single bench async task at a time
+        # 길게 누르는 조그: 벤치 비동기 태스크는 한 번에 하나만
         import asyncio as _asyncio
         self._asyncio = _asyncio
         self._bench_jog_task: Optional[_asyncio.Task] = None
-        # Serializes the preempt-and-start critical section of
-        # _run_motion — without it two concurrent HTTP motions can both
-        # pass jog_stop() while nothing runs yet and then start TWO
-        # pulse_step coroutines on the shared PWM.
+        # _run_motion 의 "선점 후 시작" 임계 구역을 직렬화한다 — 이게 없으면
+        # 동시에 들어온 두 HTTP 모션이 아무것도 안 도는 사이에 둘 다
+        # jog_stop() 을 통과해서 공유 PWM 위에 pulse_step 코루틴을 둘 띄운다.
         self._motion_lock = _asyncio.Lock()
-        # Absolute moves QUEUE instead of pre-empting each other: the
-        # bench shares one STEP line, so two axes cannot run at once, but
-        # pressing "Move To" on three axes should still run all three —
-        # one after another — rather than each press cancelling the last.
+        # 절대 이동은 서로 선점하지 않고 큐에 쌓인다: 벤치는 STEP 라인을
+        # 공유하므로 두 축이 동시에 돌 수는 없지만, 세 축에서 "Move To" 를
+        # 눌렀다면 세 개가 차례로 다 실행되어야지 뒤에 누른 것이 앞의 것을
+        # 취소해서는 안 된다.
         self._queue_lock = _asyncio.Lock()
         self._queue_depth: int = 0
-        # Bumped by stop()/estop(); a queued move whose generation is
-        # stale is dropped instead of starting after an abort.
+        # stop()/estop() 이 증가시킨다. 세대(generation) 가 낡은 큐 대기 이동은
+        # 중단 이후에 시작되지 않고 폐기된다.
         self._motion_generation: int = 0
-        # Sticky E-STOP flag — stays True until enable_drivers/reset clears it,
-        # so the dashboard can show ESTOP instead of bouncing back to IDLE the
-        # moment the jog task finishes. Without this the bar would keep moving
-        # because _bench_status returned JOGGING while the cancel was in flight.
+        # 끈적이는(sticky) E-STOP 플래그 — enable_drivers/reset 이 지울 때까지
+        # True 로 남는다. 조그 태스크가 끝나는 순간 IDLE 로 튀지 않고 대시보드가
+        # 계속 ESTOP 을 보여줄 수 있게 하기 위해서다. 이게 없으면 취소가
+        # 진행 중인 동안 _bench_status 가 JOGGING 을 돌려주어 진행 바가 계속
+        # 움직였다.
         self._bench_estop_active: bool = False
         self._last_fault_clear: dict | None = None
-        # Limit-switch homing state (bench): flag while the homing sequence
-        # runs (status shows HOMING), axes homed since server start, and
-        # the last homing failure (surfaced via GET /api/motor/limits).
+        # 리밋 스위치 호밍 상태(벤치): 호밍 시퀀스가 도는 동안 세우는 플래그
+        # (상태 표시가 HOMING 이 된다), 서버 기동 이후 호밍이 끝난 축 집합,
+        # 마지막 호밍 실패 사유(GET /api/motor/limits 로 노출된다).
         self._bench_homing: bool = False
         self._homed_axes: set[int] = set()
         self._home_error: Optional[str] = None
-        # Per-axis steps/unit calibration. Late-injected via set_calibration()
-        # so main.py can wire it after MotorService construction.
+        # 축별 스텝/단위 캘리브레이션. main.py 가 MotorService 생성 이후에
+        # 연결할 수 있도록 set_calibration() 으로 나중에 주입한다.
         self._calibration = None  # type: ignore[assignment]
-        # Cache last TMC status so motor status can include it even between polls
+        # 마지막 TMC 상태를 캐시해 두어 폴링 사이에도 모터 상태에 포함시킨다
         self._last_tmc: Optional[bytes] = None
 
     @property
@@ -110,20 +109,20 @@ class MotorService:
         return self._spi_backend is not None
 
     def set_calibration(self, cal) -> None:
-        """Inject the CalibrationService used for axis steps/unit conversion."""
+        """축 스텝/단위 변환에 쓰는 CalibrationService 를 주입한다."""
         self._calibration = cal
 
     def set_motion_profiles(self, profiles) -> None:
-        """Inject the MotionProfileService (per-axis accel/decel/shape)."""
+        """MotionProfileService(축별 accel/decel/shape)를 주입한다."""
         self._motion_profiles = profiles
 
     def _profile_for(self, axis: int) -> dict | None:
-        """Backend-facing ramp profile for `axis`.
+        """`axis` 에 대해 백엔드가 받을 램프 프로파일.
 
-        Profiles store accel/decel in physical units (mm/s² or deg/s²);
-        the ramp engine consumes STEP-frequency slew (Hz/s). Convert here
-        with the same per-axis steps_per_unit calibration used for speed,
-        clamped to the range the bench PWM path was validated for.
+        프로파일은 accel/decel 을 물리 단위(mm/s² 또는 deg/s²)로 저장하지만
+        램프 엔진은 STEP 주파수 기울기(Hz/s)를 소비한다. 속도에 쓰는 것과
+        같은 축별 steps_per_unit 캘리브레이션으로 여기서 변환하고, 벤치 PWM
+        경로가 검증된 범위로 클램프한다.
         """
         mp = getattr(self, "_motion_profiles", None)
         if mp is None:
@@ -133,32 +132,38 @@ class MotorService:
         spu = cal.steps_per_unit(axis) if cal else 200.0
         out = {"start_hz": p["start_hz"], "shape": p["shape"]}
         for phys, hz in (("accel", "accel_hz_s"), ("decel", "decel_hz_s")):
+            # [200, 40000] Hz/s 클램프가 램프 엔진 직전의 마지막 관문이다.
+            # 고운 축은 프로파일 상한 200 units/s² 에 닿기 훨씬 전에 이
+            # 천장에 부딪힌다: 200 mm/s² x 200 steps/mm = 정확히 40000 Hz/s
+            # 이므로 LIFT 에서는 프로파일 범위의 꼭대기가 곧 램프 범위의
+            # 꼭대기이고, 더 요구해도 아무것도 달라지지 않는다. BEND
+            # (23 steps/deg)에서는 같은 200 deg/s² 가 4600 Hz/s 밖에 안 되어
+            # 여유가 많다.
             out[hz] = int(max(200, min(40000, float(p[phys]) * spu)))
         return out
 
     async def _run_motion(self, coro) -> None:
-        """Run a bench motion exclusively (last command wins).
+        """벤치 모션을 배타적으로 실행한다(마지막 명령이 이긴다).
 
-        move/move_to/jog(distance) used to await pulse_step inline with
-        NO mutual exclusion — a second request while one was running
-        interleaved two pulse_step coroutines on the shared PWM and
-        scrambled the position counter (observed: a counter left ~one
-        revolution off made the next absolute move spin a full turn).
-        All motion now goes through the single task slot: anything
-        already running (jog, previous move) is cancelled with its decel
-        + accurate accounting first, and STOP/E-STOP can cancel moves.
+        예전에는 move/move_to/jog(distance) 가 상호 배제 없이 pulse_step 을
+        인라인으로 await 했다 — 하나가 도는 중에 두 번째 요청이 들어오면 공유
+        PWM 위에서 pulse_step 코루틴 두 개가 뒤섞이며 위치 카운터가 엉켰다
+        (실제로 카운터가 약 1회전 어긋난 상태로 남아 다음 절대 이동이 한 바퀴를
+        통째로 돌았다). 이제 모든 모션은 단일 태스크 슬롯을 지난다: 이미 도는
+        것(조그, 이전 이동)은 감속 + 정확한 스텝 정산과 함께 먼저 취소되고,
+        STOP/E-STOP 도 이동을 취소할 수 있다.
         """
-        async with self._motion_lock:       # atomic preempt-and-start
-            # nudge=False: internal preemption must cancel instantly —
-            # the minimum-nudge grace is for the operator's tap release.
+        async with self._motion_lock:       # 선점과 시작을 원자적으로
+            # nudge=False: 내부 선점은 즉시 취소되어야 한다 — 최소 넛지 유예는
+            # 운전자가 버튼에서 손을 뗀 경우를 위한 것이다.
             await self.jog_stop(nudge=False)
             task = self._asyncio.create_task(coro)
             self._bench_jog_task = task
         try:
             await task
         except self._asyncio.CancelledError:
-            # Preempted by a newer command (or STOP): the motion ended
-            # with a clean decel — swallow unless WE are being cancelled.
+            # 더 새로운 명령(또는 STOP)에 선점된 경우: 모션은 깨끗한 감속으로
+            # 끝났다 — "우리 자신" 이 취소당한 게 아니라면 삼킨다.
             if not task.cancelled():
                 raise
         finally:
@@ -166,12 +171,12 @@ class MotorService:
                 self._bench_jog_task = None
 
     def _max_speed_for(self, axis: int) -> float:
-        """Per-axis machine velocity limit (profile max_speed).
+        """축별 머신 속도 상한(프로파일의 max_speed).
 
-        Command-time clamp, GRBL $110-112 style: a machine limit distinct
-        from the operator's jog_speed default — direct API callers cannot
-        exceed it either. Reads the stored profile, NOT _profile_for's
-        backend dict (which carries only ramp parameters).
+        GRBL $110-112 방식의 명령 시점 클램프다: 운전자용 기본값인 jog_speed
+        와는 구분되는 머신 한계이며, API 를 직접 호출해도 넘을 수 없다.
+        저장된 프로파일을 읽으며, _profile_for 가 만드는 백엔드용 dict
+        (램프 파라미터만 담긴다)를 읽지 않는다.
         """
         mp = getattr(self, "_motion_profiles", None)
         if mp is None:
@@ -179,13 +184,13 @@ class MotorService:
         return float(mp.get(axis).get("max_speed", 40.0))
 
     def _ensure_not_estop(self, action: str) -> None:
-        """HARD GATE — refuse motion commands while bench E-STOP is latched.
+        """하드 게이트 — 벤치 E-STOP 이 걸려 있는 동안 모션 명령을 거부한다.
 
-        2026-05-09 incident: jog buttons stayed active in the dashboard while
-        the ESTOP indicator was set, and the operator was able to drive the
-        motor with a single press. The backend is the last line of defence —
-        even with frontend disable in place, any direct API call must hit
-        this and be rejected until enable_drivers()/reset() clears the flag.
+        2026-05-09 사고: ESTOP 표시가 켜진 상태에서도 대시보드의 조그 버튼이
+        살아 있어 운전자가 한 번 누르는 것만으로 모터를 구동할 수 있었다.
+        백엔드가 최후의 방어선이다 — 프론트엔드에서 비활성화를 해 두더라도
+        모든 직접 API 호출은 여기에 걸려서, enable_drivers()/reset() 이
+        플래그를 지울 때까지 거부되어야 한다.
         """
         if self._bench_estop_active:
             raise RuntimeError(
@@ -200,17 +205,16 @@ class MotorService:
         speed: float = 1000.0,
         continuous: bool = False,
     ) -> dict:
-        """Begin bench rotation.
+        """벤치 회전을 시작한다.
 
-        Two modes:
-          - continuous=False (default, used by the long-press ◀ / ▶
-            buttons): 5 s safety-fallback duration. Frontend is expected
-            to send jog_stop on pointerup; the 5 s cap protects against
-            dropped stop requests.
-          - continuous=True (used by single-click ◀◀ / ▶▶ buttons):
-            60 s duration. Stays on until the user presses the row's
-            STOP button (which calls jog_stop). 60 s caps unattended
-            runtime in case the user forgets to stop.
+        두 가지 모드:
+          - continuous=False (기본값, 길게 누르는 ◀ / ▶ 버튼이 사용):
+            안전 폴백으로 5 초 길이. 프론트엔드는 pointerup 에서 jog_stop 을
+            보내야 하며, 5 초 상한은 정지 요청이 유실된 경우를 대비한 것이다.
+          - continuous=True (한 번 클릭하는 ◀◀ / ▶▶ 버튼이 사용):
+            60 초 길이. 사용자가 해당 행의 STOP 버튼(jog_stop 호출)을 누를
+            때까지 계속 돈다. 60 초는 정지를 잊었을 때의 무인 구동 시간을
+            제한한다.
         """
         self._ensure_not_estop("jog_start")
         if not self.has_bench:
@@ -224,14 +228,14 @@ class MotorService:
         if cs is None:
             raise ValueError(f"Axis {axis} is not present on the bench")
 
-        # Speed is in axis-native user units (mm/s for FEED/LIFT, deg/s for
-        # BEND/ROTATE). The CalibrationService converts to step rate so an
-        # operator entering "10 mm/s" feeds the wire at the calibrated rate
-        # regardless of motor microstepping or lead-screw spec.
-        # Bench hard cap 8000 Hz PWM. At DRVCTRL 1/16 microstep + DEDGE
-        # (2 microsteps per PWM cycle) this is 16 000 µsteps/s =
-        # 5 rev/s = 300 RPM at the motor shaft. Raising this cap needs a
-        # bench verification pass (PWM pad integrity + stall behaviour).
+        # 속도는 축 고유의 사용자 단위다(FEED/LIFT 는 mm/s, BEND/ROTATE 는
+        # deg/s). CalibrationService 가 스텝 레이트로 변환하므로, 운전자가
+        # "10 mm/s" 를 입력하면 모터 마이크로스텝이나 리드스크류 사양과
+        # 무관하게 캘리브레이션된 속도로 와이어가 나간다.
+        # 벤치 하드 상한은 PWM 8000 Hz. DRVCTRL 1/16 마이크로스텝 + DEDGE
+        # (PWM 사이클당 마이크로스텝 2개)에서 이는 16,000 µsteps/s =
+        # 5 rev/s = 모터축 300 RPM 이다. 이 상한을 올리려면 벤치 검증
+        # (PWM 패드 무결성 + 스톨 거동)을 한 번 거쳐야 한다.
         cal = self._calibration
         steps_per_unit = cal.steps_per_unit(axis) if cal else 200.0
         speed_clamped = min(abs(speed), cal.speed_limit(axis) if cal else 40.0,
@@ -257,44 +261,43 @@ class MotorService:
         }
 
     async def jog_stop(self, nudge: bool = True) -> dict:
-        """Stop the current bench jog (long-press release).
+        """현재 벤치 조그를 정지한다(길게 누르기에서 손을 뗀 경우).
 
-        Cancels the background pulse_step task. Its finally block disables
-        PWM and silences the active chip. Belt-and-suspenders: also call
-        backend pwm_disable to ensure outputs are clean. We do NOT silence
-        every chip here (only the running one is touched by pulse_step's
-        finally) to minimise deadtime between rapid taps.
+        백그라운드 pulse_step 태스크를 취소한다. 그 태스크의 finally 블록이
+        PWM 을 끄고 활성 칩을 침묵시킨다. 이중 안전장치로 백엔드의
+        pwm_disable 도 호출해 출력이 깨끗한지 보장한다. 여기서 모든 칩을
+        침묵시키지는 않는다(pulse_step 의 finally 가 건드리는 것은 돌던 축
+        하나뿐이다) — 빠르게 연타할 때의 데드타임을 줄이기 위해서다.
         """
-        # Snapshot the task reference: the grace waits below yield to the
-        # event loop, where a concurrent jog_stop (rapid double-tap — a
-        # second jog_start calls jog_stop too) may cancel the task and
-        # null out self._bench_jog_task. Re-reading the attribute after
-        # an await raised 'NoneType' has no attribute 'done'.
+        # 태스크 참조를 스냅샷해 둔다: 아래의 유예 대기들은 이벤트 루프에
+        # 양보하는데, 그 사이 동시에 들어온 jog_stop(빠른 더블탭 — 두 번째
+        # jog_start 도 jog_stop 을 호출한다)이 태스크를 취소하고
+        # self._bench_jog_task 를 None 으로 만들 수 있다. await 이후에 속성을
+        # 다시 읽었더니 'NoneType' has no attribute 'done' 이 났다.
         task = self._bench_jog_task
         if task is not None and not task.done():
-            # Minimum-nudge guarantee: a very short tap releases while the
-            # motion task is still in its setup phase (~100 ms: DIR setup
-            # + warm chip init) — cancelling here would produce ZERO steps
-            # even though the user saw/heard the coil engage. If no STEP
-            # has been emitted yet (and we're not homing), wait for the
-            # PWM to start plus a short grace so every tap nudges the
-            # axis by a few counted steps.
+            # 최소 넛지 보장: 아주 짧게 톡 누르면 모션 태스크가 아직 준비
+            # 단계(약 100 ms: DIR 셋업 + 예열된 칩 init)에 있을 때 손을 떼게
+            # 되는데, 여기서 그냥 취소하면 사용자는 코일이 물리는 소리를
+            # 듣거나 봤는데도 스텝이 0개가 된다. 아직 STEP 이 하나도 나가지
+            # 않았고 호밍 중이 아니라면, PWM 이 시작될 때까지 기다린 뒤 짧은
+            # 유예를 더 줘서 모든 탭이 축을 몇 스텝이라도 밀도록 한다.
             be = self._spi_backend
             if (nudge and be is not None and not self._bench_homing
                     and not getattr(be, "_pwm_active", True)
                     and not getattr(be, "_pwm_killed", False)):
-                for _ in range(40):            # ≤ 0.4 s bound
+                for _ in range(40):            # ≤ 0.4 s 상한
                     if getattr(be, "_pwm_active", False) or task.done():
                         break
                     await self._asyncio.sleep(0.01)
                 if getattr(be, "_pwm_active", False) and not task.done():
-                    await self._asyncio.sleep(0.05)   # ~10 steps at the floor
+                    await self._asyncio.sleep(0.05)   # 바닥 주파수에서 약 10 스텝
             task.cancel()
             try:
                 await task
             except (self._asyncio.CancelledError, Exception):
                 pass
-        # Clear only if a newer motion task hasn't replaced it meanwhile.
+        # 그 사이 더 새로운 모션 태스크가 자리를 차지하지 않았을 때만 비운다.
         if self._bench_jog_task is task:
             self._bench_jog_task = None
         if self.has_bench:
@@ -310,24 +313,24 @@ class MotorService:
         distance: float,
         speed: float,
     ) -> None:
-        """Translate move/jog (distance, speed) into a bench pulse_step call.
+        """move/jog 의 (distance, speed) 를 벤치 pulse_step 호출로 변환한다.
 
-        Conservative mapping (units are application-defined on bench):
-          1 unit distance = 200 microsteps   (~1 full rev at 200 step/rev)
-          1 unit speed    = 1 Hz step rate   (frontend usually sends large
-                                              values like 1000, treated as Hz)
-        Safety clamps:
-          - distance |abs| ≤ 50 units (≤ 10 000 microsteps)
-          - freq         ≤ 4000 Hz (single-axis bench safe)
-          - duration     ≤ 10 s
+        보수적인 매핑(벤치에서 단위는 응용이 정한다):
+          거리 1 unit = 마이크로스텝 200개  (200 step/rev 기준 약 1회전)
+          속도 1 unit = 스텝 레이트 1 Hz    (프론트엔드는 보통 1000 같은 큰
+                                            값을 보내며 Hz 로 취급한다)
+        안전 클램프:
+          - 거리 |abs| ≤ 50 units (마이크로스텝 10,000개 이하)
+          - 주파수     ≤ 4000 Hz (단일 축 벤치 안전값)
+          - 지속시간   ≤ 10 s
         """
         cs = self._axis_to_cs.get(axis)
         if cs is None:
             raise ValueError(f"Axis {axis} is not present on the bench")
 
-        # ---- Safety clamps for frontend-supplied values ----
-        # frontend may send large numbers (speed=1000 etc.); treat speed
-        # directly as Hz with safe upper bound.
+        # ---- 프론트엔드가 보낸 값에 대한 안전 클램프 ----
+        # 프론트엔드는 큰 값(speed=1000 등)을 보낼 수 있다. 속도를 Hz 로
+        # 직접 취급하되 안전한 상한을 건다.
         cal = self._calibration
         steps_per_unit = cal.steps_per_unit(axis) if cal else 200.0
         dist_limit = cal.distance_limit(axis) if cal else 50.0
@@ -337,7 +340,7 @@ class MotorService:
         speed_clamped = min(abs(speed), speed_lim, self._max_speed_for(axis))
         freq = int(speed_clamped * steps_per_unit)
         freq = max(200, min(freq, 8000))
-        # Cap duration to 10 s
+        # 지속시간을 10 s 로 제한
         if steps / freq > 10.0:
             steps = freq * 10
         direction = 1 if distance >= 0 else -1
@@ -349,15 +352,15 @@ class MotorService:
                                            profile=self._profile_for(axis))
 
     # ------------------------------------------------------------------
-    # Status
+    # 상태
     # ------------------------------------------------------------------
 
     async def get_status(self) -> MotorStatusResponse:
-        """Query current motor position, velocity, and state.
+        """현재 모터 위치·속도·상태를 조회한다.
 
-        Bench mode: synthesize status from SpidevMotorBackend.positions
-        (real microstep counts driven via pulse_step). Skips IPC entirely.
-        Production: query M7 via IPC.
+        벤치 모드: SpidevMotorBackend.positions(pulse_step 으로 실제 구동된
+        마이크로스텝 카운트)에서 상태를 합성하며 IPC 를 전혀 쓰지 않는다.
+        운영 모드: IPC 로 M7 에 질의한다.
         """
         if self.has_bench:
             return self._bench_status()
@@ -365,23 +368,23 @@ class MotorService:
         return self._parse_motion_status(resp.payload)
 
     def _bench_status(self) -> MotorStatusResponse:
-        """Build MotorStatusResponse from spidev backend's tracked positions.
+        """spidev 백엔드가 추적하는 위치로 MotorStatusResponse 를 만든다.
 
-        Spidev cs (0/1/2) = LIFT/BEND/FEED. Map back to AxisId:
+        spidev cs (0/1/2) = LIFT/BEND/FEED. AxisId 로 역매핑:
           cs=0 → AxisId.LIFT (3)
           cs=1 → AxisId.BEND (1)
           cs=2 → AxisId.FEED (0)
-        AxisId.ROTATE (2) is not on the bench (skipped).
+        AxisId.ROTATE (2) 는 벤치에 없다(건너뛴다).
         """
         bench_pos = getattr(self._spi_backend, "positions", {})
-        # cs → AxisId int
+        # cs → AxisId 정수
         cs_to_axis = {0: int(AxisId.LIFT), 1: int(AxisId.BEND), 2: int(AxisId.FEED)}
         axes = []
         axis_mask = 0
         signals_fn = getattr(self._spi_backend, "get_axis_signals", None)
         for cs, axis_int in cs_to_axis.items():
             pos_steps = bench_pos.get(cs, 0)
-            # Convert microsteps back to display units (inverse of _bench_pulse: 200 step = 1 unit)
+            # 마이크로스텝을 표시 단위로 되돌린다(_bench_pulse 의 역: 200 step = 1 unit)
             spu = (self._calibration.steps_per_unit(axis_int)
                    if self._calibration else 200.0)
             pos_units = pos_steps / spu
@@ -392,23 +395,22 @@ class MotorService:
                 velocity=0.0,
                 drv_status=0,
                 sg_result=(sig_dict.get("sg_value") or 0) if sig_dict else 0,
-                # Effective coil current after the PSU cap, not a constant.
-                # This field read 19 unconditionally, which made an axis
-                # look like it was running at the safety ceiling no matter
-                # what the PSU preset had clamped it to.
+                # 상수가 아니라 PSU 캡까지 적용한 실효 코일 전류.
+                # 예전에는 이 필드가 무조건 19 를 읽어서, PSU 프리셋이 얼마로
+                # 클램프했든 축이 안전 천장에서 도는 것처럼 보였다.
                 cs_actual=int(self._spi_backend.effective_cs(cs))
                           if hasattr(self._spi_backend, "effective_cs") else 0,
                 signals=AxisSignals(**sig_dict) if sig_dict else None,
             ))
             axis_mask |= (1 << axis_int)
-        # Sort by axis id (consistent with frontend ordering 0..3)
+        # 축 id 순 정렬(프론트엔드의 0..3 순서와 일치)
         axes.sort(key=lambda a: int(a.axis))
-        # Reflect actual motion in the state field so the dashboard's
-        # "State: IDLE/JOGGING" indicator matches what the bench is doing.
-        # ESTOP is sticky and wins over JOGGING — once the operator hits
-        # E-STOP the dashboard must keep showing it until the condition
-        # is explicitly cleared by enable_drivers()/reset(), even though
-        # the cancelled jog task itself would let state fall back to IDLE.
+        # 대시보드의 "State: IDLE/JOGGING" 표시가 벤치의 실제 동작과 맞도록
+        # state 필드에 실제 모션을 반영한다.
+        # ESTOP 은 끈적이며 JOGGING 을 이긴다 — 운전자가 E-STOP 을 누른 뒤에는
+        # enable_drivers()/reset() 으로 조건이 명시적으로 해제될 때까지
+        # 대시보드가 계속 그것을 보여줘야 한다. 취소된 조그 태스크만 보면
+        # state 가 IDLE 로 떨어져 버리기 때문이다.
         bench_jog_active = (
             self._bench_jog_task is not None and not self._bench_jog_task.done()
         )
@@ -430,7 +432,7 @@ class MotorService:
     def _parse_motion_status(self, payload: bytes) -> MotorStatusResponse:
         if len(payload) < _MOTION_STATUS_SIZE:
             log.warning("Motion status payload too short: %d bytes", len(payload))
-            # Return safe default
+            # 안전한 기본값 반환
             return MotorStatusResponse(
                 state=MotionState.IDLE,
                 axes=[],
@@ -449,7 +451,7 @@ class MotorService:
         axis_mask      = raw[11]
         driver_enabled = bool(raw[12])
 
-        # Parse optional TMC status if appended (concatenated payload)
+        # 뒤에 TMC 상태가 붙어 있으면(연결된 페이로드) 함께 파싱한다
         tmc_raw = None
         if len(payload) >= _MOTION_STATUS_SIZE + _TMC_STATUS_SIZE:
             tmc_raw = struct.unpack_from(_TMC_STATUS_FMT, payload, _MOTION_STATUS_SIZE)
@@ -477,29 +479,29 @@ class MotorService:
         )
 
     # ------------------------------------------------------------------
-    # Commands
+    # 명령
     # ------------------------------------------------------------------
 
     async def move(self, axis: int, distance: float, speed: float) -> MotorStatusResponse:
         """
-        Move a single axis by the given distance at the given speed.
+        한 축을 주어진 속도로 주어진 거리만큼 이동시킨다.
 
-        - Bench mode (spidev backend): direct pulse_step on Veyron board.
-        - Production (M7 IPC): single-step B-code → M7 trajectory manager.
+        - 벤치 모드(spidev 백엔드): Veyron 보드에서 pulse_step 직접 실행.
+        - 운영 모드(M7 IPC): 단일 스텝 B-code → M7 궤적 관리자.
         """
         self._ensure_not_estop("move")
         if self.has_bench:
             await self._run_motion(self._bench_pulse(axis, distance, speed))
             return await self.get_status()
 
-        # IPC path (M7 production)
+        # IPC 경로 (M7 운영)
         L_mm    = distance if axis == AxisId.FEED else 0.0
         beta    = distance if axis == AxisId.ROTATE else 0.0
         theta   = distance if axis == AxisId.BEND else 0.0
 
         payload = build_bcode_payload(
             steps=[(L_mm, beta, theta)],
-            material_id=0,          # SS_304 default
+            material_id=0,          # SS_304 기본값
             wire_diameter_mm=0.457,
         )
         await self._ipc.send_recv(MSG_MOTION_EXECUTE_BCODE, payload)
@@ -508,10 +510,10 @@ class MotorService:
     async def jog(
         self, axis: int, direction: int, speed: float, distance: float = 0.0
     ) -> MotorStatusResponse:
-        """Jog an axis continuously or for a fixed distance.
+        """한 축을 연속으로, 또는 고정 거리만큼 조그한다.
 
-        Bench mode: jog defaults to 1-revolution (200 steps) when distance=0,
-        sign matches `direction` argument. Production: dispatches MSG_MOTION_JOG.
+        벤치 모드: distance=0 이면 1회전(200 스텝)을 기본으로 하고 부호는
+        `direction` 인자를 따른다. 운영 모드: MSG_MOTION_JOG 를 보낸다.
         """
         self._ensure_not_estop("jog")
         if self.has_bench:
@@ -525,21 +527,20 @@ class MotorService:
         return await self.get_status()
 
     async def set_zero(self, axis: int, value: float = 0.0) -> MotorStatusResponse:
-        """Define the current physical position as `value` (user units).
+        """현재의 물리적 위치를 `value`(사용자 단위)로 정의한다.
 
-        Zero-point / datum setting for the bench: the operator jogs the
-        axis to a known reference (mechanical stop, mark, future limit
-        switch) and declares the position counter to be `value`
-        (typically 0). The counter is persisted, so it survives server
-        restarts. Uses the same steps-per-unit convention as the status
-        display. Bench-only until M7 homing lands.
+        벤치의 영점/datum 설정이다: 운전자가 축을 알려진 기준(기계적 스토퍼,
+        표시, 앞으로 달릴 리밋 스위치)까지 조그한 뒤 위치 카운터를 `value`
+        (보통 0)라고 선언한다. 카운터는 영속되므로 서버를 재시작해도 남는다.
+        상태 표시와 동일한 steps-per-unit 규약을 쓴다. M7 호밍이 들어오기
+        전까지는 벤치 전용이다.
         """
         if not self.has_bench:
             raise RuntimeError("set_zero is only available in bench mode")
         cs = self._axis_to_cs.get(int(axis))
         if cs is None:
             raise ValueError(f"Axis {axis} is not present on the bench")
-        # Same conversion as _bench_status (per-axis calibration).
+        # _bench_status 와 같은 변환(축별 캘리브레이션).
         spu = (self._calibration.steps_per_unit(int(axis))
                if self._calibration else 200.0)
         self._spi_backend.positions[cs] = int(round(value * spu))
@@ -551,14 +552,14 @@ class MotorService:
         return await self.get_status()
 
     async def home(self, axis_mask: int = 0) -> MotorStatusResponse:
-        """Execute limit-switch homing for the specified axes.
+        """지정한 축들에 대해 리밋 스위치 호밍을 수행한다.
 
-        Bench: homes every requested axis that has a limit switch fitted
-        (LIFT and BEND — PM-L25 photo-interrupters), sequentially, as a
-        background motion task. Returns immediately with state=HOMING;
-        progress streams over /ws/motor and completion/failure is visible
-        via GET /api/motor/limits. jog/stop (or E-STOP) cancels homing.
-        axis_mask=0 → all homable axes (bit semantics: 0x02=BEND, 0x08=LIFT).
+        벤치: 리밋 스위치가 달린 요청 축(LIFT 와 BEND — PM-L25 포토
+        인터럽터)을 백그라운드 모션 태스크로 차례차례 호밍한다. 호출은
+        state=HOMING 으로 즉시 반환되고, 진행 상황은 /ws/motor 로 흐르며
+        완료/실패는 GET /api/motor/limits 로 확인한다. jog/stop(또는 E-STOP)이
+        호밍을 취소한다.
+        axis_mask=0 → 호밍 가능한 축 전부(비트 의미: 0x02=BEND, 0x08=LIFT).
         """
         self._ensure_not_estop("home")
         if not self.has_bench:
@@ -591,14 +592,14 @@ class MotorService:
         return await self.get_status()
 
     async def _home_sequence(self, plan: list[tuple[int, int, int]]) -> None:
-        """Home the planned axes one at a time (single shared STEP line)."""
+        """계획된 축들을 한 번에 하나씩 호밍한다(STEP 라인이 하나뿐이다)."""
         from ..config import get_settings
         cfg = get_settings()
         cal = self._calibration
         try:
             for axis, cs, direction in plan:
                 spu = cal.steps_per_unit(axis) if cal else 200.0
-                rotary = axis == int(AxisId.BEND)   # continuous rotation, 1 window/rev
+                rotary = axis == int(AxisId.BEND)   # 연속 회전, 1회전당 창 1개
                 if rotary:
                     seek_speed = cfg.home_seek_speed_bend
                 elif axis == int(AxisId.LIFT):
@@ -608,19 +609,19 @@ class MotorService:
                 seek_hz = int(seek_speed * spu)
                 latch_hz = int(cfg.home_latch_speed * spu)
                 backoff = int(cfg.home_backoff * spu)
-                # Hard travel cap: the switch MUST appear within the axis'
-                # calibrated travel (×1.1) — a dead sensor aborts instead
-                # of grinding into a hard stop.
+                # 이동 하드 상한: 스위치는 축의 캘리브레이션된 이동거리(×1.1)
+                # 안에서 반드시 나타나야 한다 — 센서가 죽었으면 하드 스토퍼를
+                # 갈아 대는 대신 중단한다.
                 dist_lim = cal.distance_limit(axis) if cal else 50.0
                 max_travel = int(dist_lim * 1.1 * spu)
                 if rotary:
-                    # One revolution + margin always crosses the window —
-                    # single-direction search, no reversal.
+                    # 1회전 + 여유면 언제나 창을 지나간다 — 단방향 탐색,
+                    # 방향 전환 없음.
                     search_range = int(cfg.home_rev_bend * spu)
                     preprobe = 0
                 elif axis == int(AxisId.LIFT):
-                    # Switch is at the top end: one leg over the whole
-                    # stroke always finds it, and nothing lies beyond.
+                    # 스위치가 상단 끝에 있다: 스트로크 전체를 한 번 훑으면
+                    # 항상 찾을 수 있고, 그 너머에는 아무것도 없다.
                     search_range = int(cfg.home_search_range_lift * spu)
                     preprobe = 0
                 else:
@@ -643,8 +644,8 @@ class MotorService:
                     preprobe_steps=preprobe,
                     stall_abort=bool(cfg.home_stall_abort) and not rotary)
                 self._homed_axes.add(axis)
-                # Persist "datum is real" alongside the position counter
-                # so a restart keeps both.
+                # 위치 카운터와 함께 "datum 이 실제로 잡혔다" 는 사실도
+                # 영속시켜서 재시작 후에도 둘 다 유지되게 한다.
                 hp = getattr(self._spi_backend, "homed_persist", None)
                 if hp is not None:
                     hp.add(axis)
@@ -663,7 +664,7 @@ class MotorService:
             self._bench_homing = False
 
     def limit_status(self) -> dict:
-        """Live limit switch states + homing bookkeeping (bench)."""
+        """리밋 스위치 실시간 상태 + 호밍 진행 정보(벤치)."""
         limits: dict[int, bool] = {}
         if self.has_bench:
             for axis, cs in ((int(AxisId.LIFT), 0), (int(AxisId.BEND), 1),
@@ -682,17 +683,16 @@ class MotorService:
         }
 
     # ------------------------------------------------------------------
-    # Protection / holding-torque settings (bench)
+    # 보호 / 유지 토크 설정 (벤치)
     # ------------------------------------------------------------------
-    # Axes that can be held. ROTATE is not fitted on this bench.
+    # 유지(hold)가 가능한 축. ROTATE 는 이 벤치에 장착되어 있지 않다.
     _HOLDABLE = (int(AxisId.FEED), int(AxisId.BEND), int(AxisId.LIFT))
 
     def get_protection(self) -> dict:
-        """Runtime motion-protection settings.
+        """런타임 모션 보호 설정.
 
-        `axes` carries the per-axis holding torque; `hold_enabled` /
-        `hold_cs` remain as LIFT-shaped aliases so older clients keep
-        working.
+        `axes` 가 축별 유지 토크를 담는다. `hold_enabled` / `hold_cs` 는
+        예전 클라이언트가 계속 동작하도록 남겨 둔 LIFT 형태의 별칭이다.
         """
         be = self._spi_backend
         held = getattr(be, "hold_axes", set()) or set()
@@ -705,10 +705,9 @@ class MotorService:
                 "hold_enabled": cs in held,
                 "hold_cs": int(be.hold_cs_for(cs)) if hasattr(be, "hold_cs_for")
                            else int(getattr(be, "hold_cs", 0)),
-                # What the axis is set to, and what it will actually get
-                # after the PSU cap -- they differ whenever the request
-                # asks for more than the supply allows, and hiding that
-                # would make a clamped axis look like a configured one.
+                # 축에 설정된 값과, PSU 캡을 거친 뒤 실제로 적용될 값.
+                # 공급이 허용하는 것보다 크게 요청하면 둘이 달라지는데,
+                # 이를 감추면 클램프된 축이 제대로 설정된 축처럼 보인다.
                 "run_cs": int(be.run_cs_map.get(cs, SGCSCONF_DEFAULT & 0x1F))
                           if hasattr(be, "run_cs_map")
                           else (SGCSCONF_DEFAULT & 0x1F),
@@ -721,7 +720,7 @@ class MotorService:
             "cs_cap": int(getattr(be, "_cs_scale_cap", 0)),
             "cs_max": SAFETY_CS_MAX,
             "axes": axes,
-            # legacy aliases (LIFT)
+            # 레거시 별칭 (LIFT)
             "hold_enabled": lift_cs in held,
             "hold_cs": axes.get(int(AxisId.LIFT), {}).get(
                 "hold_cs", int(getattr(be, "hold_cs", 0))),
@@ -729,11 +728,11 @@ class MotorService:
 
     async def set_protection(self, limit_stop=None, hold_enabled=None,
                              hold_cs=None, axes=None) -> dict:
-        """Update protection settings.
+        """보호 설정을 갱신한다.
 
-        `axes` is a per-axis map {axis: {hold_enabled?, hold_cs?}};
-        `hold_enabled`/`hold_cs` without it apply to LIFT (legacy shape).
-        Holding changes take effect immediately while the bench is idle.
+        `axes` 는 축별 맵 {axis: {hold_enabled?, hold_cs?}} 이며, 이것 없이
+        온 `hold_enabled`/`hold_cs` 는 LIFT 에 적용된다(레거시 형태).
+        유지 관련 변경은 벤치가 유휴 상태이면 즉시 반영된다.
         """
         if not self.has_bench:
             raise RuntimeError("protection settings are bench-only")
@@ -741,7 +740,7 @@ class MotorService:
         if limit_stop is not None:
             be.limit_guard = bool(limit_stop)
 
-        # Normalise every request into a per-axis map.
+        # 모든 요청을 축별 맵 하나로 정규화한다.
         patch: dict[int, dict] = {}
         if axes:
             for k, v in axes.items():
@@ -763,9 +762,9 @@ class MotorService:
             if "hold_cs" in v and v["hold_cs"] is not None:
                 be.hold_cs_map[cs] = max(1, min(int(v["hold_cs"]), 19))
             if "run_cs" in v and v["run_cs"] is not None:
-                # Clamped again in run_cs_for() against the live PSU cap.
-                # Clamping here too means a stored value can never sit
-                # above the ceiling even if the file is edited by hand.
+                # run_cs_for() 에서 살아 있는 PSU 캡으로 다시 클램프된다.
+                # 여기서도 클램프해 두면, 상태 파일을 손으로 고치더라도
+                # 저장된 값이 천장 위에 올라앉는 일이 없다.
                 be.run_cs_map[cs] = max(1, min(int(v["run_cs"]), 19))
             if "hold_enabled" in v and v["hold_enabled"] is not None:
                 if v["hold_enabled"]:
@@ -791,21 +790,19 @@ class MotorService:
         return self.get_protection()
 
     # ------------------------------------------------------------------
-    # StallGuard2 threshold (sensorless load / stall measurement)
+    # StallGuard2 임계값 (센서리스 부하 / 스톨 측정)
     # ------------------------------------------------------------------
     async def set_axis_enable(self, axis: int, on: bool,
                              exclusive: bool = False) -> dict:
-        """Energize or de-energize one axis' coils.
+        """한 축의 코일을 여자하거나 해제한다.
 
-        /api/motor/enable and /disable dispatch to the M7, which this
-        bench does not run, so until now there was no way to control a
-        single chip's chopper -- the only lever was holding torque, which
-        is a different thing with a different purpose.
+        /api/motor/enable 과 /disable 은 이 벤치가 돌리지 않는 M7 로
+        디스패치되므로, 지금까지는 개별 칩의 초퍼를 제어할 방법이 없었다 —
+        유일한 레버가 유지 토크였는데 그것은 목적이 다른 별개의 기능이다.
 
-        `exclusive` silences every other axis first. That is the safe
-        default for manual work: the three drivers share one STEP line,
-        so anything energised when a pulse arrives moves with the
-        commanded axis.
+        `exclusive` 는 다른 축을 먼저 전부 침묵시킨다. 수동 작업의 안전한
+        기본값이다: 세 드라이버가 STEP 라인 하나를 공유하므로, 펄스가 올 때
+        여자되어 있는 축은 명령한 축과 함께 움직인다.
         """
         if not self.has_bench:
             raise RuntimeError("per-axis enable is bench-only")
@@ -844,7 +841,7 @@ class MotorService:
         return self.axis_enable_state()
 
     def axis_enable_state(self) -> dict:
-        """Which axes currently have their chopper on."""
+        """현재 초퍼가 켜져 있는 축이 어디인지."""
         be = self._spi_backend
         out = {}
         for axis in self._HOLDABLE:
@@ -859,7 +856,7 @@ class MotorService:
         return {"axes": out}
 
     def get_stallguard(self) -> dict:
-        """Per-axis StallGuard threshold + live SG_RESULT."""
+        """축별 StallGuard 임계값 + 실시간 SG_RESULT."""
         be = self._spi_backend
         axes = {}
         for axis in self._HOLDABLE:
@@ -887,13 +884,12 @@ class MotorService:
 
     async def set_stallguard(self, axis: int | None = None, sgt: int | None = None,
                              filter: bool | None = None) -> dict:
-        """Set the StallGuard threshold for one axis (or the SFILT flag).
+        """한 축의 StallGuard 임계값(또는 SFILT 플래그)을 설정한다.
 
-        SGT is a signed 7-bit value: LOWER = more sensitive. +63 (the
-        power-on default) effectively disables stall reporting, which is
-        why an untuned axis shows a flat SG_RESULT. Applied to the chip
-        immediately when the bench is idle, and on every subsequent
-        motion regardless.
+        SGT 는 부호 있는 7비트 값이며 낮을수록 민감하다. 전원 투입 기본값인
+        +63 은 사실상 스톨 보고를 꺼 놓은 상태이고, 튜닝하지 않은 축에서
+        SG_RESULT 가 평평하게 나오는 이유다. 벤치가 유휴이면 즉시 칩에
+        반영되고, 그렇지 않더라도 이후의 모든 모션에서 적용된다.
         """
         if not self.has_bench:
             raise RuntimeError("StallGuard tuning is bench-only")
@@ -913,8 +909,8 @@ class MotorService:
             idle = self._bench_jog_task is None or self._bench_jog_task.done()
             if idle and not self._bench_estop_active:
                 try:
-                    # Re-init writes SGCSCONF with the new threshold; keep
-                    # a held axis held, silence the others as before.
+                    # 재초기화가 새 임계값으로 SGCSCONF 를 쓴다. 유지 중인
+                    # 축은 계속 유지하고, 나머지는 이전처럼 침묵시킨다.
                     if cs in getattr(be, "hold_axes", set()):
                         await be._hold_chip(cs)
                     else:
@@ -926,9 +922,9 @@ class MotorService:
         return self.get_stallguard()
 
     async def move_to(self, axis: int, position: float, speed: float) -> MotorStatusResponse:
-        """Absolute move: travel to `position` (user units) from the
-        current counter. The /move endpoint is RELATIVE — the UI's
-        'Move To Position' needs this delta form."""
+        """절대 이동: 현재 카운터에서 `position`(사용자 단위)까지 이동한다.
+        /move 엔드포인트는 상대 이동이라서, UI 의 'Move To Position' 에는
+        이런 델타 형태가 필요하다."""
         self._ensure_not_estop("move_to")
         if not self.has_bench:
             raise RuntimeError("move_to is bench-only")
@@ -937,9 +933,9 @@ class MotorService:
             raise ValueError(f"Axis {axis} is not present on the bench")
         spu = (self._calibration.steps_per_unit(int(axis))
                if self._calibration else 200.0)
-        # Queue behind any absolute move already running (shared STEP
-        # line = one axis at a time). Jog / STOP / E-STOP do NOT take
-        # this lock, so they still pre-empt immediately.
+        # 이미 실행 중인 절대 이동 뒤에 줄을 선다(STEP 라인 공유 = 한 번에
+        # 한 축). 조그 / STOP / E-STOP 은 이 락을 잡지 않으므로 여전히 즉시
+        # 선점한다.
         generation = self._motion_generation
         self._queue_depth += 1
         try:
@@ -958,17 +954,15 @@ class MotorService:
 
     async def _move_to_locked(self, axis: int, position: float, speed: float,
                               cs: int, spu: float) -> MotorStatusResponse:
-        """The actual absolute move; caller holds the queue lock.
+        """실제 절대 이동 본체. 호출자가 큐 락을 쥐고 있다.
 
-        A single bench pulse is bounded twice — by the per-axis distance
-        cap and by a 10 s duration cap — so a long absolute move used to
-        stop partway with no error (a 230 mm LIFT traverse ended at
-        100 mm). Absolute moves therefore run in chunks until the target
-        is reached; each pass re-reads the counter, so a truncated chunk
-        simply gets another one."""
-        # Landing tolerance: 2 motor steps. Chasing anything finer just
-        # trades one sub-step residue for another, since each corrective
-        # pass has its own ramp.
+        벤치 펄스 한 번은 두 번 제한된다 — 축별 거리 상한과 10 s 지속시간
+        상한 — 그래서 예전에는 긴 절대 이동이 오류도 없이 중간에 멈췄다
+        (230 mm LIFT 이동이 100 mm 에서 끝났다). 그래서 절대 이동은 목표에
+        도달할 때까지 여러 조각으로 나눠 실행하며, 매 회차마다 카운터를 다시
+        읽으므로 잘린 조각은 그냥 다음 조각을 하나 더 받는다."""
+        # 착지 허용 오차: 모터 2 스텝. 이보다 더 잘게 쫓아가 봐야 보정 회차마다
+        # 자기 램프가 붙으므로 서브스텝 잔차를 다른 잔차로 바꾸는 것일 뿐이다.
         tol = max(2.0 / spu, 0.01)
         prev_gap = None
         for _ in range(40):
@@ -977,9 +971,8 @@ class MotorService:
             if abs(gap) < tol:
                 break
             if prev_gap is not None and abs(gap) > abs(prev_gap) * 0.7:
-                # The pass barely closed the distance — blocked, stalled,
-                # or already at the resolution floor. Stop rather than
-                # loop on the spot.
+                # 이번 회차가 거리를 거의 줄이지 못했다 — 막혔거나, 스톨했거나,
+                # 이미 분해능 바닥에 닿은 것이다. 제자리에서 도는 대신 멈춘다.
                 log.info("move_to axis=%d settled at %.3f (target %.3f, "
                          "residue %.3f)", axis, current, position, gap)
                 break
@@ -988,11 +981,12 @@ class MotorService:
         return await self.get_status()
 
     async def stop(self) -> MotorStatusResponse:
-        """Controlled deceleration stop. Also drops queued absolute moves.
+        """제어된 감속 정지. 큐에 대기 중인 절대 이동도 함께 폐기한다.
 
-        Bench mode: backend's pulse_step finalize handles silence + PWM disable.
+        벤치 모드: 백엔드 pulse_step 의 마무리 단계가 침묵 + PWM 비활성을
+        처리한다.
         """
-        self._motion_generation += 1     # queued moves become stale
+        self._motion_generation += 1     # 큐에 있던 이동들이 낡은 것이 된다
         if self.has_bench:
             await self.jog_stop(nudge=False)
             return await self.get_status()
@@ -1000,19 +994,19 @@ class MotorService:
         return await self.get_status()
 
     async def estop(self) -> MotorStatusResponse:
-        """Software E-STOP — immediate halt.
+        """소프트웨어 E-STOP — 즉시 정지.
 
-        Bench: disable PWM and silence all chips synchronously, regardless
-        of which axis (if any) is currently running. Critical safety path.
-        Production: hardware E-STOP runs in parallel via M7 GPIO ISR + DRV_ENN.
+        벤치: 지금 어느 축이 돌고 있든 상관없이 PWM 을 끄고 모든 칩을 동기적으로
+        침묵시킨다. 안전상 중요한 경로다.
+        운영: 하드웨어 E-STOP 이 M7 GPIO ISR + DRV_ENN 으로 병행 동작한다.
         """
-        self._motion_generation += 1     # queued moves become stale
+        self._motion_generation += 1     # 큐에 있던 이동들이 낡은 것이 된다
         if self.has_bench:
-            # 1) Kill PWM + silence chips immediately. Coils dead first so the
-            #    motor is mechanically safe even if step 2 raises.
+            # 1) PWM 을 죽이고 칩을 즉시 침묵시킨다. 2단계에서 예외가 나더라도
+            #    모터가 기계적으로 안전하도록 코일을 먼저 끈다.
             try:
-                # kill=True latches the PWM off — an in-flight ramp tick
-                # must not be able to re-enable STEP before the cancel lands.
+                # kill=True 는 PWM off 를 래치한다 — 진행 중인 램프 틱이
+                # 취소가 도착하기 전에 STEP 을 다시 켜지 못하게 해야 한다.
                 await self._spi_backend._pwm_disable(kill=True)
             except Exception as exc:
                 log.warning("E-STOP PWM disable failed: %s", exc)
@@ -1021,11 +1015,11 @@ class MotorService:
                     await self._spi_backend._silence_chip(cs)
                 except Exception as exc:
                     log.warning("E-STOP silence cs=%d failed: %s", cs, exc)
-            # 2) Cancel any in-flight jog task. Without this the pulse_step_multi
-            #    loop keeps incrementing self._spi_backend.positions even though
-            #    the motor is electrically stopped, which makes the dashboard's
-            #    progress bar / position readout drift after E-STOP. The user
-            #    saw exactly this: motor stopped, UI kept counting.
+            # 2) 진행 중인 조그 태스크를 취소한다. 이게 없으면 모터가 전기적으로
+            #    멈춘 뒤에도 pulse_step_multi 루프가 self._spi_backend.positions
+            #    를 계속 증가시켜, 대시보드의 진행 바/위치 표시가 E-STOP 이후에
+            #    흘러간다. 사용자가 정확히 이 현상을 봤다: 모터는 섰는데 UI 는
+            #    계속 세고 있었다.
             if self._bench_jog_task is not None and not self._bench_jog_task.done():
                 self._bench_jog_task.cancel()
                 try:
@@ -1033,9 +1027,9 @@ class MotorService:
                 except (self._asyncio.CancelledError, Exception):
                     pass
             self._bench_jog_task = None
-            # 3) Mark sticky ESTOP so _bench_status reports MotionState.ESTOP
-            #    until enable_drivers() / reset() acknowledges the operator
-            #    has cleared the condition.
+            # 3) 끈적이는 ESTOP 을 세워, 운전자가 조건을 해제했음을
+            #    enable_drivers() / reset() 로 확인해 줄 때까지 _bench_status 가
+            #    MotionState.ESTOP 을 보고하도록 한다.
             self._bench_estop_active = True
             log.warning("E-STOP triggered on bench: all axes silenced + jog task cancelled")
             return await self.get_status()
@@ -1044,30 +1038,28 @@ class MotorService:
 
     async def enable_drivers(self, axis_mask: int = 0) -> MotorStatusResponse:
         """
-        Assert TMC260C-PA DRV_ENN (coils energized).
+        TMC260C-PA 의 DRV_ENN 을 어서트한다(코일 여자).
 
-        Standard practice after a disconnect: the drivers will hold position
-        again. The M7 handler is authoritative; this just dispatches the IPC.
+        연결이 끊겼다 복구된 뒤의 표준 절차다: 드라이버가 다시 위치를 유지한다.
+        M7 핸들러가 최종 권한을 가지며, 여기서는 IPC 를 보내기만 한다.
 
-        Also clears the sticky bench E-STOP flag — re-enabling the drivers
-        is the operator's explicit acknowledgement that the E-STOP condition
-        has been resolved.
+        끈적이는 벤치 E-STOP 플래그도 함께 지운다 — 드라이버를 다시 켜는 것이
+        곧 E-STOP 조건이 해소되었다는 운전자의 명시적 확인이기 때문이다.
 
-        IMPORTANT — DO NOT _init_chip every cs here. PWM4 is shared across
-        all three TMC260C-PA chips: the silence state on non-target axes is
-        what stops them from stepping along with the target. A previous
-        version of this method ran _init_chip on cs=0/1/2 to clear the SG
-        LED, but that put every chopper into the ON state, so the next jog
-        drove all three motors in parallel (2026-05-09 incident). The chips
-        stay silenced after E-STOP; the next jog_start re-inits only its
-        own axis. SG LED on the silenced axes is the expected indication
-        that they are inactive — it clears the moment that axis is jogged.
+        중요 — 여기서 모든 cs 에 _init_chip 을 하면 안 된다. PWM4 는 세
+        TMC260C-PA 칩이 공유한다: 대상이 아닌 축이 함께 스텝하지 않는 이유가
+        바로 그 축들이 침묵 상태이기 때문이다. 예전 버전은 SG LED 를 끄려고
+        cs=0/1/2 에 _init_chip 을 돌렸는데, 그 바람에 모든 초퍼가 ON 이 되어
+        다음 조그가 세 모터를 동시에 구동했다(2026-05-09 사고). E-STOP 이후
+        칩은 침묵 상태로 두고, 다음 jog_start 가 자기 축만 재초기화한다.
+        침묵 중인 축의 SG LED 는 그 축이 비활성이라는 정상 표시이며, 그 축을
+        조그하는 순간 꺼진다.
         """
         if self.has_bench:
             self._bench_estop_active = False
-            # Actually clear latched driver faults. Previously this only
-            # dropped the E-STOP flag, so a latched S2G left the bench
-            # refusing every move until someone power-cycled it.
+            # 래치된 드라이버 폴트를 실제로 해제한다. 이전에는 E-STOP 플래그만
+            # 내려서, 래치된 S2G 가 있으면 누군가 전원을 껐다 켤 때까지 벤치가
+            # 모든 이동을 거부했다.
             clear = getattr(self._spi_backend, "clear_driver_faults", None)
             if callable(clear):
                 try:
@@ -1081,29 +1073,29 @@ class MotorService:
 
     async def disable_drivers(self, axis_mask: int = 0) -> MotorStatusResponse:
         """
-        De-energize TMC260C-PA coils by releasing DRV_ENN.
+        DRV_ENN 을 해제해 TMC260C-PA 코일의 전원을 뺀다.
 
-        The M7 refuses this if any axis in the mask is moving. Callers should
-        `stop()` first, then `disable_drivers()`.
+        마스크에 든 축 중 하나라도 움직이는 중이면 M7 이 거부한다. 호출자는
+        먼저 `stop()` 한 뒤 `disable_drivers()` 를 불러야 한다.
         """
         payload = build_drv_enable_payload(False, axis_mask)
         await self._ipc.send_recv(MSG_MOTION_SET_DRV_ENABLE, payload)
         return await self.get_status()
 
     async def reset(self) -> MotorStatusResponse:
-        """Reset motor fault state and clear bench E-STOP latch.
+        """모터 폴트 상태를 리셋하고 벤치 E-STOP 래치를 해제한다.
 
-        Same constraint as enable_drivers: do NOT _init_chip every cs here
-        — that would chopper-ON all three chips and the next jog would
-        drive all axes (PWM is shared). Chips stay silenced; next jog_start
-        re-inits only the target axis.
+        enable_drivers 와 같은 제약이 걸린다: 여기서 모든 cs 에 _init_chip 을
+        하면 안 된다 — 세 칩의 초퍼가 전부 ON 이 되어 다음 조그가 전 축을
+        구동하게 된다(PWM 공유). 칩은 침묵 상태로 두고, 다음 jog_start 가
+        대상 축만 재초기화한다.
         """
         if self.has_bench:
             self._bench_estop_active = False
-            # Reset is the documented way out of a fault, so it has to
-            # actually clear one. Before this it only dropped the E-STOP
-            # flag, and a latched short-detect kept refusing every move
-            # until someone walked over and cut the motor supply.
+            # 리셋은 폴트에서 빠져나오는 공식 경로이므로 실제로 폴트를 지워야
+            # 한다. 이전에는 E-STOP 플래그만 내려서, 래치된 단락 감지가 남아
+            # 있으면 누군가 직접 가서 모터 전원을 끊을 때까지 모든 이동이
+            # 거부되었다.
             clear = getattr(self._spi_backend, "clear_driver_faults", None)
             if callable(clear):
                 try:
@@ -1111,12 +1103,12 @@ class MotorService:
                 except Exception as exc:
                     log.warning("driver fault clear failed: %s", exc)
             return await self.get_status()
-        # TODO: add axis_mask payload if M7 firmware supports per-axis reset
+        # TODO: M7 펌웨어가 축별 리셋을 지원하면 axis_mask 페이로드를 추가할 것
         await self._ipc.send_recv(MSG_MOTION_RESET)
         return await self.get_status()
 
     # ------------------------------------------------------------------
-    # Bending sequence (delegated from BendingService)
+    # 벤딩 시퀀스 (BendingService 에서 위임)
     # ------------------------------------------------------------------
 
     async def execute_bcode(
@@ -1126,11 +1118,11 @@ class MotorService:
         wire_diameter_mm: float,
     ) -> None:
         """
-        Send a full B-code sequence to the M7.
+        전체 B-code 시퀀스를 M7 로 보낸다.
 
-        Blocks until the sequence is dispatched (does NOT wait for completion).
-        The caller should poll /api/bending/status or subscribe to /ws/system
-        for the MSG_STATUS_BCODE_COMPLETE event.
+        시퀀스가 디스패치될 때까지만 블로킹하며, 완료를 기다리지는 않는다.
+        호출자는 /api/bending/status 를 폴링하거나 /ws/system 을 구독해
+        MSG_STATUS_BCODE_COMPLETE 이벤트를 받아야 한다.
         """
         payload = build_bcode_payload(steps, material_id, wire_diameter_mm)
         await self._ipc.send_recv(MSG_MOTION_EXECUTE_BCODE, payload)
