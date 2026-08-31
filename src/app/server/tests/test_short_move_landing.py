@@ -74,10 +74,16 @@ def _run_ramp(target_steps: int, f_from=200, f_to=4000, rate=8000.0):
 # already reached roughly 400 Hz when it passed its 20-step target, which
 # is where a fixed 10 ms slice costs four steps; starting from the 200 Hz
 # floor the same target only costs two and the bug hides.
+# LOAD-BEARING: only [20,800] and [40,400] actually fail when the adaptive
+# slice is reverted to a fixed 10 ms. The rest pass on broken code too --
+# at low f_cur a fixed slice emits fewer steps than the tolerance, which is
+# the same blind spot the comment above describes. They are kept as guards
+# against a different regression, but if you trim this list, keep those two
+# or the file stops detecting the bug it exists for.
 @pytest.mark.parametrize("target,f_from", [
     (20, 400),    # 0.1 mm on LIFT at 200 steps/mm — the reported failure
-    (20, 800),
-    (40, 400),
+    (20, 800),    # load-bearing
+    (40, 400),    # load-bearing
     (100, 400),
     (10, 200),
 ])
@@ -107,6 +113,11 @@ def test_overshoot_does_not_grow_with_speed():
 
 
 def test_ramp_without_remaining_cb_still_runs():
+    # Note: this file pins the LANDING, but reaches it through remaining_cb
+    # specifically. A different mechanism achieving the same accuracy would
+    # fail these tests while being correct -- if you replace the approach,
+    # rewrite the assertions around the observable (steps emitted vs
+    # commanded), not around this parameter.
     """Callers with no step target (a plain speed change) pass no
     remaining_cb and must keep working."""
     be = _RampOnlyBackend()
