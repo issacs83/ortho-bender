@@ -2,14 +2,21 @@
 """Calibrate FEED against a ruler.
 
 FEED has no limit switch and no encoder, so its steps-per-mm cannot be
-derived the way BEND's was from its limit disc. It also cannot be
-computed from the roller diameter, because nobody has measured the
-roller. One physical measurement settles both unknowns at once: feed a
-commanded length, measure the wire that actually came out, and the ratio
-is the correction.
+derived the way BEND's was from its limit disc. Two of the three terms
+are now known -- 1600 PWM cycles per motor revolution, and a 2.5:1
+reduction to the roller, giving 4000 cycles per roller revolution. The
+roller DIAMETER is the last unknown, and no datasheet supplies it.
 
-    python3 calibrate-feed.py --base http://192.168.219.146:8000
+One physical measurement settles it: feed a commanded length, measure
+the wire that actually came out, and the ratio is the correction. That
+also back-solves the diameter, which is worth recording:
+
+    diameter_mm = 4000 / (pi * corrected_steps_per_mm)
+
+    python3 calibrate-feed.py --base http://$(tools/find-board.py):8000
     (mark the wire, run the feed, measure, type the number)
+
+The board's address moves -- find it rather than remembering it.
 
 Feeding 100 mm and mis-measuring by 1 mm leaves a 1% error. Feed the
 longest length your setup allows and measure it carefully -- every later
@@ -36,7 +43,7 @@ def call(base, path, method="GET", body=None, timeout=180):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base", default="http://192.168.219.146:8000")
+    ap.add_argument("--base", default="http://192.168.77.2:8000")
     ap.add_argument("--mm", type=float, default=100.0,
                     help="length to feed for the measurement (default 100)")
     ap.add_argument("--speed", type=float, default=10.0, help="mm/s")
@@ -96,6 +103,9 @@ def main() -> int:
              {"axis": FEED, "steps_per_unit": new})
     print("written:", json.dumps(r.get("data", {}))[:200])
     print(f"\nspeed ceiling is now {8000/new:.1f} mm/s (8000 Hz / {new})")
+    print(f"implied roller diameter: {4000/(3.14159265*new):.2f} mm "
+          f"(4000 cycles/rev / pi / steps-per-mm) — worth writing down, "
+          f"it is the only term nobody has measured directly")
     print("Re-run with a fresh mark to confirm it landed.")
     return 0
 
