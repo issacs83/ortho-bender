@@ -22,7 +22,11 @@ def backend():
 
 def test_default_cap_is_hardware_limit(backend):
     assert backend._cs_scale_cap == SAFETY_CS_MAX
-    assert backend._sgcs_on_value() == SGCSCONF_DEFAULT
+    # _sgcs_on_value() returns the 17-bit PAYLOAD; SGCSCONF_DEFAULT is the
+    # full 20-bit datagram with the 110 register prefix. Comparing them
+    # directly compares 0x13F13 against 0xD3F13 and always fails. The value
+    # that reaches the chip is pinned in the datagram test below.
+    assert backend._sgcs_on_value() == SGCSCONF_DEFAULT & 0x1FFFF
 
 
 def test_apply_current_cap_narrows_sgcsconf(backend):
@@ -30,8 +34,27 @@ def test_apply_current_cap_narrows_sgcsconf(backend):
     backend.apply_current_cap(14)
     value = backend._sgcs_on_value()
     assert value & 0x1F == 14
-    # Non-CS bits (SGT, SFILT) must be untouched.
-    assert value & ~0x1F == SGCSCONF_DEFAULT & ~0x1F
+    # Non-CS bits (SGT, SFILT) must be untouched. 0x1FFE0 is the payload
+    # mask Tmc260cDriver.set_current_scale uses to rebuild this register;
+    # ~0x1F would drag in the address bits the payload does not carry.
+    assert value & 0x1FFE0 == SGCSCONF_DEFAULT & 0x1FFE0
+
+
+def test_sgcs_datagram_reaches_the_chip_unchanged(backend):
+    """The wire value, not the payload, is what burns boards.
+
+    _sgcs_on_value() is only ever handed to _encode(0x06, ...), which masks
+    to 17 bits and re-adds the register tag. Pinning the assembled datagram
+    means a change to either half cannot quietly alter what is clocked in.
+    """
+    assert backend._encode(0x06, backend._sgcs_on_value()) == SGCSCONF_DEFAULT
+    assert SGCSCONF_DEFAULT & 0x1F == SAFETY_CS_MAX
+
+    backend.apply_current_cap(14)
+    capped = backend._encode(0x06, backend._sgcs_on_value())
+    assert capped & 0x1F == 14                              # CS narrowed
+    assert capped >> 17 == 0x06                             # tag intact
+    assert capped & 0x1FFE0 == SGCSCONF_DEFAULT & 0x1FFE0   # SGT/SFILT kept
 
 
 def test_apply_current_cap_clamps_to_safety_max(backend):
