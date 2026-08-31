@@ -2,18 +2,22 @@
 calibration_service.py — 디스크에 영속되는 축별 스텝/단위 캘리브레이션.
 
 각 축은 `steps_per_unit` 값을 하나씩 가진다:
-  FEED   step/deg  — 와이어 피드 롤러(회전축), 롤러 진행 각도
+  FEED   step/mm   — 롤러는 회전하지만 단위는 **뽑혀 나온 와이어 mm** 다
   BEND   step/deg  — 벤딩 다이 기어비 × 360 / steps_per_rev
   ROTATE step/deg  — 와이어 회전 기어비 × 360 / steps_per_rev
   LIFT   step/mm   — 리프트 리드스크류 mm/rev / steps_per_rev
 
-와이어 벤더 기구부가 연결되기 전까지 벤치 기본값은 예전부터 쓰던
-자리표시자 200 steps/unit 이다. 현재 드라이버 설정(DRVCTRL 1/16
-마이크로스텝 + DEDGE)에서 실제 모터축 계산은 이렇다: 1 회전 =
-3200 마이크로스텝 = 1600 PWM 사이클이고, 백엔드가 세는 "스텝"은 PWM
-사이클이다. 따라서 기본값 200 에서는 1 unit ≈ 1/8 회전이다 — 기구부가
-붙는 즉시 Settings 페이지에서 축별로 캘리브레이션할 것.
-실제 거리를 다룰 때 이 기본값을 믿으면 안 된다.
+모든 축이 자리표시자였던 시절의 설명이 오래 남아 있었다. 지금 상태는
+축마다 다르다:
+  FEED   63.662  — 산식은 맞으나 롤러 직경이 미실측이라 **잠정값**
+  BEND   23.0167 — 리밋 디스크 대비 실측. 5.18:1 유성기어 확정
+  ROTATE 200.0   — 벤치 미장착. 자리표시자 그대로
+  LIFT   200.0   — 실측. T8 리드스크류 8 mm/rev 에 정확히 맞는 값
+
+드라이버 설정(DRVCTRL 1/16 마이크로스텝 + DEDGE)에서 모터축 계산은
+이렇다: 1 회전 = 3200 마이크로스텝 = 1600 PWM 사이클이고, 백엔드가
+세는 "스텝"은 PWM 사이클이다. BEND 실측값이 1600 × 5.18 = 8288 과
+0.02% 안에서 일치하므로 이 1600 은 가정이 아니라 확인된 수치다.
 
 상태 파일: /var/lib/ortho-bender/axis_calibration.json
 기본값은 보수적으로 잡혀 있다 — speed=10 "units/s" 가 이전 동작
@@ -97,9 +101,9 @@ DISTANCE_LIMIT: dict[int, float] = {
 # 하드코딩해 두었더니 BEND 를 재캘리브레이션하는 순간 낡은 값이 되어서
 # (200 -> 23.0167 steps/deg 로 바뀌자 40 deg/s 상한이 920 Hz, 하드웨어가
 # 낼 수 있는 것의 1/5 가 되어 버렸다) 지금은 유도값으로 계산한다.
-#   FEED  200 steps/deg -> 40 deg/s
-#   BEND  23.0167       -> 347.6 deg/s
-#   LIFT  200 steps/mm  -> 40 mm/s
+#   FEED  63.662 steps/mm -> 125.7 mm/s
+#   BEND  23.0167         -> 347.6 deg/s
+#   LIFT  200 steps/mm    -> 40 mm/s
 MAX_STEP_HZ = 8000.0
 
 # 캘리브레이션 값이 비상식적으로 큰 축을 위한 하한(steps_per_unit 을 잘못
