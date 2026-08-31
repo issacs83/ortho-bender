@@ -38,7 +38,26 @@ def local_md5(p: Path):
 
 # ---- server source -------------------------------------------------------
 SRC = ROOT / "src/app/server"
-print("=== 서버 소스 대조 (repo main vs board) ===")
+# The comparison is against the WORKING TREE, which is only "main" when the
+# checkout happens to be on it. Saying "main" unconditionally is how a board
+# running an unmerged branch tip got reported as matching main.
+_head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+                       capture_output=True, text=True).stdout.strip()
+_desc = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--abbrev-ref", "HEAD"],
+                       capture_output=True, text=True).stdout.strip()
+_dirty = bool(subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain",
+                              "src/app/server"],
+                             capture_output=True, text=True).stdout.strip())
+_upstream = subprocess.run(
+    ["git", "-C", str(ROOT), "rev-list", "--count", "HEAD..origin/main"],
+    capture_output=True, text=True).stdout.strip() or "?"
+
+print(f"=== 서버 소스 대조 (working tree {_desc} @ {_head} vs board) ===")
+if _dirty:
+    print("  !! working tree has uncommitted changes under src/app/server")
+if _upstream not in ("0", "?"):
+    print(f"  !! this tree is {_upstream} commits behind origin/main — "
+          f"'match' here does NOT mean the board matches main")
 mismatch, missing = [], []
 for f in sorted(SRC.rglob("*.py")):
     if "__pycache__" in str(f) or "/tests/" in str(f):
@@ -56,6 +75,30 @@ for m in mismatch:
     print("    *** 다름:", m)
 for m in missing:
     print("    *** 보드에 없음:", m)
+
+# ---- files on the board that are NOT in the checkout ----------------------
+# The walk above only asks "is each of MY files present and identical", so a
+# hand-edited module dropped into the deployed tree is invisible to it. Ask
+# the opposite question too.
+print("\n=== 보드에만 있는 파일 ===")
+_r = subprocess.run(
+    SSH + ["find /opt/ortho-bender/server -name '*.py' -o -name '*.bak*' "
+           "| sed 's|/opt/ortho-bender/server/||'"],
+    capture_output=True, text=True, timeout=90)
+_board_files = {ln.strip() for ln in _r.stdout.splitlines() if ln.strip()}
+_local_files = {
+    str(f.relative_to(SRC)) for f in SRC.rglob("*.py")
+    if "__pycache__" not in str(f) and "/tests/" not in str(f)
+}
+_extra = sorted(f for f in _board_files - _local_files
+                if "__pycache__" not in f and not f.startswith("tests/"))
+if not _extra:
+    print("  없음")
+else:
+    for f in _extra:
+        print(f"  *** {f}")
+    print("  (배포 트리에 없어야 할 파일입니다 — 백업본이면 지우고, "
+          "손으로 고친 모듈이면 그게 실제로 도는 코드입니다)")
 
 # ---- frontend bundle -----------------------------------------------------
 print("\n=== 프론트엔드 번들 ===")
@@ -97,6 +140,26 @@ for path, needle in (("/api/motor/protection", "run_cs_effective"),
     except Exception as exc:
         print(f"  {path:26s} 실패: {exc}")
 
-total = len(mismatch) + len(missing) + len(stale)
-print(f"\n요약: 소스 불일치 {len(mismatch) + len(missing)}건, 문서 불일치 {len(stale)}건")
-print("보드는 main과" + (" 일치합니다." if total == 0 else f" {total}건 어긋나 있습니다."))
+# Extras count. Printing them and then declaring a match is the same
+# contradiction this tool was fixed for twice already: the section is
+# honest and the verdict overrides it. A .bak is noise, but a hand-edited
+# .py in the deployed tree IS the code that runs, and the verdict is the
+# line that gets quoted.
+_extra_py = [f for f in _extra if not (".bak" in f or f.endswith(".pyc"))]
+total = len(mismatch) + len(missing) + len(stale) + len(_extra)
+print(f"\n요약: 소스 불일치 {len(mismatch) + len(missing)}건, "
+      f"문서 불일치 {len(stale)}건, 보드에만 있는 파일 {len(_extra)}건"
+      + (f" (그중 .py {len(_extra_py)}건 — 실제로 도는 코드일 수 있음)"
+         if _extra_py else ""))
+# Name the same ref the header named. Saying "main" here regardless is how
+# a stale tree reports a correctly-deployed board as broken, and a stale
+# board as fine -- and this verdict line is the one that gets quoted.
+_ref = "main" if (_upstream == "0" and _desc == "main" and not _dirty) else f"이 트리({_desc} @ {_head})와"
+if _ref == "main":
+    print("보드는 main과" + (" 일치합니다." if total == 0
+                            else f" {total}건 어긋나 있습니다."))
+else:
+    print(f"보드는 {_ref}" + (" 일치합니다." if total == 0
+                              else f" {total}건 어긋나 있습니다."))
+    print("  (이 트리는 origin/main이 아닙니다 — 위 결과는 main에 대해 아무것도 "
+          "말해주지 않습니다)")
