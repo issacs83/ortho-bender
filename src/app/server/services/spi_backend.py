@@ -395,6 +395,9 @@ class SpidevMotorBackend(MotorBackend):
                 if "guard_axes" in d:
                     self.guard_axes = {int(x) for x in d["guard_axes"]}
                     self._guard_loaded = True
+                if "hold_axes" in d:
+                    self.hold_axes = {int(x) for x in d["hold_axes"]}
+                    self._hold_loaded = True
             except (TypeError, ValueError):
                 self.sgt_map = {}
             log.info("Restored motor positions from %s: %s (homed=%s)",
@@ -427,6 +430,9 @@ class SpidevMotorBackend(MotorBackend):
             "mres": {str(k): int(v) for k, v in self.mres_map.items()},
             "snap_axes": sorted(self.snap_axes or []),
             "guard_axes": sorted(self.guard_axes),
+            # 정지토크 대상 축도 영속화 — UI 토글이 재시작을 살아남아야
+            # "켰는데 재시작 후 꺼져 있다"(EN 회귀로 보이는 현상)가 없다.
+            "hold_axes": sorted(self.hold_axes),
         }
 
     def _write_state(self, data: dict) -> None:

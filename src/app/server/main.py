@@ -191,14 +191,19 @@ async def lifespan(app: FastAPI):
         # not already set one (those are restored from the state file).
         if hasattr(diag_backend, "hold_cs_map"):
             diag_backend.hold_cs_map.setdefault(0, int(cfg.hold_cs_lift))
-        held = set()
-        if cfg.hold_lift:
-            held.add(0)      # LIFT — gravity axis
-        if cfg.hold_feed:
-            held.add(2)      # FEED — free-wheels by hand otherwise
-        if cfg.hold_bend:
-            held.add(1)
-        diag_backend.hold_axes = held
+        if getattr(diag_backend, "_hold_loaded", False):
+            # 상태파일에 저장된 정지토크 설정(UI 토글)이 우선한다 — config
+            # 기본값은 저장값이 없는 첫 부팅에만 적용된다.
+            held = set(diag_backend.hold_axes)
+        else:
+            held = set()
+            if cfg.hold_lift:
+                held.add(0)      # LIFT — gravity axis
+            if cfg.hold_feed:
+                held.add(2)      # FEED — free-wheels by hand otherwise
+            if cfg.hold_bend:
+                held.add(1)
+            diag_backend.hold_axes = held
         log.info("Idle holding torque on cs=%s at CS=%d",
                  sorted(held), diag_backend.hold_cs)
         # Energize them NOW. Holding was previously only applied at the
