@@ -181,25 +181,25 @@ class MotionProfileUpdate(BaseModel):
     """
     model_config = {"extra": "forbid"}
     jog_speed: float | None = Field(None, gt=0, le=360,
-                                    description="Default jog rate (mm/s or deg/s)")
+                                    description="기본 조그 속도 (mm/s 또는 deg/s)")
     max_speed: float | None = Field(None, gt=0, le=360,
-                                    description="Machine velocity limit — all motion "
-                                                "commands are clamped to this "
-                                                "(GRBL $110-112 analog)")
+                                    description="기계 속도 상한 — 모든 모션 명령이 "
+                                                "이 값으로 클램프된다 "
+                                                "(GRBL $110-112 에 해당)")
     step_size: float | None = Field(None, gt=0, le=360,
-                                    description="Incremental jog distance (mm or deg)")
+                                    description="증분 조그 거리 (mm 또는 deg)")
     start_hz: int | None = Field(None, ge=50, le=2000,
-                                 description="Ramp floor frequency (Hz)")
+                                 description="램프 바닥 주파수 (Hz)")
     accel: float | None = Field(None, ge=1, le=200,
-                                description="Acceleration in physical units "
-                                            "(mm/s² or deg/s²; converted to STEP "
-                                            "slew via axis calibration)")
+                                description="가속도, 물리 단위 "
+                                            "(mm/s² 또는 deg/s²; 축 캘리브레이션을 "
+                                            "거쳐 STEP 슬루로 환산)")
     decel: float | None = Field(None, ge=1, le=200,
-                                description="Deceleration for stop/finish ramps "
-                                            "(mm/s² or deg/s²)")
+                                description="정지/마무리 램프의 감속도 "
+                                            "(mm/s² 또는 deg/s²)")
     shape: str | None = Field(None, pattern="^(linear|scurve)$",
-                              description="Velocity profile: trapezoidal 'linear' "
-                                          "or jerk-limited 'scurve'")
+                              description="속도 프로파일: 사다리꼴 'linear' "
+                                          "또는 저크 제한 'scurve'")
 
 
 def _profiles(request: Request):
@@ -280,42 +280,42 @@ class AxisHoldUpdate(BaseModel):
     hold_enabled: bool | None = None
     hold_cs: int | None = Field(
         None, ge=1, le=19,
-        description="Idle holding current scale (1-19).")
+        description="유휴 유지 전류 스케일 (1-19).")
     run_cs: int | None = Field(
         None, ge=1, le=19,
-        description="Coil current while this axis MOVES (1-19). Still "
-                    "clamped by the PSU preset cap: ask for more than the "
-                    "supply allows and run_cs_effective reports what you "
-                    "actually get. 19 is the ceiling -- two boards were "
-                    "destroyed at CS=31.")
+        description="이 축이 움직이는 동안의 코일 전류 (1-19). "
+                    "PSU 프리셋 상한으로 추가 클램프된다: 전원이 허용하는 "
+                    "것보다 크게 요구하면 실제 적용값은 run_cs_effective 가 "
+                    "보고한다. 19 가 천장이다 -- CS=31 로 보드 2장이 "
+                    "소손됐다.")
 
 
 class ProtectionUpdate(BaseModel):
     """보호/유지 설정의 부분 업데이트(생략한 항목은 그대로 유지)."""
     model_config = {"extra": "forbid"}
     limit_stop: bool | None = Field(
-        None, description="Stop an axis that ENTERS its limit window during "
-                          "normal motion (edge-triggered; leaving the window "
-                          "from a parked-at-home start is never blocked)")
+        None, description="정상 모션 중 리밋 창에 '진입'하는 축을 정지시킨다 "
+                          "(에지 트리거; 홈에 주차된 상태에서 창을 벗어나는 "
+                          "것은 막지 않는다)")
     hold_enabled: bool | None = Field(
-        None, description="Idle holding current on LIFT (gravity axis) — "
-                          "prevents sinking; audible chopper hiss while held")
+        None, description="LIFT(중력 축)의 유휴 유지 전류 — 가라앉음을 "
+                          "막는다; 유지 중에는 초퍼 소음이 들린다")
     hold_cs: int | None = Field(
         None, ge=1, le=19,
-        description="Holding torque current scale (1-19, PSU cap still "
-                    "applies). Lower = quieter + less holding torque")
+        description="유지 토크 전류 스케일 (1-19, PSU 상한은 여전히 "
+                    "적용). 낮을수록 조용하고 유지 토크도 작다")
     axes: dict[int, AxisHoldUpdate] | None = Field(
         None,
-        description="Per-axis holding torque, e.g. "
+        description="축별 유지 토크, 예: "
                     "{\"0\": {\"hold_enabled\": true, \"hold_cs\": 12}}. "
-                    "Axis ids: 0=FEED, 1=BEND, 3=LIFT (ROTATE not fitted)")
+                    "축 id: 0=FEED, 1=BEND, 3=LIFT (ROTATE 미장착)")
 
 
 class MoveToRequest(BaseModel):
     model_config = {"extra": "forbid"}
     axis: int = Field(ge=0, le=3)
     position: float = Field(ge=-100000, le=100000,
-                            description="Absolute target (user units)")
+                            description="절대 목표 위치 (사용자 단위)")
     speed: float = Field(gt=0, le=360)
 
 
@@ -358,8 +358,8 @@ class StallGuardUpdate(BaseModel):
     axis: int | None = Field(None, ge=0, le=3)
     sgt: int | None = Field(None, ge=-64, le=63)
     filter: bool | None = Field(
-        None, description="SFILT — average over 4 electrical periods "
-                          "(smoother, 4x slower response)")
+        None, description="SFILT — 전기 주기 4회 평균 "
+                          "(더 매끄럽지만 응답은 4배 느림)")
 
 
 @router.get("/stallguard", response_model=ApiResponse)
@@ -471,12 +471,12 @@ class AxisEnableUpdate(BaseModel):
     """한 축의 코일 여자(enable) 설정."""
     model_config = {"extra": "forbid"}
     axis: int = Field(..., ge=0, le=3)
-    enabled: bool = Field(..., description="True energizes the coils")
+    enabled: bool = Field(..., description="True 면 코일을 여자한다")
     exclusive: bool = Field(
         True,
-        description="Silence every other axis first. The three drivers "
-                    "share one STEP line, so anything else left energized "
-                    "moves along with the commanded axis.")
+        description="다른 모든 축을 먼저 침묵시킨다. 드라이버 3개가 "
+                    "STEP 라인 하나를 공유하므로, 여자된 채 남아 있는 "
+                    "축은 지령한 축과 함께 움직인다.")
 
 
 @router.get("/axis-enable", response_model=ApiResponse)

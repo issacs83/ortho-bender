@@ -138,9 +138,9 @@ async def camera_capture(
 async def camera_stream(
     fps: float = Query(
         15.0, ge=1.0, le=50.0,
-        description="Target stream rate. Clamped to 1-50 fps (the bench "
-                    "Alvium C-052m sensor tops out at ~50 fps; JPEG "
-                    "encoding caps the effective rate around 25 fps).",
+        description="목표 스트림 레이트. 1-50 fps 로 클램프 (벤치의 "
+                    "Alvium C-052m 센서 상한이 ~50 fps; JPEG 인코딩이 "
+                    "실효 레이트를 25 fps 근처로 제한).",
     ),
     svc: CameraService = Depends(_camera_service),
 ) -> StreamingResponse:
@@ -191,12 +191,11 @@ async def list_camera_controls(
 
 
 class CameraControlRequest(BaseModel):
-    id: int = Field(..., description="Numeric control id from GET /controls")
+    id: int = Field(..., description="GET /controls 가 주는 숫자 컨트롤 id")
     value: int | list[int] = Field(
-        0, description="Raw driver-unit value (int), or an int list for "
-                       "compound controls such as the AREA-typed "
-                       "'Binning Setting' (width, height); ignored for "
-                       "button controls")
+        0, description="드라이버 원시 단위 값(int), 또는 AREA 형 "
+                       "'Binning Setting'(width, height) 같은 복합 "
+                       "컨트롤용 int 배열; 버튼 컨트롤에서는 무시")
 
 
 @router.post("/controls", response_model=ApiResponse)
@@ -237,7 +236,7 @@ async def list_camera_presets(
 
 class CameraPresetRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=64,
-                      description="Preset name (e.g. 'backlight-wire')")
+                      description="프리셋 이름 (예: 'backlight-wire')")
 
 
 @router.post("/presets", response_model=ApiResponse)
@@ -301,7 +300,7 @@ async def get_camera_framerate(
 
 
 class CameraFramerateRequest(BaseModel):
-    fps: float = Field(..., gt=0, le=500, description="Target sensor fps")
+    fps: float = Field(..., gt=0, le=500, description="목표 센서 fps")
 
 
 @router.post("/framerate", response_model=ApiResponse)
@@ -336,10 +335,10 @@ async def get_camera_roi(
 
 
 class CameraRoiRequest(BaseModel):
-    left: int = Field(0, ge=0, description="X offset on the sensor (px)")
-    top: int = Field(0, ge=0, description="Y offset on the sensor (px)")
-    width: int = Field(..., gt=0, description="ROI width (px)")
-    height: int = Field(..., gt=0, description="ROI height (px)")
+    left: int = Field(0, ge=0, description="센서 위 X 오프셋 (px)")
+    top: int = Field(0, ge=0, description="센서 위 Y 오프셋 (px)")
+    width: int = Field(..., gt=0, description="ROI 폭 (px)")
+    height: int = Field(..., gt=0, description="ROI 높이 (px)")
 
 
 @router.post("/roi", response_model=ApiResponse)
