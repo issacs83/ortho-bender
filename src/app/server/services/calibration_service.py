@@ -58,8 +58,9 @@ log = logging.getLogger(__name__)
 DEFAULT_STEPS_PER_UNIT: dict[int, float] = {
     # FEED 는 와이어를 밀어내므로 단위가 롤러 각도가 아니라 와이어 mm 다.
     #
-    #   모터 1 회전당 1600 PWM 사이클(1.8 deg = 200 풀스텝, 1/16 마이크로스텝,
-    #   DEDGE 가 사이클마다 마이크로스텝 2 개를 넣는다)
+    #   모터 1 회전당 3200 PWM 사이클(1.8 deg = 200 풀스텝, FEED 는 1/32
+    #   마이크로스텝 — main.py 의 mres_map, 나머지 축은 1/16 — 이고 DEDGE 가
+    #   사이클마다 마이크로스텝 2 개를 넣는다)
     #   x 모터→롤러 2.5:1 감속
     #   = 롤러 1 회전당 4000 사이클
     #   / (pi x 롤러 직경) = 와이어 mm 당 스텝 수
@@ -77,7 +78,7 @@ DEFAULT_STEPS_PER_UNIT: dict[int, float] = {
     #
     #     python3 tools/calibrate-feed.py --base http://<ip>:8000 --mm 100
     #
-    0: 63.662,   # FEED (와이어 mm) — 1600 x 2.5 / (pi * 20 mm)
+    0: 127.324,  # FEED (와이어 mm) — 3200 x 2.5 / (pi * 20 mm), 1/32 마이크로스텝
     1: 200.0,   # BEND   (deg)
     2: 200.0,   # ROTATE (deg)
     3: 200.0,   # LIFT   (mm)
