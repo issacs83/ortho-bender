@@ -117,6 +117,9 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
         // 상관 파라미터 연동: 서버가 프로파일(jog/max 속도)을 새 상한으로
         // 클램프했을 수 있다 — 화면의 슬라이더가 낡은 값을 보이지 않게 재조회.
         motorApi.motionProfiles().then((p) => setProfiles(p.profiles)).catch(() => null);
+        // Speed/Vmax 입력칸의 최대값(axisMaxSpeed = cal.speed_limit)도 함께
+        // 재조회 — 이게 없으면 분주비를 넓혀도 입력이 옛 상한에 갇힌다.
+        refreshCal();
       })
       .catch((e) => setMstepErr(String((e as Error).message ?? e)));
   }
@@ -153,7 +156,7 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   // Per-axis speed ceiling from the server (STEP 8 kHz / steps_per_unit):
   // FEED·LIFT 40, BEND ~347 at the current calibration. Without this the
   // inputs offered 360 on every axis and the server silently clamped back.
-  const { cal } = useAxisCalibration();
+  const { cal, refresh: refreshCal } = useAxisCalibration();
   const axisMaxSpeed = (axis: number) => cal.speed_limit[axis] ?? 40;
   // Transient: modals + error
   // Absolute moves queue on the server (single shared STEP line), so a
