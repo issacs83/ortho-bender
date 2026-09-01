@@ -104,6 +104,12 @@ class MotorService:
         # 마지막 TMC 상태를 캐시해 두어 폴링 사이에도 모터 상태에 포함시킨다
         self._last_tmc: Optional[bytes] = None
 
+        # 벤치 B-code 실행기 상태. M7 이 없는 벤치에서 execute_bcode 가
+        # 서버 내부 루프로 시퀀스를 실행할 때의 진행 상황이다.
+        self._bcode_task: Optional[object] = None
+        self._bcode = {"current": 0, "total": 0, "error": None,
+                       "aborted": False}
+
     @property
     def has_bench(self) -> bool:
         return self._spi_backend is not None
@@ -417,8 +423,18 @@ class MotorService:
         bench_jog_active = (
             self._bench_jog_task is not None and not self._bench_jog_task.done()
         )
+        # B-code 실행기가 도는 동안은 개별 move 사이의 짧은 유휴가 있어도
+        # RUNNING 으로 보고한다 — /api/bending 의 진행 폴링과 대시보드가
+        # 시퀀스 단위로 상태를 읽기 때문이다.
+        bcode_active = (self._bcode_task is not None
+                        and not self._bcode_task.done())
         if self._bench_estop_active:
             state = MotionState.ESTOP
+        elif bcode_active:
+            # 실행기 내부의 개별 move 가 조그 태스크로 돌더라도 시퀀스가
+            # 살아 있는 동안은 RUNNING 이 이긴다 — JOGGING 으로 떨어지면
+            # /api/bending 의 진행 폴링(state==RUNNING)이 중간에 끊긴다.
+            state = MotionState.RUNNING
         elif bench_jog_active:
             state = MotionState.HOMING if self._bench_homing else MotionState.JOGGING
         else:
@@ -426,8 +442,9 @@ class MotorService:
         return MotorStatusResponse(
             state=state,
             axes=axes,
-            current_step=0,
-            total_steps=0,
+            current_step=int(self._bcode["current"]),
+            total_steps=int(self._bcode["total"]) if bcode_active
+                        or self._bcode["current"] else 0,
             axis_mask=axis_mask,
             driver_enabled=True,
         )
@@ -1172,12 +1189,93 @@ class MotorService:
         wire_diameter_mm: float,
     ) -> None:
         """
-        전체 B-code 시퀀스를 M7 로 보낸다.
+        전체 B-code 시퀀스를 실행한다.
 
-        시퀀스가 디스패치될 때까지만 블로킹하며, 완료를 기다리지는 않는다.
-        호출자는 /api/bending/status 를 폴링하거나 /ws/system 을 구독해
-        MSG_STATUS_BCODE_COMPLETE 이벤트를 받아야 한다.
+        벤치 모드: 서버 내부 루프가 스텝별로 FEED 이송 -> BEND 굽힘/복귀를
+        move_to(절대 스텝 그리드)로 실행한다 — M7 이 없는 벤치에서 실제
+        와이어를 굽는 유일한 경로다. 운영 모드: M7 로 IPC 디스패치한다.
+
+        두 경로 모두 디스패치까지만 블로킹한다. 호출자는
+        /api/bending/status 를 폴링해 진행/완료를 확인한다. STOP 은 현재
+        이동을 감속 정지시키고 남은 스텝을 폐기하며, E-STOP/폴트는 즉시
+        중단으로 기록된다.
         """
+        if self.has_bench:
+            if self._bcode_task is not None and not self._bcode_task.done():
+                raise RuntimeError("bcode sequence already running")
+            self._bcode = {"current": 0, "total": len(steps), "error": None,
+                           "aborted": False}
+            self._bcode_task = self._asyncio.create_task(
+                self._bench_bcode_run(list(steps)))
+            log.info("B-code bench executor started: %d steps, material=%d",
+                     len(steps), material_id)
+            return
         payload = build_bcode_payload(steps, material_id, wire_diameter_mm)
         await self._ipc.send_recv(MSG_MOTION_EXECUTE_BCODE, payload)
         log.info("B-code sequence dispatched: %d steps, material=%d", len(steps), material_id)
+
+    # B-code 벤치 실행 속도(사용자 단위/s). 보수적 기본값 — 필요하면 축별
+    # 모션 프로파일(가감속)은 move_to 경로가 이미 적용하므로 여기서는 순항
+    # 속도만 정한다.
+    _BCODE_FEED_SPEED = 10.0    # mm/s
+    _BCODE_BEND_SPEED = 45.0    # deg/s
+
+    async def _bench_bcode_run(
+        self, steps: list[tuple[float, float, float]]
+    ) -> None:
+        """B-code 시퀀스의 벤치 실행 본체.
+
+        스텝마다: FEED 를 L_mm 만큼 절대 그리드로 전진 -> (beta 는 ROTATE
+        미장착이라 경고 후 생략) -> BEND 를 시작 각도 + theta 로 굽혔다가
+        시작 각도로 복귀. 모든 이동이 move_to 를 지나므로 정밀 경로·리밋
+        가드·E-STOP 게이트를 그대로 상속한다.
+
+        중단 규칙: STOP(_motion_generation 증가)이 오면 현재 이동은 감속
+        정산으로 끝나고 다음 스텝 경계에서 시퀀스를 접는다(aborted=True).
+        E-STOP/드라이버 폴트는 예외로 도착해 error 로 기록된다.
+        """
+        gen = self._motion_generation
+        feed_axis, bend_axis = int(AxisId.FEED), int(AxisId.BEND)
+        try:
+            st = await self.get_status()
+            pos = {int(a.axis): float(a.position) for a in st.axes}
+            feed_target = pos.get(feed_axis, 0.0)
+            bend_home = pos.get(bend_axis, 0.0)
+            for i, (L, beta, theta) in enumerate(steps, 1):
+                if gen != self._motion_generation:
+                    self._bcode["aborted"] = True
+                    log.info("bcode aborted by stop at step %d/%d",
+                             i, len(steps))
+                    return
+                if beta:
+                    # ROTATE(axis 2)는 벤치에 없다 — 각도 회전은 생략하고
+                    # 남은 공정은 계속한다. 운영기(M7)에서는 실제 회전한다.
+                    log.warning("bcode step %d: beta=%.1f deg skipped — "
+                                "ROTATE not fitted on bench", i, beta)
+                if L > 0:
+                    feed_target += float(L)
+                    await self.move_to(feed_axis, feed_target,
+                                       self._BCODE_FEED_SPEED)
+                if gen != self._motion_generation:
+                    self._bcode["aborted"] = True
+                    return
+                if theta:
+                    await self.move_to(bend_axis, bend_home + float(theta),
+                                       self._BCODE_BEND_SPEED)
+                    if gen != self._motion_generation:
+                        # 굽힌 채로 멈추지 않는다 — 복귀는 마저 한다. STOP
+                        # 직후라 generation 이 바뀌어 있으므로 새 세대로
+                        # 이동해야 큐에서 버려지지 않는다.
+                        gen = self._motion_generation
+                        self._bcode["aborted"] = True
+                        await self.move_to(bend_axis, bend_home,
+                                           self._BCODE_BEND_SPEED)
+                        return
+                    await self.move_to(bend_axis, bend_home,
+                                       self._BCODE_BEND_SPEED)
+                self._bcode["current"] = i
+            log.info("bcode bench sequence complete: %d steps", len(steps))
+        except Exception as exc:
+            self._bcode["error"] = str(exc)
+            log.error("bcode bench sequence failed at step %d/%d: %s",
+                      self._bcode["current"] + 1, len(steps), exc)
