@@ -92,6 +92,18 @@ _REENABLE_CYCLES = 2            # 이후 조그의 빠른 초퍼 재활성:
                                 # CHOPCONF + SGCSCONF 만.
 _SILENCE_CYCLES = 2             # 조그 사이 초퍼 off 사이클 수.
 
+# 초소형 이동 정밀 경로의 상한(스텝). 이하의 count 는 램프 기계 대신 바닥
+# 주파수 고정 방출로 낸다 — 시간 적분 계수의 ±1 스텝 오차가 미세 이송
+# 반복에서 지령을 통째로 삼키는 것을 막는다 (pulse_step 참조). 16 스텝은
+# 63.662 steps/unit 의 FEED 기준 0.25 unit — 미세 이송 트래픽 전체를 덮되
+# 정상 이동의 램프 성능에는 손대지 않는 크기다.
+_EXACT_PULSE_MAX_STEPS = 16
+
+
+def p_floor(profile: dict | None) -> int:
+    """프로파일의 램프 바닥 주파수 (기본 200 Hz — 자기동 영역)."""
+    return int((profile or {}).get("start_hz", 200))
+
 # 소프트 스타트 램프: 고정 12스텝/0.36 s 스윕 대신 가속도 제한 방식이다.
 # 그래서 속도 변화가 작으면 거의 즉시 목표에 닿고, 200 → 8000 Hz 처럼 크게
 # 뛸 때는 약 1 s 에 걸쳐 램프한다. DRVCTRL 1/16 + DEDGE 에서 8000 Hz/s 는
@@ -796,6 +808,48 @@ class SpidevMotorBackend(MotorBackend):
             if self._has_fault(status):
                 log.error("axis %d fault before run: 0x%05X — aborting", axis, status)
                 raise RuntimeError(f"axis {axis} fault detected (0x{status:05X})")
+
+            if count <= _EXACT_PULSE_MAX_STEPS:
+                # ---- 초소형 이동 정밀 경로 ---------------------------------
+                # 램프·순항·트림 기계를 통째로 건너뛰고, 정확히 count 스텝을
+                # 바닥 주파수로 낸다 — 호밍 _home_move 와 같은 방식이다(그쪽
+                # 주석대로 자기동 영역이라 램프가 필요 없고, 정지는 폴 주기
+                # 단위로 스텝 정확하다). 램프 기계는 시간 적분으로 스텝을
+                # 계수하므로 초소형 이동에서 ±1 스텝을 흘리는데, 그 1 스텝이
+                # 카운터를 목표보다 앞세우면 다음 미세 지령의 갭이 1 스텝
+                # 밑으로 떨어져 통째로 무시된다 — "20회 지령이면 20회 모두
+                # 움직여야 한다"는 요구가 깨지는 유일한 경로였다. 여기서는
+                # 카운터가 정확히 count 만큼만 전진하므로, 절대 그리드 반복에서
+                # 온전한 스텝이 있는 지령은 반드시 움직인다.
+                floor_hz = min(int(p_floor(profile)), freq_hz)
+                await self._pwm_ensure_exported()
+                guarded = self.limit_guard and axis in self.guard_axes
+                armed = guarded and self.limit_active(axis) is False
+                emitted = 0
+                t0 = time.monotonic()
+                await self._pwm_set_hz(floor_hz)
+                try:
+                    while emitted < count:
+                        left = count - emitted
+                        await asyncio.sleep(max(_RAMP_SUBSLEEP_MIN_S,
+                                                min(0.005, left / floor_hz)))
+                        if self._pwm_killed:      # E-STOP — 계수 즉시 동결
+                            break
+                        emitted = min(int((time.monotonic() - t0) * floor_hz),
+                                      count)
+                        self.positions[axis] = pos_before + emitted * direction
+                        if guarded:
+                            lim = self.limit_active(axis)
+                            if lim is False:
+                                armed = True
+                            elif lim and armed:
+                                log.warning("axis %d limit tripped in micro "
+                                            "move — stopping", axis)
+                                break
+                finally:
+                    await self._pwm_disable()
+                    self.positions[axis] = pos_before + emitted * direction
+                return
 
             # PWM4 셋업 — 여기서부터 STEP 신호가 살아난다.
             # 가속도 제한 소프트 스타트(축별 모션 프로파일: 시작 바닥값,
