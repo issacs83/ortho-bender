@@ -1,5 +1,14 @@
 # src/app/server/services/camera_backends/__init__.py
 """
+
+⚠ 미배선(dead) — 이 패키지는 런타임에서 실행되지 않는다 (2026-09-01 확인).
+CameraService 는 이 HAL 을 import 하지 않고 자체 백엔드 체인(ISI/CSI-2 MPLANE
+= services/isi_v4l2.py, vmbpy, GStreamer, UVC)을 쓴다. 이 패키지의
+V4l2CameraBackend 는 단일 평면 V4L2 전용이라 벤치의 MPLANE 전용 ISI 노드를
+열 수 없다. 이 패키지를 검증하는 테스트 60개(test_camera_backend /
+test_auto_camera_backend / test_v4l2_backend)의 초록불은 배포되는 코드에 대한
+것이 아니다. 유지/삭제 결정은 C-158m 브링업(isi_v4l2 확장) 결과 뒤로 미뤄져
+있다.
 camera_backends — Camera hardware abstraction layer.
 
 Public API:

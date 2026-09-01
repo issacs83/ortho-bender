@@ -77,19 +77,17 @@ async def lifespan(app: FastAPI):
         await ipc.connect()
     app.state.ipc_client = ipc
 
-    # Services — camera always uses real hardware when mock_mode=false.
-    # Camera_service interface evolved (mock=bool → backend=CameraBackend).
-    # Try the new backend-injection signature first; fall back to legacy
-    # mock=bool, and finally degrade to None if both fail (motor-only mode).
-    # MotorService spidev injection happens later, after diag_backend init.
+    # 서비스 — mock_mode=false 면 카메라는 항상 실물을 쓴다.
+    # CameraService 는 자체 백엔드 체인(ISI/CSI-2 → vmbpy → GStreamer → UVC)을
+    # 가지고 있고, 그것이 지금 벤치에서 실제로 도는 경로다. 예전에 있던
+    # "backend= 주입 시도 후 TypeError 를 잡아 폴백" 분기는 단 한 번도 주입에
+    # 성공한 적이 없는 死분기였고, 미래의 시그니처 오류까지 조용히 삼키므로
+    # 제거했다 — services/camera_backends/ HAL 은 어디에도 배선되어 있지 않다.
+    # MotorService 의 spidev 주입은 뒤에서, diag_backend 초기화 후에 이루어진다.
     motor_svc  = MotorService(ipc)
     camera_svc: CameraService | None = None
     try:
-        try:
-            from .services.camera_backends.auto_backend import AutoCameraBackend  # type: ignore
-            camera_svc = CameraService(backend=AutoCameraBackend())  # type: ignore[arg-type]
-        except (ImportError, TypeError):
-            camera_svc = CameraService(mock=cfg.mock_mode)  # type: ignore[arg-type]
+        camera_svc = CameraService(mock=cfg.mock_mode)
         await camera_svc.connect()
     except Exception as exc:
         log.warning("Camera init failed: %s — continuing without camera", exc)
