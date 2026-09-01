@@ -27,7 +27,7 @@ class _Rec(SpidevMotorBackend):
 
     async def spi_transfer(self, cs, data):
         self.frames.append((data[0] << 16) | (data[1] << 8) | data[2])
-        return b"\x12\x34\x56"
+        return b"\x00\x00\x01"   # 폴트 비트 없는 유효 응답
 
     async def spi_transfer_batch(self, cs, frames):
         return [await self.spi_transfer(cs, f) for f in frames]
@@ -41,7 +41,7 @@ class _Rec(SpidevMotorBackend):
 
 
 CHOP_OFF = 0x80000            # encode(0x04, 0x80000) — TOFF=0
-SGCS_OFF = 0xD3F00            # encode(0x06, 0xD3F00) — CS=0
+SGCS_OFF = 0xD3F00            # encode(0x06, ...) — CS=0
 
 
 async def test_active_chip_gets_silenced_before_start():
