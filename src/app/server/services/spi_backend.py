@@ -372,6 +372,8 @@ class SpidevMotorBackend(MotorBackend):
                     for k, v in (d.get("hold_cs") or {}).items()}
                 if "sg_filter" in d:
                     self.sg_filter = bool(d["sg_filter"])
+                self.mres_map = {int(k): int(v)
+                                 for k, v in (d.get("mres") or {}).items()}
             except (TypeError, ValueError):
                 self.sgt_map = {}
             log.info("Restored motor positions from %s: %s (homed=%s)",
@@ -399,6 +401,9 @@ class SpidevMotorBackend(MotorBackend):
             # '미끄러짐'의 차이다.
             "hold_cs": {str(k): int(v) for k, v in self.hold_cs_map.items()},
             "sg_filter": bool(self.sg_filter),
+            # 분주비도 영속화한다 — 분주비를 바꾸면 위치 카운터와 캘리브레이션이
+            # 같은 배율로 함께 바뀌므로, 이 셋은 재시작을 같이 살아남아야 한다.
+            "mres": {str(k): int(v) for k, v in self.mres_map.items()},
         }
 
     def _write_state(self, data: dict) -> None:
@@ -1525,6 +1530,43 @@ class SpidevMotorBackend(MotorBackend):
         if mres is None:
             return DRVCTRL_DEFAULT
         return (DRVCTRL_DEFAULT & ~0x0F) | (int(mres) & 0x0F)
+
+    _MRES_TO_USTEPS = {0: 256, 1: 128, 2: 64, 3: 32, 4: 16, 5: 8, 6: 4, 7: 2, 8: 1}
+
+    def usteps_for(self, cs: int) -> int:
+        """한 축의 현재 마이크로스텝 수 (예: 16, 32)."""
+        code = self.mres_map.get(cs, DRVCTRL_DEFAULT & 0x0F)
+        return self._MRES_TO_USTEPS[int(code) & 0x0F]
+
+    def set_axis_microstep(self, cs: int, microsteps: int) -> float:
+        """한 축의 분주비를 런타임에 바꾼다. 위치 카운터 스케일 배율을 반환.
+
+        세 가지가 한 몸으로 움직인다:
+        1. mres_map — 다음 풀 초기화가 새 DRVCTRL 을 칩에 쓴다. 이를 위해
+           _initialized 를 지워 다음 모션이 풀 초기화를 타게 한다(칩의
+           DRVCTRL 은 풀 초기화 때만 쓰이므로).
+        2. 위치 카운터 — 카운터의 단위는 마이크로스텝(PWM 사이클)이라,
+           분주비가 2배 되면 같은 물리 위치가 2배 큰 수가 된다. 배율을
+           곱해 주지 않으면 표시 위치와 homed datum 이 조용히 어긋난다.
+        3. steps_per_unit — 호출자(motor_service)가 같은 배율로 캘리브레이션을
+           갱신해야 한다. 반환값이 그 배율이다.
+        """
+        code = {v: k for k, v in self._MRES_TO_USTEPS.items()}.get(int(microsteps))
+        if code is None:
+            raise ValueError(f"microsteps must be one of "
+                             f"{sorted(self._MRES_TO_USTEPS.values())}, "
+                             f"got {microsteps}")
+        old_usteps = self.usteps_for(cs)
+        if int(microsteps) == old_usteps:
+            return 1.0
+        ratio = microsteps / old_usteps
+        self.mres_map[cs] = code
+        self.positions[cs] = int(round(self.positions.get(cs, 0) * ratio))
+        self._initialized[cs] = False     # 다음 모션이 새 DRVCTRL 로 풀 초기화
+        self._save_state_soon()
+        log.info("axis cs=%d microstep 1/%d -> 1/%d (counter x%.3f)",
+                 cs, old_usteps, microsteps, ratio)
+        return ratio
 
     def _sgcs_on_value(self, cs: int | None = None) -> int:
         """한 축의 SGCSCONF: PSU 상한이 걸린 전류 스케일 + 그 축의 SGT.

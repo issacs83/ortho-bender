@@ -37,6 +37,7 @@ def _calibration_service(request: Request):
     return getattr(request.app.state, "calibration_service", None)
 
 
+from pydantic import BaseModel, Field
 from pydantic import BaseModel as _BaseModel
 
 
@@ -70,6 +71,42 @@ async def update_calibration(
         return ok(svc.all())
     except ValueError as exc:
         return err(str(exc), "INVALID_CALIBRATION")
+
+
+# ---------------------------------------------------------------------------
+# GET/PUT /api/motor/microstep — 축별 분주비 (DRVCTRL.MRES)
+# ---------------------------------------------------------------------------
+
+class MicrostepUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+    axis: int = Field(..., ge=0, le=3)
+    microsteps: int = Field(
+        ..., description="마이크로스텝 분주비 (1/2/4/8/16/32/64/128/256). "
+                         "바꾸면 위치 카운터와 steps_per_unit 이 같은 배율로 "
+                         "자동 조정되고, 속도 상한(8000 Hz / steps_per_unit)도 "
+                         "따라 바뀐다. 모션 중에는 거부된다.")
+
+
+@router.get("/microstep", response_model=ApiResponse)
+async def get_microstep(svc: MotorService = Depends(_motor_service)) -> ApiResponse:
+    """축별 분주비 + 분해능/속도 상한."""
+    try:
+        return ok(svc.microstep_status())
+    except RuntimeError as exc:
+        return err(str(exc), "NO_BENCH")
+
+
+@router.put("/microstep", response_model=ApiResponse)
+async def put_microstep(
+    body: MicrostepUpdate, svc: MotorService = Depends(_motor_service)
+) -> ApiResponse:
+    """한 축의 분주비를 런타임에 변경한다 (칩은 다음 모션에서 재초기화)."""
+    try:
+        return ok(await svc.set_microstep(body.axis, body.microsteps))
+    except ValueError as exc:
+        return err(str(exc), "INVALID_MICROSTEP")
+    except RuntimeError as exc:
+        return err(str(exc), "MICROSTEP_BUSY")
 
 
 # ---------------------------------------------------------------------------

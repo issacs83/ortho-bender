@@ -228,7 +228,9 @@ async def lifespan(app: FastAPI):
     # 속도 상한 125.7 → 62.8 mm/s — 피드 실사용(≤20 mm/s)에는 여유 3배.
     # 캘리브레이션 기본값(127.324 steps/unit)과 짝이다: MRES 를 바꾸면
     # calibration_service.DEFAULT_STEPS_PER_UNIT 도 같은 배율로 바꿔야 한다.
-    if hasattr(diag_backend, "mres_map"):
+    if hasattr(diag_backend, "mres_map") and not diag_backend.mres_map:
+        # 상태파일에 저장된 분주비가 있으면 그것이 우선한다 — 여기 기본값은
+        # 첫 부팅(또는 상태 초기화) 때만 적용된다.
         diag_backend.mres_map = {2: 3}
     # Direction conventions: LIFT (cs 0) "+ is down"; FEED (cs 2) was
     # wired mirrored to BEND, so + / ▶ means clockwise on every axis.

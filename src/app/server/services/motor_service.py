@@ -924,6 +924,45 @@ class MotorService:
         log.info("stallguard updated: %s", self.get_stallguard())
         return self.get_stallguard()
 
+    def microstep_status(self) -> dict:
+        """축별 분주비 + 그에 따른 분해능/속도 상한 (UI 표시용)."""
+        if not self.has_bench or not hasattr(self._spi_backend, "usteps_for"):
+            raise RuntimeError("microstep control is bench-only")
+        out = {}
+        for axis, cs in self._axis_to_cs.items():
+            if cs is None:
+                continue
+            spu = (self._calibration.steps_per_unit(axis)
+                   if self._calibration else 200.0)
+            out[str(axis)] = {
+                "microsteps": self._spi_backend.usteps_for(cs),
+                "steps_per_unit": spu,
+                "mm_per_step": (1.0 / spu) if spu else None,
+                "speed_limit": (self._calibration.speed_limit(axis)
+                                if self._calibration else None),
+            }
+        return out
+
+    async def set_microstep(self, axis: int, microsteps: int) -> dict:
+        """한 축의 분주비를 바꾼다 — 카운터·캘리브레이션이 같은 배율로 따라간다.
+
+        모션 중 변경은 거부한다(칩 재초기화가 진행 중인 펄스와 경합한다).
+        속도 상한은 steps_per_unit 유도값이라 자동 추종한다.
+        """
+        if not self.has_bench or not hasattr(self._spi_backend, "set_axis_microstep"):
+            raise RuntimeError("microstep control is bench-only")
+        cs = self._axis_to_cs.get(int(axis))
+        if cs is None:
+            raise ValueError(f"Axis {axis} is not present on the bench")
+        st = await self.get_status()
+        if any(a.velocity for a in st.axes) or self._queue_depth:
+            raise RuntimeError("cannot change microstep while motion is active")
+        ratio = self._spi_backend.set_axis_microstep(cs, int(microsteps))
+        if ratio != 1.0 and self._calibration:
+            self._calibration.update(
+                int(axis), self._calibration.steps_per_unit(int(axis)) * ratio)
+        return self.microstep_status()
+
     async def move_to(self, axis: int, position: float, speed: float) -> MotorStatusResponse:
         """절대 이동: 현재 카운터에서 `position`(사용자 단위)까지 이동한다.
         /move 엔드포인트는 상대 이동이라서, UI 의 'Move To Position' 에는
