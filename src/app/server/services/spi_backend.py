@@ -65,7 +65,15 @@ _SPI_NO_CS = 0x40
 _RAMP_SUBSLEEP_S = 0.01     # nominal guard/abort poll inside a ramp tick
 _RAMP_SUBSLEEP_MIN_S = 0.001  # floor: below this the event loop dominates
 
-_CS_SETTLE_S = 0.0005      # 500 us — required for BEND chip on SAI5_RXD1 pad
+# CS settle. Measured 2026-08-31 with tools/probe-spi-timing.py (chopper
+# off, exact-match criterion against the stable reference status word):
+# every chip passed 20/20 at every value down to 10 us, at SPI clocks from
+# 50 kHz to 2 MHz. The old 500 us was three orders of magnitude above the
+# TMC260C's ~100 ns CS setup requirement and cost 1.5 ms per 3-byte frame
+# — a 10-frame batch was 32 ms of time.sleep to move 30 bytes.
+# 100 us keeps 10x margin over the fastest value that passed and 1000x
+# over the datasheet. Re-run the probe before lowering it further.
+_CS_SETTLE_S = 0.0001      # 100 us (BEND on SAI5_RXD1 is the limiting pad)
 _DIR_SETUP_S = 0.000010    # 10 us
 _INIT_SEQ_CYCLES_FULL = 50      # full init worst case: only when chip is
                                 # brand-new (first jog after server start).
@@ -75,19 +83,41 @@ _INIT_GOOD_CYCLES_EXIT = 3      # consecutive cycles with a valid SPI
                                 # response after which init is declared done
                                 # (cuts cold-start ~525 ms → ~85 ms when the
                                 # chip is powered and answering).
-_REENABLE_CYCLES = 5            # fast chopper re-enable on subsequent jogs:
-                                # CHOPCONF + SGCSCONF only (~15 ms total).
-_SILENCE_CYCLES = 5             # chopper-off cycles between jogs.
+# Repetition of the enable/silence register writes. These were 5 each,
+# i.e. the same idempotent datagram sent five times. probe-spi-timing.py
+# tested whether that redundancy does anything: with RDSEL toggled between
+# 01 (StallGuard) and 00 (microstep position), the RESPONSE FORMAT reveals
+# whether a DRVCONF write latched — the only latch evidence a write-only
+# register set can give. All three chips latched 20/20 on the FIRST frame,
+# at 500 us/50 kHz and at 100 us/500 kHz alike. 2 is kept as belt-and-braces
+# (it costs ~0.3 ms); the measurement says 1 would do.
+_REENABLE_CYCLES = 2            # fast chopper re-enable on subsequent jogs:
+                                # CHOPCONF + SGCSCONF only.
+_SILENCE_CYCLES = 2             # chopper-off cycles between jogs.
 
-# Soft-start ramp: acceleration-limited instead of a fixed 12-step/0.36 s
-# sweep, so a small speed step reaches target almost immediately while a
-# 200 → 8000 Hz jump still ramps over ~1 s. At DRVCTRL 1/16 + DEDGE,
-# 8000 Hz/s ≈ 0 → 300 RPM in one second — bench-tune if an axis stalls
-# during acceleration. These are the DEFAULTS; per-axis motion profiles
-# (services/motion_profiles.py) override them via pulse_step(profile=).
+# 소프트 스타트 램프: 고정 12스텝/0.36 s 스윕 대신 가속도 제한 방식이다.
+# 그래서 속도 변화가 작으면 거의 즉시 목표에 닿고, 200 → 8000 Hz 처럼 크게
+# 뛸 때는 약 1 s 에 걸쳐 램프한다. DRVCTRL 1/16 + DEDGE 에서 8000 Hz/s 는
+# 1초에 0 → 300 RPM 에 해당한다 — 가속 중에 스톨하는 축이 있으면 벤치에서
+# 조정할 것. 여기 값들은 기본값이며, 축별 모션 프로파일
+# (services/motion_profiles.py)이 pulse_step(profile=) 으로 덮어쓴다.
+# 튜닝 주의: 이 상수는 호출자가 프로파일을 넘기지 않을 때만 쓰이는 폴백이다
+# (pulse_step() 직접 호출, 호밍 구간). 운전자용 노브는 축별 모션 프로파일이다
+# — 이 상수를 고쳐서 벤치를 튜닝하지 말고 motion_profiles.py /
+# PUT /api/motor/profiles/{axis} 를 쓰고, 여기는 프로파일이 없는 호출자를 위한
+# 안전한 기본값으로 남겨 둘 것.
 _RAMP_ACCEL_HZ_PER_S = 8000
+# 램프 해상도: PWM 주파수는 틱마다 한 번만 다시 쓰이므로 속도 곡선은 연속
+# 기울기가 아니라 30 ms 계단이다. 이 값을 낮추면 램프가 부드러워지지만, HTTP
+# 서버가 도는 같은 이벤트 루프에서 sysfs 쓰기가 늘어난다(측정되는 명령 지연을
+# 부풀리는 원인이 바로 이것이다) — 30 ms 는 벤치에서 타협한 값이다. 리밋
+# 가드와 제동거리 판정은 틱을 기다리지 않고 그 안에서 10 ms
+# (_RAMP_SUBSLEEP_S)마다 폴링한다.
 _RAMP_TICK_S = 0.03
-_RAMP_DOWN_MAX_S = 1.0     # cap on decel ramp duration (stop responsiveness)
+_RAMP_DOWN_MAX_S = 1.0     # 감속 램프 최대 시간(정지 반응성 확보)
+                           # 무거운 축을 더 부드럽게 세워야 하면 올린다.
+                           # 프로파일 decel 이 이보다 느리면 덮어쓰이므로
+                           # (pulse_step 의 eff_decel) STOP 은 항상 즉각적이다.
 
 # Bench convention: ▶ button (direction=+1) must rotate the motor
 # clockwise (forward), ◀ button (direction=-1) counter-clockwise.
@@ -99,6 +129,27 @@ _DIR_INVERT = True
 # Static safety verification (also done in tmc260c_driver, double-check here)
 assert (SGCSCONF_DEFAULT & 0x1F) <= SAFETY_CS_MAX, "SGCSCONF CS exceeds safety"
 assert (CHOPCONF_DEFAULT & 0xF) <= SAFETY_TOFF_MAX, "CHOPCONF TOFF exceeds safety"
+
+
+def _ramp_tick_plan(total_s: float) -> tuple[int, float]:
+    """Split a ramp of `total_s` into (tick_count, tick_length).
+
+    A ramp shorter than one tick used to be PADDED up to a full
+    _RAMP_TICK_S (`total_s = max(total_s, _RAMP_TICK_S)`), so a 6 ms
+    frequency change still cost 30 ms — and a short move pays that twice,
+    once accelerating and once decelerating. 60 ms is a large fraction of
+    a 270 ms command, and it buys nothing: the ramp is a staircase of PWM
+    frequency writes, and a staircase with one short step is still a
+    staircase. Below one tick the ramp now runs as a single shorter tick.
+
+    _ramp and _ramp_steps_est MUST agree on this split — the second sizes
+    the deceleration reserve for the first, and a mismatch shows up as a
+    move that lands past or short of its commanded distance.
+    """
+    if total_s <= 0:
+        return 1, 0.0
+    n = max(1, -(-int(total_s * 1e6) // int(_RAMP_TICK_S * 1e6)))   # ceil
+    return n, total_s / n
 
 
 def _parse_gpio(pin: str) -> tuple[str, int]:
@@ -278,6 +329,10 @@ class SpidevMotorBackend(MotorBackend):
         self._pwm_enabled: bool = False
         self._pwm_last_period_ns: int = 0
 
+        # Deferred position persistence (see _save_state_soon).
+        self._state_dirty: bool = False
+        self._state_save_task = None
+
     # -------------------------------------------------------------------
     # Persistence (axis positions survive server restarts)
     # -------------------------------------------------------------------
@@ -316,28 +371,81 @@ class SpidevMotorBackend(MotorBackend):
         except Exception as exc:
             log.warning("Failed to load motor state (%s) — starting from zero", exc)
 
-    def _save_state(self) -> None:
+    def _state_snapshot(self) -> dict:
+        """Serialisable copy of the persisted state, taken ON the loop.
+
+        The write happens in a worker thread, and json.dump iterating a
+        dict the motion coroutine is still mutating raises "dictionary
+        changed size during iteration". Only this copy crosses the thread
+        boundary; it is built where nothing else can be running.
+        """
+        return {
+            "positions": {str(k): int(v) for k, v in self.positions.items()},
+            "homed": sorted(self.homed_persist),
+            "sgt": {str(k): int(v) for k, v in self.sgt_map.items()},
+            "run_cs": {str(k): int(v) for k, v in self.run_cs_map.items()},
+            # Holding torque was configured per axis but never
+            # written down, so every restart silently reverted it
+            # -- including on the gravity axis, where losing it is
+            # the difference between parked and sliding.
+            "hold_cs": {str(k): int(v) for k, v in self.hold_cs_map.items()},
+            "sg_filter": bool(self.sg_filter),
+        }
+
+    def _write_state(self, data: dict) -> None:
+        """Blocking write of a snapshot. Measured 0.87 ms typical / 1.6 ms
+        worst on the board's eMMC — small, but it was being paid on the
+        event loop at the end of every move, where it lands on the latency
+        of every OTHER request in flight as well."""
         try:
             os.makedirs(os.path.dirname(_STATE_FILE), exist_ok=True)
             tmp = _STATE_FILE + ".tmp"
             with open(tmp, "w") as f:
-                json.dump({
-                    "positions": {str(k): int(v) for k, v in self.positions.items()},
-                    "homed": sorted(self.homed_persist),
-                    "sgt": {str(k): int(v) for k, v in self.sgt_map.items()},
-                    "run_cs": {str(k): int(v)
-                               for k, v in self.run_cs_map.items()},
-                    # Holding torque was configured per axis but never
-                    # written down, so every restart silently reverted it
-                    # -- including on the gravity axis, where losing it is
-                    # the difference between parked and sliding.
-                    "hold_cs": {str(k): int(v)
-                                for k, v in self.hold_cs_map.items()},
-                    "sg_filter": bool(self.sg_filter),
-                }, f)
+                json.dump(data, f)
             os.replace(tmp, _STATE_FILE)
         except Exception as exc:
             log.debug("Save motor state failed: %s", exc)
+
+    def _save_state(self) -> None:
+        """Synchronous save. For startup, shutdown and other cold paths —
+        the motion hot path uses _save_state_soon()."""
+        self._write_state(self._state_snapshot())
+
+    def _save_state_soon(self) -> None:
+        """Persist without blocking the event loop.
+
+        Coalescing, not queueing: the _state_dirty flag is what does it —
+        the draining loop clears the flag before each write, so callers
+        that arrive while a write is in flight are absorbed into it and a
+        burst of short jogs writes the file once more at the end instead
+        of once per jog. The in-flight task check below is NOT what makes
+        that safe (a second task would find the flag clear and exit); it
+        just avoids creating a task object per jog. Falls back to a
+        synchronous save when there is no running loop (tests, and any
+        synchronous caller).
+        """
+        self._state_dirty = True
+        task = self._state_save_task
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._save_state()
+            return
+        try:
+            self._state_save_task = loop.create_task(self._save_state_loop())
+        except RuntimeError:          # loop closing — persist here instead
+            self._save_state()
+
+    async def _save_state_loop(self) -> None:
+        while self._state_dirty:
+            self._state_dirty = False
+            data = self._state_snapshot()
+            try:
+                await asyncio.to_thread(self._write_state, data)
+            except Exception as exc:
+                log.debug("Deferred motor state save failed: %s", exc)
 
     # -------------------------------------------------------------------
     # Lifecycle
@@ -696,10 +804,10 @@ class SpidevMotorBackend(MotorBackend):
             await self._yield_held(axis)   # shared STEP: release held axes
             self._set_dir(axis, direction)
             await asyncio.sleep(_DIR_SETUP_S)
-            await self._init_chip(axis)
-
-            # Pre-run fault check
-            status = await self._read_status(axis)
+            # Pre-run fault check. The status comes back from the init
+            # batch itself — same frame, same position in the sequence
+            # (after the chopper is on), one fewer SPI round trip.
+            status = await self._init_chip(axis)
             if self._has_fault(status):
                 log.error("axis %d fault before run: 0x%05X — aborting", axis, status)
                 raise RuntimeError(f"axis {axis} fault detected (0x{status:05X})")
@@ -925,7 +1033,7 @@ class SpidevMotorBackend(MotorBackend):
             # inside its ramp. pos_before/t0 remain for log context only.
             _ = pos_before, t0
             # Persist updated positions so a server restart resumes here
-            self._save_state()
+            self._save_state_soon()
             # Clear active_axis after this jog/move ends so the STEP LED
             # only highlights an axis while its motion is in flight.
             if self._active_axis == axis:
@@ -1333,7 +1441,7 @@ class SpidevMotorBackend(MotorBackend):
             except Exception:
                 pass
             await self._finish_axis(cs)
-            self._save_state()
+            self._save_state_soon()
             if self._active_axis == cs:
                 self._active_axis = None
 
@@ -1391,8 +1499,11 @@ class SpidevMotorBackend(MotorBackend):
             (SGCSCONF_DEFAULT >> 8) & 0x7F)
         return ((1 if self.sg_filter else 0) << 16) | ((sgt & 0x7F) << 8) | current
 
-    async def _init_chip(self, cs: int) -> None:
+    async def _init_chip(self, cs: int) -> int:
         """Lazy init: full SEQ on first call, fast chopper re-enable after.
+
+        Returns the chip's 20-bit status word as of the last frame sent, so
+        the caller's pre-run fault check needs no extra SPI round trip.
 
         TMC260C registers (CHOPCONF, SMARTEN, DRVCONF, DRVCTRL, SGCSCONF)
         are persistent in the chip until power loss or new write. Once
@@ -1406,16 +1517,21 @@ class SpidevMotorBackend(MotorBackend):
         chip returns 0x00000/0xFFFFF and still gets the full 50 cycles.
         """
         if self._initialized.get(cs, False):
-            # Fast re-enable: chopper on + current scale
+            # Fast re-enable: chopper on + current scale, and the status
+            # read that follows it, in ONE batch. The pre-run fault check
+            # used to be a separate spi_transfer: a second lock acquire
+            # and a second thread hop (~0.6 ms measured) for one frame
+            # that could ride along with the frames already going out.
             chopconf_on = self._encode(0x04, CHOPCONF_DEFAULT)
             sgcs_on     = self._encode(0x06, self._sgcs_on_value(cs))
             tx_chop = bytes([(chopconf_on >> 16) & 0xFF, (chopconf_on >> 8) & 0xFF, chopconf_on & 0xFF])
             tx_sgcs = bytes([(sgcs_on >> 16) & 0xFF, (sgcs_on >> 8) & 0xFF, sgcs_on & 0xFF])
-            await self.spi_transfer_batch(
-                cs, [tx_chop, tx_sgcs] * _REENABLE_CYCLES)
+            rx = await self.spi_transfer_batch(
+                cs, [tx_chop, tx_sgcs] * _REENABLE_CYCLES
+                    + [self._status_frame()])
             self._chip_active[cs] = True
             self._chip_responsive[cs] = True
-            return
+            return self._note_status(cs, rx[-1])
 
         # Full one-time init for a never-touched chip
         good_cycles = 0
@@ -1444,6 +1560,7 @@ class SpidevMotorBackend(MotorBackend):
         self._chip_active[cs] = True
         self._chip_responsive[cs] = True
         log.info("axis cs=%d full init done (one-time)", cs)
+        return self._note_status(cs, rx)
 
     async def _silence_chip(self, cs: int) -> None:
         """Disable chopper (TOFF=0) + zero current.
@@ -1470,13 +1587,23 @@ class SpidevMotorBackend(MotorBackend):
         self._chip_active[cs] = False
         self._chip_responsive[cs] = True
 
-    async def _read_status(self, cs: int) -> int:
-        """Read 20-bit status by sending DRVCONF (RDSEL=01 → SG_VAL)."""
+    def _status_frame(self) -> bytes:
+        """The DRVCONF datagram whose RESPONSE is the 20-bit status word.
+
+        The chip answers every frame with a status word formatted by the
+        RDSEL currently in force, so re-sending DRVCONF (RDSEL=01) is both
+        the read and a re-assertion that SG_VAL is what comes back — worth
+        keeping, because the diag register path can leave RDSEL elsewhere.
+        """
         datagram = self._encode(0x07, DRVCONF_DEFAULT & 0x1FFFF)
-        tx = bytes([
+        return bytes([
             (datagram >> 16) & 0xFF, (datagram >> 8) & 0xFF, datagram & 0xFF,
         ])
-        rx = await self.spi_transfer(cs, tx)
+
+    def _note_status(self, cs: int, rx: bytes) -> int:
+        """Decode and cache one status response. Shared by _read_status and
+        _init_chip, which now gets its status from the frame it was already
+        sending rather than paying a second SPI round trip for it."""
         status = ((rx[0] << 16) | (rx[1] << 8) | rx[2]) & 0xFFFFF
         # Cache SG bit + responsiveness for the LED row. SPI lines float
         # to 0xFF when VMot is dead, so a 0xFFFFF read means "no power".
@@ -1485,6 +1612,11 @@ class SpidevMotorBackend(MotorBackend):
         self._last_sg_value[cs] = (status >> 10) & 0x3FF
         self._last_status[cs] = status
         return status
+
+    async def _read_status(self, cs: int) -> int:
+        """Read 20-bit status by sending DRVCONF (RDSEL=01 → SG_VAL)."""
+        rx = await self.spi_transfer(cs, self._status_frame())
+        return self._note_status(cs, rx)
 
     @staticmethod
     def _has_fault(status: int) -> bool:
@@ -1535,7 +1667,10 @@ class SpidevMotorBackend(MotorBackend):
             total_s = 1.5 * span / rate_hz_s   # smoothstep peak slope = 1.5·Δf/T
         else:
             total_s = span / rate_hz_s
-        total_s = max(total_s, _RAMP_TICK_S)
+        # Floor at one sub-sleep, not one tick: below that a ramp is a
+        # single PWM write and the schedule has nothing left to express.
+        total_s = max(total_s, _RAMP_SUBSLEEP_MIN_S)
+        n_ticks, tick_s = _ramp_tick_plan(total_s)
 
         base = self.positions.get(track[0], 0) if track else 0
         t = 0.0
@@ -1566,13 +1701,13 @@ class SpidevMotorBackend(MotorBackend):
                 # inside a tick — a fast axis crosses its sensor window
                 # in a few tens of ms.
                 slept = 0.0
-                while slept < _RAMP_TICK_S:
+                while slept < tick_s:
                     # Never sleep past the target. A fixed slice emits
                     # f_cur x slice steps before abort_cb is consulted --
                     # 4 steps at 400 Hz, which is the entire error budget
                     # of a 0.1 mm move. Shrinking the slice as the axis
                     # closes in bounds the overshoot to about one step.
-                    slice_s = _RAMP_SUBSLEEP_S
+                    slice_s = min(_RAMP_SUBSLEEP_S, tick_s - slept)
                     if remaining_cb is not None and f_cur > 0:
                         rem = remaining_cb()
                         if rem > 0:
@@ -1591,7 +1726,7 @@ class SpidevMotorBackend(MotorBackend):
                         break
                 if aborted:
                     break
-                t = min(total_s, t + _RAMP_TICK_S)
+                t = min(total_s, t + tick_s)
                 tau = t / total_s
                 s = tau * tau * (3.0 - 2.0 * tau) if shape == "scurve" else tau
                 f_next = int(round(f_from + (f_to - f_from) * s))
@@ -1620,8 +1755,7 @@ class SpidevMotorBackend(MotorBackend):
         if total_s <= 0:
             return 0
         jit = getattr(self, "_ramp_jitter", 1.0)
-        n = max(1, int(round(total_s / _RAMP_TICK_S)))
-        tick = total_s / n
+        n, tick = _ramp_tick_plan(total_s)
         est = 0.0
         f = float(f_from)
         for i in range(1, n + 1):

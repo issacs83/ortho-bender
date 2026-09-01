@@ -128,13 +128,25 @@ def _run_ramp(target_steps: int, f_from=200, f_to=4000, rate=8000.0):
 # is where a fixed 10 ms slice costs four steps; starting from the 200 Hz
 # floor the same target only costs two and the bug hides.
 # LOAD-BEARING, re-measured under the virtual clock: reverting the adaptive
-# slice to a fixed 10 ms fails [20,400], [20,800], [100,400] and
+# slice to a fixed 10 ms fails [20,800], [100,400] and
 # test_overshoot_does_not_grow_with_speed. Under real sleeps it failed only
 # [20,800] and [40,400] -- host jitter was masking the reported case itself,
 # which is the second reason the clock is virtual. [40,400] and [10,200] pass
 # on broken code and are kept as guards against a different regression; if
 # you trim this list, keep the three above or the file stops detecting the
 # bug it exists for. Re-run the mutation after any change here.
+#
+# [20,400] USED TO FAIL on that mutant too, and no longer does -- worth
+# knowing why, because it looks like lost coverage and is not. The ramp
+# advanced its schedule with `t += _RAMP_TICK_S`, and 15 additions of 0.03
+# reach 0.44999999999999996, just under the 0.45 s this ramp lasts. That
+# bought a 16th, near-empty tick whose steps the mutant credited, putting
+# the overshoot at 3 against a tolerance of 2. _ramp_tick_plan now splits
+# the ramp into n EQUAL ticks (2026-08-31, adaptive-tick change), the
+# phantom tick is gone, and the same mutant lands on 2 -- detected by the
+# three cases above instead of four. The unmutated code emits exactly 20,
+# 20, 100, 40 and 10 steps: zero overshoot on every case in this file.
+# The split itself is pinned in test_ramp_tick_budget.py.
 @pytest.mark.parametrize("target,f_from", [
     (20, 400),    # 0.1 mm on LIFT at 200 steps/mm — the reported failure
     (20, 800),    # load-bearing

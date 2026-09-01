@@ -20,9 +20,9 @@ Two driver boards were destroyed on 2026-05-08 running CS=31.
 | Chopper off-time | **TOFF 1–8** | module-level `assert` at import |
 | `CHOPCONF` | **frozen `0x99548`** | written as a constant, never parameterised |
 
-`tests/test_current_safety.py` attacks every path that can energise a
-coil and fails loudly if one opens. Run it before touching anything in
-`spi_backend.py` or `tmc260c_driver.py`.
+`src/app/server/tests/test_current_safety.py` attacks every path that can
+energise a coil and fails loudly if one opens. Run it before touching
+anything in `spi_backend.py` or `tmc260c_driver.py`.
 
 The PSU preset (`/api/system/psu`) narrows CS further. Requests above
 the ceiling are refused; requests between the ceiling and the PSU cap
@@ -90,6 +90,12 @@ Each of these cost real diagnostic time. Do not trust them.
   supply completely removed.
 - **`drv_status`** — hardcoded `0` on the bench. Real per-chip fault
   flags come from the `/ws/motor/diag` websocket.
+- **`cs_actual`** in `/api/motor/status` — not read back from the chip.
+  On the bench it is `effective_cs()`, i.e. the current scale the server
+  *intends* after the PSU cap, so it agrees with `run_cs` by construction
+  and would keep agreeing if the write never reached the driver. The
+  chip's own scale (SE) is only readable with CoolStep on, which is
+  deliberately off here — so there is no true readback of coil current.
 - **Register dump** — TMC260C registers are write-only; the dump is the
   driver's shadow copy of what it last wrote.
 - **`sg_result`** — StallGuard load, meaningful **only while the shaft
@@ -195,6 +201,28 @@ python3 tools/probe-motion-precision.py <ip>          # overshoot vs distance an
 python3 tools/calibrate-feed.py --base http://<ip>:8000 --mm 100
 ```
 
+`probe-spi-timing.py` measures the SPI framing margin — how short
+`_CS_SETTLE_S` and how fast `spi_speed_hz` can go before datagrams
+corrupt. It never enables the chopper (every CHOPCONF it sends has
+TOFF=0), returns to the known-good framing after every grid point, and
+judges a point by exact match against a reference status word rather than
+by "the chip answered". It needs the GPIO lines, so stop the service:
+
+```bash
+ssh root@<ip> 'systemctl stop ortho-bender-sdk'
+scp tools/probe-spi-timing.py root@<ip>:/tmp/
+ssh root@<ip> 'cd /opt/ortho-bender && python3 /tmp/probe-spi-timing.py'
+ssh root@<ip> 'systemctl start ortho-bender-sdk'
+```
+
+Measured 2026-08-31 on all three chips: every framing down to 10 µs /
+2 MHz matched 20/20, and a single frame latches (the ×5 register-write
+repetition was redundant). `_CS_SETTLE_S` is now 100 µs and the cycle
+counts are 2. **`spi_speed_hz` stays at 50 kHz**: 2 MHz is recorded here
+as noise-prone, and this probe runs with the chopper OFF, so it cannot
+see the EMI that a switching driver produces. Raising the clock needs a
+run with motors turning, not this one.
+
 Measure motion cost as **command round-trip time**. A status-polling
 probe competes with the motion coroutine on the same event loop and
 inflates exactly what it is measuring — that mistake was made here
@@ -219,7 +247,26 @@ already.
 - **StallGuard is tuned unloaded only.** BEND sits usable at `SGT +8`;
   nobody has measured it while actually bending wire, so stall-based
   homing abort stays off.
-- **1 ms control is not reachable over HTTP.** Measured floors: 7 ms for
-  `/health` on the board itself, 270 ms for the smallest motion command,
-  and 123 ms of jitter over WiFi. The M7 coprocessor is the architecture
-  for per-tick control; its IPC protocol already exists but is mocked.
+- **1 ms control is not reachable over HTTP.** Re-measured 2026-08-31 on
+  the board (loopback, `probe-latency.py`): **5.2 ms** for `/health`,
+  6.5 ms for `/api/motor/status`, **93 ms median for the smallest motion
+  command** (p95 163 ms). That motion figure was 270 ms; what came out of
+  it was 51 ms of SPI settle sleeps (`_CS_SETTLE_S` 500→100 µs, the ×5
+  register-write repetition →2, and the pre-run status read folded into
+  the init batch), up to 60 ms of ramp padding (`_ramp_tick_plan`), and a
+  1 ms state-file write moved off the event loop. Still 93× a 1 ms
+  budget: the M7 coprocessor remains the architecture for per-tick
+  control, and its IPC protocol already exists but is mocked.
+
+  Two measurement traps here, both of which produced wrong numbers
+  before. **Poll from the host and you measure WiFi**, which adds ~10 ms
+  and, without connection reuse, 1-second outliers — `probe-latency.py`
+  now keeps one connection alive, and `--no-keepalive` shows the
+  difference. **Poll status during a move and you measure your own
+  probe**: it competes with the motion coroutine on the same event loop.
+
+  The SPI timing above is validated chopper-OFF plus 20 real moves with
+  no fault or malformed word. That is not a thermal or long-EMI soak —
+  three drivers share these lines beside switching coils, and margin loss
+  shows up as rare bit errors. If unexplained driver faults ever appear,
+  `_CS_SETTLE_S` is the first thing to put back to 500 µs.
