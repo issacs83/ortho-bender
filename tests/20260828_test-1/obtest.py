@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import sys
 import time
@@ -294,7 +295,21 @@ def parse_value(tok: str):
     try:
         return json.loads(tok)          # 12, 1.5, true, [..], {..}, "문자열"
     except json.JSONDecodeError:
-        return tok                      # mono8, tmc260c_0, 0x04 …
+        pass
+    if tok[:1] in "[{":
+        # 셸 스타일 토크나이저(shlex)가 겹따옴표를 벗겨 가므로, 콘솔에
+        # steps=[{"L_mm":5}] 라고 치면 여기엔 [{L_mm:5}] 가 도착한다 —
+        # 키가 맨몸이 된 JSON 이다. 실사용에서 실제로 걸린 함정이라
+        # (2026-09-02, bending.execute 422), 맨몸 키에 따옴표를 입혀 한 번
+        # 더 시도한다. 값 쪽의 맨몸 단어(mono8 등)는 손대지 않으므로
+        # 숫자/불리언/중첩 구조만 있는 전형적 스텝 리스트가 대상이다.
+        requoted = re.sub(r'([\[{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:',
+                          r'\1"\2":', tok)
+        try:
+            return json.loads(requoted)
+        except json.JSONDecodeError:
+            pass
+    return tok                          # mono8, tmc260c_0, 0x04 …
 
 
 def parse_args(cmd: Cmd, tokens: list[str]) -> dict:
