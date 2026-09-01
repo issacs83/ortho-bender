@@ -341,6 +341,11 @@ class ProtectionUpdate(BaseModel):
         None, description="정상 모션 중 리밋 창에 '진입'하는 축을 정지시킨다 "
                           "(에지 트리거; 홈에 주차된 상태에서 창을 벗어나는 "
                           "것은 막지 않는다)")
+    guard_axes: list[int] | None = Field(
+        None, description="리밋 가드를 적용할 축 id 목록 (센서 있는 축만: "
+                          "3=LIFT, 1=BEND). BEND 는 디스크 슬롯이 여러 개라 "
+                          "켜면 슬롯마다 정지한다 — 감지 테스트/보호 용도로만. "
+                          "생략하면 유지, 영속화됨.")
     hold_enabled: bool | None = Field(
         None, description="LIFT(중력 축)의 유휴 유지 전류 — 가라앉음을 "
                           "막는다; 유지 중에는 초퍼 소음이 들린다")
@@ -389,7 +394,8 @@ async def update_protection(
             hold_enabled=body.hold_enabled,
             hold_cs=body.hold_cs,
             axes={k: v.model_dump(exclude_none=True)
-                  for k, v in (body.axes or {}).items()} or None)
+                  for k, v in (body.axes or {}).items()} or None,
+            guard_axes=body.guard_axes)
         return ok(result)
     except (RuntimeError, ValueError) as exc:
         return err(str(exc), "MOTOR_PROTECTION_ERROR")

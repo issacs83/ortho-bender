@@ -222,7 +222,11 @@ async def lifespan(app: FastAPI):
                 log.warning("initial silence cs=%d failed: %s", _cs, exc)
     # Limit guard: LIFT only — BEND's multi-slot disc would trip it
     # at every slot passage (rotary axis has no travel ends anyway).
-    if hasattr(diag_backend, "guard_axes"):
+    if hasattr(diag_backend, "guard_axes") and not getattr(
+            diag_backend, "_guard_loaded", False):
+        # 기본 가드 대상 = LIFT(cs0)만. BEND 디스크는 1회전에 슬롯이 여러
+        # 개라 가드를 켜면 슬롯마다 정지한다 — 필요할 때 UI/API 로 켠다.
+        # 저장값(사용자가 UI 로 바꾼 것)이 있으면 그것이 우선한다.
         diag_backend.guard_axes = {0}
     # FEED(cs=2)만 1/32 마이크로스텝 (MRES=3). 분해능 0.0157 → 0.0079 mm/step,
     # 속도 상한 125.7 → 62.8 mm/s — 피드 실사용(≤20 mm/s)에는 여유 3배.

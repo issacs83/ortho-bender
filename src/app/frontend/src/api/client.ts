@@ -44,6 +44,7 @@ export interface AxisHold {
 
 export interface ProtectionSettings {
   limit_stop: boolean;              // stop axis entering its limit window
+  guard_axes: number[];             // 리밋 가드 적용 축 id (3=LIFT, 1=BEND)
   axes: Record<number, AxisHold>;   // per-axis torque
   cs_cap?: number;                  // PSU-derived ceiling for this bench
   cs_max?: number;                  // absolute ceiling (boards burned above)

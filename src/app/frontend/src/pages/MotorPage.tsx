@@ -112,7 +112,12 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   function changeMicrostep(axis: number, patch: { microsteps?: number; uniform?: boolean }) {
     setMstepErr(null);
     motorApi.setMicrostep(axis, patch)
-      .then(setMstep)
+      .then((r) => {
+        setMstep(r);
+        // 상관 파라미터 연동: 서버가 프로파일(jog/max 속도)을 새 상한으로
+        // 클램프했을 수 있다 — 화면의 슬라이더가 낡은 값을 보이지 않게 재조회.
+        motorApi.motionProfiles().then((p) => setProfiles(p.profiles)).catch(() => null);
+      })
       .catch((e) => setMstepErr(String((e as Error).message ?? e)));
   }
   const protCsTimer = useRef<number>(0);
@@ -563,8 +568,27 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                 <input type="checkbox" checked={prot.limit_stop}
                   onChange={(e) => patchProt({ limit_stop: e.target.checked })} />
                 리밋센서 감지 시 <b>즉시 정지</b>
-                <span style={{ fontSize: 10, color: TEXT_MUTED }}>(감속 없이 STEP 차단 · LIFT)</span>
+                <span style={{ fontSize: 10, color: TEXT_MUTED }}>(감속 없이 STEP 차단 · 커널 에지 버퍼로 고속 통과도 감지)</span>
               </label>
+              <div style={{ display: 'flex', gap: 14, alignItems: 'center', fontSize: 11, color: TEXT_SECONDARY, paddingLeft: 22 }}>
+                적용 축:
+                {[3, 1].map((axis) => (
+                  <label key={axis} style={{ display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}
+                         title={axis === 1
+                           ? 'BEND 디스크는 1회전에 슬롯이 여러 개라, 켜면 회전 중 슬롯마다 정지합니다. 센서 감지 테스트나 보호가 필요한 순간에만 켜세요.'
+                           : 'LIFT 상단 창 센서 — 정상 이동 중 창에 진입하면 즉시 정지합니다.'}>
+                    <input type="checkbox"
+                      checked={(prot.guard_axes ?? []).includes(axis)}
+                      onChange={(e) => {
+                        const cur = new Set(prot.guard_axes ?? []);
+                        if (e.target.checked) cur.add(axis); else cur.delete(axis);
+                        patchProt({ guard_axes: [...cur] } as never);
+                      }} />
+                    {AXIS_NAMES[axis]}
+                  </label>
+                ))}
+                <span style={{ color: TEXT_MUTED }}>(FEED는 센서 없음)</span>
+              </div>
               <div style={{ fontSize: 10, color: TEXT_MUTED }}>
                 전류 스케일 상한: PSU {prot.cs_cap ?? '—'} / 하드웨어 {prot.cs_max ?? 19}
                 &nbsp;— 상한 초과는 자동으로 깎입니다(보드 소손 방지)
@@ -632,9 +656,15 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                     <select value={m.microsteps}
                       onChange={(e) => changeMicrostep(axis, { microsteps: Number(e.target.value) })}
                       style={{ background: BG_PRIMARY, color: TEXT_SECONDARY, border: `1px solid ${BORDER}`, borderRadius: 4, fontSize: 12, padding: '2px 6px' }}>
-                      {[8, 16, 32, 64].map((u) => (
-                        <option key={u} value={u}>1/{u}</option>
-                      ))}
+                      {[8, 16, 32, 64, 128, 256].map((u) => {
+                        const ceil = m.speed_limit != null
+                          ? (m.speed_limit * m.microsteps / u) : null;
+                        return (
+                          <option key={u} value={u}>
+                            1/{u}{ceil != null ? ` (≤${ceil.toFixed(1)} u/s)` : ''}
+                          </option>
+                        );
+                      })}
                     </select>
                     <span style={{ fontSize: 11, color: TEXT_MUTED, fontFamily: 'monospace' }}>
                       {m.mm_per_step != null ? `${(m.mm_per_step).toFixed(4)} u/step` : '—'}
