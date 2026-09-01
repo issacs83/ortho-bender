@@ -22,6 +22,7 @@ obtest.py — Ortho-Bender SDK 전체 API 테스트 콘솔
   feed 10 mmps=10    초당 10 mm 로 10 mm 이송 (= 1 cm/s)
   feed 10 trace=true 이동 중 위치를 샘플링해 오버슈트·역회전 진단
   feed.step 0.01 count=20   0.01 mm 씩 20회 (절대 그리드, 분해능 검사 포함)
+  feed.step 0.1 snap=true   0.1 mm 에 가장 가까운 정수 스텝으로 스냅 — 매회 완전 등간격
   mstep              마이크로스텝(DRVCTRL.MRES) 조회 · mstep 64 로 변경
   ws motor 5         WebSocket 5초 구독
   raw GET /api/...   등록되지 않은 경로 직접 호출
@@ -1078,6 +1079,10 @@ def run_feed_step(s: Session, kv: dict) -> bool:
 
     feed.step 0.01 count=20            → 0.01 mm 씩 20회
     feed.step 0.01 count=20 delay=0.5 speed=5
+    feed.step 0.1 count=20 snap=true   → 0.1 mm 를 가장 가까운 정수 스텝으로
+                                          스냅해 매회 '완전히 같은' 스텝 수로
+                                          이송 (등간격 우선, 스케일은 실제
+                                          양자 크기를 따라감)
     """
     step_mm = kv.get("mm")
     if step_mm is None:
@@ -1097,6 +1102,21 @@ def run_feed_step(s: Session, kv: dict) -> bool:
 
     try:
         deg_per_step, mm_per_step = feed_resolution(s, mm_per_deg)
+        snap = str(kv.get("snap", "")).lower() in ("1", "true", "yes")
+        if snap and deg_per_step:
+            # 등간격 모드: 지령을 가장 가까운 '정수 스텝'으로 스냅한다.
+            # 매회 이동이 완전히 동일해지는 대신, 1회 이동량은 0.1 mm 가
+            # 아니라 스텝 양자의 정수배가 된다 — steps/mm 분모의 pi 때문에
+            # 두 그리드는 원리적으로 통약 불가능하므로(등간격 vs 평균 정확)
+            # 여기서는 등간격을 택한 것이다. 누적 좌표도 스냅된 양자로
+            # 세므로 회차 간 오차 이월이 없다.
+            n_snap = max(1, round(abs(step_deg) / deg_per_step))
+            snapped = n_snap * deg_per_step * (1 if step_deg >= 0 else -1)
+            info(f"snap: {step_mm:+.4f} mm ({abs(step_deg) / deg_per_step:.2f} step) "
+                 f"→ {n_snap} step = {snapped * mm_per_deg:+.5f} mm 등간격 "
+                 f"(스케일 {100 * (snapped * mm_per_deg / step_mm - 1):+.2f}%)")
+            step_deg = snapped
+            step_mm = snapped * mm_per_deg
         if mm_per_step:
             n_steps = abs(step_deg) / deg_per_step
             info(f"축 분해능: {deg_per_step:.5f} deg/step = {mm_per_step:.5f} mm/step")
