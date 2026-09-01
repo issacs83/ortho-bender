@@ -814,6 +814,12 @@ class MotorService:
                     be.hold_axes = set(be.hold_axes) - {cs}
             touched.append(cs)
 
+        if touched and hasattr(be, "_save_state_soon"):
+            # 정지토크/전류 변경을 상태파일에 남긴다 — 이게 없으면 재시작
+            # 때 config 기본값으로 되돌아가 "설정이 사라진" 것처럼 보인다.
+            be._hold_loaded = True
+            be._save_state_soon()
+
         idle = self._bench_jog_task is None or self._bench_jog_task.done()
         if touched and idle and not self._bench_estop_active:
             for cs in touched:
