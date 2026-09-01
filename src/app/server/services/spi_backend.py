@@ -1005,11 +1005,15 @@ class SpidevMotorBackend(MotorBackend):
                     except Exception:
                         pass
                 raise
-            # 제어된 정지(자연 종료 / 리밋 가드): 바닥값까지 감속해서
-            # 고속 조그가 0 으로 꽝 떨어지지 않게 한다(1/16 마이크로스텝
-            # 속도에서 스텝 유실/공진 위험). 가드는 램프업 도중에도 발동할
-            # 수 있으므로, PWM 이 실제로 있는 주파수에서 감속을 시작한다.
-            if clean_end and self._pwm_active:
+            # 제어된 정지(자연 종료): 바닥값까지 감속해서 고속 조그가 0 으로
+            # 꽝 떨어지지 않게 한다(1/16 마이크로스텝 속도에서 스텝 유실/공진
+            # 위험). 단, **리밋 가드 발동은 예외 — 즉시 정지한다**: 감속
+            # 램프는 최악 _RAMP_DOWN_MAX_S(1 s)를 끌며 그동안 축이 리밋 창을
+            # 지나 기구 한계로 계속 진행한다. 리밋을 밟은 시점에는 위치
+            # 충실도(감속으로 지키는 것)보다 더 못 가게 하는 것이 우선이고,
+            # 어차피 datum 은 스위치에 대고 다시 잡는다. finally 가 바로
+            # _pwm_disable 로 STEP 을 끊는다.
+            if clean_end and not guard["hit"] and self._pwm_active:
                 cur_hz = freq_hz
                 if self._pwm_last_period_ns:
                     cur_hz = min(freq_hz, max(floor_hz,

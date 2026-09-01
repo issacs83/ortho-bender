@@ -548,10 +548,12 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
           {!prot && <div style={{ fontSize: 12, color: TEXT_MUTED }}>Loading…</div>}
           {prot && (() => { const csCap = prot.cs_cap ?? prot.cs_max ?? 19; return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <label style={{ fontSize: 12, color: TEXT_SECONDARY, display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
+              <label style={{ fontSize: 12, color: TEXT_SECONDARY, display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}
+                     title="이동 중 리밋 스위치가 감지되면 감속 없이 STEP을 즉시 차단합니다 (에지 트리거 — 창 안에서 출발하면 창을 벗어난 뒤부터 장전). 현재 LIFT에 적용됩니다. BEND는 디스크에 슬롯이 여러 개라 이 가드를 쓰면 슬롯마다 멈추므로 제외, FEED는 센서가 없습니다.">
                 <input type="checkbox" checked={prot.limit_stop}
                   onChange={(e) => patchProt({ limit_stop: e.target.checked })} />
-                이동 중 리밋센서 감지 시 자동 정지
+                리밋센서 감지 시 <b>즉시 정지</b>
+                <span style={{ fontSize: 10, color: TEXT_MUTED }}>(감속 없이 STEP 차단 · LIFT)</span>
               </label>
               <div style={{ fontSize: 10, color: TEXT_MUTED }}>
                 전류 스케일 상한: PSU {prot.cs_cap ?? '—'} / 하드웨어 {prot.cs_max ?? 19}
