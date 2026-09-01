@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
-import { motorApi, diagApi, type MotorStatus, type AxisStatus, type DriverProbeResult, type MotionProfile, type ProtectionSettings, type AxisHold, type StallGuardSettings } from '../api/client';
+import { motorApi, diagApi, type MotorStatus, type AxisStatus, type DriverProbeResult, type MotionProfile, type ProtectionSettings, type AxisHold, type StallGuardSettings, type MicrostepMap } from '../api/client';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { SliderInput } from '../components/ui/SliderInput';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -105,6 +105,16 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   }
   // Protection / holding-torque settings (server-side runtime state)
   const [prot, setProt] = useState<ProtectionSettings | null>(null);
+  // 축별 분주비 (DRVCTRL.MRES)
+  const [mstep, setMstep] = useState<MicrostepMap | null>(null);
+  const [mstepErr, setMstepErr] = useState<string | null>(null);
+  useEffect(() => { motorApi.microstep().then(setMstep).catch(() => null); }, []);
+  function changeMicrostep(axis: number, microsteps: number) {
+    setMstepErr(null);
+    motorApi.setMicrostep(axis, microsteps)
+      .then(setMstep)
+      .catch((e) => setMstepErr(String((e as Error).message ?? e)));
+  }
   const protCsTimer = useRef<number>(0);
   useEffect(() => { motorApi.protection().then(setProt).catch(() => null); }, []);
   // Per-axis holding torque. The server merges partial axis maps, so we
@@ -601,6 +611,43 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                 })}
             </div>
           ); })()}
+        </div>
+        <div style={cardStyle}>
+          <h3 style={{ margin: '0 0 4px', fontSize: 14, color: TEXT_PRIMARY }}>분주비 · Microstep</h3>
+          <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 10 }}>
+            분해능 ↔ 속도 상한의 트레이드오프입니다. 값을 바꾸면 위치 카운터와
+            steps/unit이 <b>같은 배율로 자동 조정</b>되고(물리 위치 불변), 속도 상한
+            (= 8000 Hz ÷ steps/unit)이 따라 바뀝니다. 칩에는 다음 이동 시 적용되며,
+            <b>이동 중에는 변경이 거부</b>됩니다.
+          </div>
+          {!mstep && <div style={{ fontSize: 12, color: TEXT_MUTED }}>Loading…</div>}
+          {mstepErr && <div style={{ fontSize: 11, color: '#f87171', marginBottom: 6 }}>{mstepErr}</div>}
+          {mstep && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {Object.entries(mstep).map(([axisStr, m]) => {
+                const axis = Number(axisStr);
+                return (
+                  <div key={axis} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '6px 8px', background: BG_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 6 }}>
+                    <span style={{ color: AXIS_COLORS[axis], fontWeight: 600, fontSize: 12, width: 58 }}>{AXIS_NAMES[axis]}</span>
+                    <select value={m.microsteps}
+                      onChange={(e) => changeMicrostep(axis, Number(e.target.value))}
+                      style={{ background: BG_PRIMARY, color: TEXT_SECONDARY, border: `1px solid ${BORDER}`, borderRadius: 4, fontSize: 12, padding: '2px 6px' }}>
+                      {[8, 16, 32, 64].map((u) => (
+                        <option key={u} value={u}>1/{u}</option>
+                      ))}
+                    </select>
+                    <span style={{ fontSize: 11, color: TEXT_MUTED, fontFamily: 'monospace' }}>
+                      {m.mm_per_step != null ? `${(m.mm_per_step).toFixed(4)} u/step` : '—'}
+                    </span>
+                    <span style={{ fontSize: 11, color: TEXT_MUTED, fontFamily: 'monospace', marginLeft: 'auto' }}
+                          title="속도 상한 = 8000 Hz ÷ steps/unit — 분주비를 올리면 그만큼 줄어듭니다">
+                      ≤ {m.speed_limit != null ? m.speed_limit.toFixed(1) : '—'} u/s
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
         <div style={cardStyle}>
           <h3 style={{ margin: '0 0 4px', fontSize: 14, color: TEXT_PRIMARY }}>Move To Position</h3>

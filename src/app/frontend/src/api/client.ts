@@ -24,6 +24,15 @@ export interface AxisSignals {
   sg_value?: number;       // StallGuard2 load reading 0-1023 (SGT tuning)
 }
 
+/** GET/PUT /api/motor/microstep — 축별 분주비 상태. */
+export interface MicrostepAxis {
+  microsteps: number;        // 16, 32, ...
+  steps_per_unit: number;
+  mm_per_step: number | null;
+  speed_limit: number | null;
+}
+export type MicrostepMap = Record<string, MicrostepAxis>;
+
 /** GET/PUT /api/motor/protection — motion protection + holding torque. */
 export interface AxisHold {
   hold_enabled: boolean;      // idle holding current on this axis
@@ -282,6 +291,17 @@ export const motorApi = {
     request("/api/motor/stallguard", {
       method: "PUT",
       body: JSON.stringify(patch),
+    }),
+
+  /** GET/PUT /api/motor/microstep — 축별 분주비(MRES). 값 변경 시 위치
+   *  카운터와 steps_per_unit이 같은 배율로 자동 조정된다. */
+  microstep: (): Promise<MicrostepMap> =>
+    request("/api/motor/microstep"),
+
+  setMicrostep: (axis: number, microsteps: number): Promise<MicrostepMap> =>
+    request("/api/motor/microstep", {
+      method: "PUT",
+      body: JSON.stringify({ axis, microsteps }),
     }),
 
   protection: (): Promise<ProtectionSettings> =>
