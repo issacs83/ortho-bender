@@ -336,7 +336,10 @@ class MotorService:
         dist_limit = cal.distance_limit(axis) if cal else 50.0
         speed_lim = cal.speed_limit(axis) if cal else 40.0
         clamped_distance = max(-dist_limit, min(dist_limit, distance))
-        steps = max(1, int(abs(clamped_distance) * steps_per_unit))
+        # 반올림이어야 한다: 절단(int)이면 정수 스텝 지령이 부동소수점 표현
+        # (4.0 -> 3.9999…) 때문에 한 스텝 모자라게 나가고, 모든 착지가 짧은
+        # 쪽으로 편향된다 — 등간격 스냅 이송에서 4/3/5 스텝이 섞이던 원인.
+        steps = max(1, int(round(abs(clamped_distance) * steps_per_unit)))
         speed_clamped = min(abs(speed), speed_lim, self._max_speed_for(axis))
         freq = int(speed_clamped * steps_per_unit)
         freq = max(200, min(freq, 8000))
@@ -978,7 +981,7 @@ class MotorService:
                 # 잔차의 정수 스텝을 한 번 내보내고 끝나므로, 위 주석의
                 # "램프 잔차 교환" 문제는 그대로 피한다. 서브스텝 잔차
                 # (<1 step)는 여전히 남는다 — 스텝은 쪼갤 수 없다.
-                if int(abs(gap) * spu) >= 1:
+                if int(abs(gap) * spu + 1e-6) >= 1:
                     await self._run_motion(
                         self._bench_pulse(int(axis), gap, speed))
                 break
