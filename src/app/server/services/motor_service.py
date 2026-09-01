@@ -961,14 +961,26 @@ class MotorService:
         (230 mm LIFT 이동이 100 mm 에서 끝났다). 그래서 절대 이동은 목표에
         도달할 때까지 여러 조각으로 나눠 실행하며, 매 회차마다 카운터를 다시
         읽으므로 잘린 조각은 그냥 다음 조각을 하나 더 받는다."""
-        # 착지 허용 오차: 모터 2 스텝. 이보다 더 잘게 쫓아가 봐야 보정 회차마다
-        # 자기 램프가 붙으므로 서브스텝 잔차를 다른 잔차로 바꾸는 것일 뿐이다.
+        # 착지 허용 오차: 모터 2 스텝. 이보다 더 잘게 램프로 쫓아가 봐야 보정
+        # 회차마다 자기 램프가 붙으므로 서브스텝 잔차를 다른 잔차로 바꾸는
+        # 것일 뿐이다.
         tol = max(2.0 / spu, 0.01)
         prev_gap = None
         for _ in range(40):
             current = self._spi_backend.positions.get(cs, 0) / spu
             gap = float(position) - current
             if abs(gap) < tol:
+                # 허용오차 안이라도 온전한 스텝이 남아 있으면 그만큼은 낸다.
+                # 이게 없으면 2 스텝 미만의 절대 이동 지령(63.662 steps/unit
+                # 의 FEED 에서 0.03 mm 급 미세 이송)이 회차마다 통째로
+                # 무시된다 — 2026-09-01 obtest feed.step 실측에서 0.03 mm
+                # x20 중 13회가 무동작이었다. 램프를 다시 쫓는 게 아니라
+                # 잔차의 정수 스텝을 한 번 내보내고 끝나므로, 위 주석의
+                # "램프 잔차 교환" 문제는 그대로 피한다. 서브스텝 잔차
+                # (<1 step)는 여전히 남는다 — 스텝은 쪼갤 수 없다.
+                if int(abs(gap) * spu) >= 1:
+                    await self._run_motion(
+                        self._bench_pulse(int(axis), gap, speed))
                 break
             if prev_gap is not None and abs(gap) > abs(prev_gap) * 0.7:
                 # 이번 회차가 거리를 거의 줄이지 못했다 — 막혔거나, 스톨했거나,
