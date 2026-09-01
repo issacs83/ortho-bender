@@ -484,11 +484,15 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
             <h3 style={{ margin: 0, fontSize: 14, color: TEXT_PRIMARY }}>Per-Axis Motion Profile</h3>
             <button
-              title="전 축 프로파일을 출고 기본값(Speed 10 / Vmax 40 / Step 1 / Accel·Decel 40 / linear)으로 되돌립니다. jog/max 속도는 현재 분주비의 속도 상한으로 자동 클램프됩니다."
+              title="모터 튜닝을 축별 최적 기준선으로 되돌립니다 — 분주비: FEED 1/32+완전균일, BEND/LIFT 1/16 · 프로파일: FEED 10/40·40/40, BEND 20/90·80/80, LIFT 5/25·40/80(중력 제동 2배), 전부 linear. 속도는 분주비 상한으로 클램프됩니다. 보호 설정(리밋/정지토크)은 유지됩니다."
               onClick={() => {
-                if (!window.confirm('전 축 모션 프로파일을 기본값으로 초기화할까요?')) return;
+                if (!window.confirm('모터 튜닝(분주비·완전균일·프로파일)을 축별 최적 기준선으로 초기화할까요?\n보호 설정은 유지됩니다.')) return;
                 motorApi.resetMotionProfiles()
-                  .then((r) => { setProfiles(r.profiles); refreshCal(); })
+                  .then((r) => {
+                    setProfiles(r.profiles);
+                    if (r.microstep) setMstep(r.microstep as never);
+                    refreshCal();
+                  })
                   .catch(() => null);
               }}
               style={{ background: 'transparent', border: `1px solid ${BORDER}`, color: TEXT_SECONDARY, borderRadius: 4, fontSize: 11, padding: '3px 10px', cursor: 'pointer' }}>

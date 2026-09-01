@@ -299,7 +299,7 @@ export const motorApi = {
    *  카운터와 steps_per_unit이 같은 배율로 자동 조정된다. */
   /** POST /api/motor/profiles/reset — 전 축 프로파일 출고 기본값 복원
    *  (jog/max 는 현재 분주비의 속도 상한으로 클램프됨). */
-  resetMotionProfiles: (): Promise<{ profiles: Record<number, MotionProfile> }> =>
+  resetMotionProfiles: (): Promise<{ profiles: Record<number, MotionProfile>; microstep?: MicrostepMap }> =>
     request("/api/motor/profiles/reset", { method: "POST", body: "{}" }),
 
   microstep: (): Promise<MicrostepMap> =>
