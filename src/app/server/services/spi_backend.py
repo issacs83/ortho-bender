@@ -858,6 +858,15 @@ class SpidevMotorBackend(MotorBackend):
             self.guard_tripped = False
             self._active_axis = axis
             await self._yield_held(axis)   # 공유 STEP: 유지 축을 풀어준다
+            if self._chip_active.get(axis):
+                # 통전 중(유지)이던 칩은 침묵 -> 재초기화를 거쳐 시작한다.
+                # 벤치 실측(2026-09-02): 계속 통전된 칩에 새 STEP 스트림을
+                # 붙이면 기동하지 못하는 경우가 있다 — hold CS14 상태의
+                # LIFT 기동 불가, 전 축 hold 에서 같은 축 방향 반전 불가,
+                # 반면 침묵을 거친 시작(축 전환 후 복귀, hold OFF)은 항상
+                # 성공. 초퍼 off/on 2프레임(~0.5 ms)의 비용으로 시작 조건을
+                # '항상 침묵 -> init' 하나로 단일화한다.
+                await self._silence_chip(axis)
             self._set_dir(axis, direction)
             await asyncio.sleep(_DIR_SETUP_S)
             # 구동 전 폴트 확인. status 는 init 배치 자체에서 돌아온다 —
@@ -1463,6 +1472,8 @@ class SpidevMotorBackend(MotorBackend):
         cap_before = self._cs_scale_cap
         try:
             await self._yield_held(cs)   # 공유 STEP: 유지 축을 풀어준다
+            if self._chip_active.get(cs):
+                await self._silence_chip(cs)   # 시작 조건 단일화 (pulse_step 참조)
             if reduced_cs > 0:
                 # 상한을 좁힌다(넓히는 일은 없다) — _init_chip 이 호밍
                 # 이동에 더 순한 CS 를 쓰게 하고, finally 에서 복원한다.
