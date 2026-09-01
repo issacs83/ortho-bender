@@ -481,7 +481,20 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, marginBottom: 16 }}>
         <div style={{ ...cardStyle, gridColumn: '1 / -1' }}>
-          <h3 style={{ margin: '0 0 4px', fontSize: 14, color: TEXT_PRIMARY }}>Per-Axis Motion Profile</h3>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <h3 style={{ margin: 0, fontSize: 14, color: TEXT_PRIMARY }}>Per-Axis Motion Profile</h3>
+            <button
+              title="전 축 프로파일을 출고 기본값(Speed 10 / Vmax 40 / Step 1 / Accel·Decel 40 / linear)으로 되돌립니다. jog/max 속도는 현재 분주비의 속도 상한으로 자동 클램프됩니다."
+              onClick={() => {
+                if (!window.confirm('전 축 모션 프로파일을 기본값으로 초기화할까요?')) return;
+                motorApi.resetMotionProfiles()
+                  .then((r) => { setProfiles(r.profiles); refreshCal(); })
+                  .catch(() => null);
+              }}
+              style={{ background: 'transparent', border: `1px solid ${BORDER}`, color: TEXT_SECONDARY, borderRadius: 4, fontSize: 11, padding: '3px 10px', cursor: 'pointer' }}>
+              초기화
+            </button>
+          </div>
           <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 10 }}>
             All values in axis-native units (FEED/LIFT = mm, BEND/ROTATE = deg).
             Vmax is the machine velocity limit; Accel/Decel shape the ramp;
@@ -497,26 +510,37 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
               if (!p) return null;
               const unit = AXIS_PHYSICAL_UNIT[ax.axis] ?? 'units';
               const numBox = (
-                value: number, min: number, max: number, step: number,
+                value: number, min: number, maxRaw: number, step: number,
                 onVal: (v: number) => void, width = 64,
-              ) => (
-                <input
-                  type="number" value={value} min={min} max={max} step={step}
-                  onChange={(e) => {
-                    if (e.target.value === '') return;
-                    const v = Number(e.target.value);
-                    // Clamp instead of reject: typing "250" must not
-                    // silently persist the "25" prefix.
-                    if (Number.isFinite(v)) onVal(Math.min(max, Math.max(min, v)));
-                  }}
-                  style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '4px 6px', borderRadius: 4, fontSize: 12, width }}
-                />
-              );
+              ) => {
+                // 상한이 NaN/undefined 로 오면 브라우저 스피너의 위쪽
+                // 화살표가 무한히 올라간다(max 속성 미적용) — 검증된
+                // 봉투 상한 360 으로 방어한다. 아래 클램프도 같은 값 사용.
+                const max = Number.isFinite(maxRaw) && maxRaw > min ? maxRaw : 360;
+                return (
+                  <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+                    <input
+                      type="number" value={value} min={min} max={max} step={step}
+                      onChange={(e) => {
+                        if (e.target.value === '') return;
+                        const v = Number(e.target.value);
+                        // Clamp instead of reject: typing "250" must not
+                        // silently persist the "25" prefix.
+                        if (Number.isFinite(v)) onVal(Math.min(max, Math.max(min, v)));
+                      }}
+                      style={{ background: BG_PRIMARY, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, padding: '4px 6px', borderRadius: 4, fontSize: 12, width }}
+                    />
+                    <span style={{ fontSize: 9, color: TEXT_MUTED, fontFamily: 'monospace' }}>
+                      {min}–{Number(max.toFixed(1))}
+                    </span>
+                  </span>
+                );
+              };
               return (
                 <div key={ax.axis} style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', padding: '6px 8px', background: BG_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 6 }}>
                   <span style={{ color: AXIS_COLORS[ax.axis], fontWeight: 600, fontSize: 12, width: 58 }}>{AXIS_NAMES[ax.axis]}</span>
                   <label style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
-                    Speed {numBox(p.jog_speed, 0.1, axisMaxSpeed(ax.axis), 0.5, (v) => patchProfile(ax.axis, { jog_speed: v }))} {unit}/s
+                    Speed {numBox(p.jog_speed, 0.1, Math.min(p.max_speed ?? 360, axisMaxSpeed(ax.axis)), 0.5, (v) => patchProfile(ax.axis, { jog_speed: v }))} {unit}/s
                   </label>
                   <label title="Machine velocity limit — every motion command on this axis is clamped to it (GRBL $110-112 analog)" style={{ fontSize: 11, color: TEXT_MUTED, display: 'flex', gap: 4, alignItems: 'center' }}>
                     Vmax {numBox(p.max_speed ?? 40, 0.1, axisMaxSpeed(ax.axis), 0.5, (v) => patchProfile(ax.axis, { max_speed: v }))} {unit}/s

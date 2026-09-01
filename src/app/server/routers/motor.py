@@ -263,6 +263,20 @@ async def get_motion_profiles(request: Request) -> ApiResponse:
     return ok({"profiles": _profiles(request).all()})
 
 
+@router.post("/profiles/reset", response_model=ApiResponse)
+async def reset_motion_profiles(request: Request) -> ApiResponse:
+    """전 축 모션 프로파일을 출고 기본값으로 초기화한다.
+
+    jog/max 속도는 현재 분주비의 속도 상한(8000 Hz / steps_per_unit)으로
+    함께 클램프된다 — UI 초기화 버튼의 백엔드.
+    """
+    cal = getattr(request.app.state, "calibration_service", None)
+    ceilings = None
+    if cal is not None:
+        ceilings = {a: cal.speed_limit(a) for a in (0, 1, 2, 3)}
+    return ok({"profiles": _profiles(request).reset(ceilings)})
+
+
 @router.put("/profiles/{axis}", response_model=ApiResponse)
 async def update_motion_profile(
     axis: int, body: MotionProfileUpdate, request: Request,
