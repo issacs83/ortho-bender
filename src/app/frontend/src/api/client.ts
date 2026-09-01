@@ -30,6 +30,7 @@ export interface MicrostepAxis {
   steps_per_unit: number;
   mm_per_step: number | null;
   speed_limit: number | null;
+  uniform: boolean;          // 완전 균일: 지령 거리를 정수 스텝으로 스냅
 }
 export type MicrostepMap = Record<string, MicrostepAxis>;
 
@@ -298,10 +299,10 @@ export const motorApi = {
   microstep: (): Promise<MicrostepMap> =>
     request("/api/motor/microstep"),
 
-  setMicrostep: (axis: number, microsteps: number): Promise<MicrostepMap> =>
+  setMicrostep: (axis: number, patch: { microsteps?: number; uniform?: boolean }): Promise<MicrostepMap> =>
     request("/api/motor/microstep", {
       method: "PUT",
-      body: JSON.stringify({ axis, microsteps }),
+      body: JSON.stringify({ axis, ...patch }),
     }),
 
   protection: (): Promise<ProtectionSettings> =>

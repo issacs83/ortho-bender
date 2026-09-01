@@ -951,33 +951,46 @@ class MotorService:
                 continue
             spu = (self._calibration.steps_per_unit(axis)
                    if self._calibration else 200.0)
+            snap_axes = getattr(self._spi_backend, "snap_axes", None) or set()
             out[str(axis)] = {
                 "microsteps": self._spi_backend.usteps_for(cs),
                 "steps_per_unit": spu,
                 "mm_per_step": (1.0 / spu) if spu else None,
                 "speed_limit": (self._calibration.speed_limit(axis)
                                 if self._calibration else None),
+                "uniform": int(axis) in snap_axes,
             }
         return out
 
-    async def set_microstep(self, axis: int, microsteps: int) -> dict:
-        """한 축의 분주비를 바꾼다 — 카운터·캘리브레이션이 같은 배율로 따라간다.
+    async def set_microstep(self, axis: int, microsteps: int | None = None,
+                            uniform: bool | None = None) -> dict:
+        """한 축의 분주비·완전 균일 모드를 바꾼다.
 
-        모션 중 변경은 거부한다(칩 재초기화가 진행 중인 펄스와 경합한다).
-        속도 상한은 steps_per_unit 유도값이라 자동 추종한다.
+        microsteps: 카운터·캘리브레이션이 같은 배율로 따라간다. 모션 중
+        변경은 거부(칩 재초기화가 진행 중인 펄스와 경합). 속도 상한은
+        steps_per_unit 유도값이라 자동 추종.
+        uniform: move_to 지령 거리를 정수 스텝으로 스냅하는 축별 정책 —
+        모션과 경합하지 않으므로 언제든 바꿀 수 있고, 영속화된다.
         """
         if not self.has_bench or not hasattr(self._spi_backend, "set_axis_microstep"):
             raise RuntimeError("microstep control is bench-only")
         cs = self._axis_to_cs.get(int(axis))
         if cs is None:
             raise ValueError(f"Axis {axis} is not present on the bench")
-        st = await self.get_status()
-        if any(a.velocity for a in st.axes) or self._queue_depth:
-            raise RuntimeError("cannot change microstep while motion is active")
-        ratio = self._spi_backend.set_axis_microstep(cs, int(microsteps))
-        if ratio != 1.0 and self._calibration:
-            self._calibration.update(
-                int(axis), self._calibration.steps_per_unit(int(axis)) * ratio)
+        if microsteps is not None:
+            st = await self.get_status()
+            if any(a.velocity for a in st.axes) or self._queue_depth:
+                raise RuntimeError("cannot change microstep while motion is active")
+            ratio = self._spi_backend.set_axis_microstep(cs, int(microsteps))
+            if ratio != 1.0 and self._calibration:
+                self._calibration.update(
+                    int(axis), self._calibration.steps_per_unit(int(axis)) * ratio)
+        if uniform is not None:
+            snap = set(getattr(self._spi_backend, "snap_axes", None) or set())
+            (snap.add if uniform else snap.discard)(int(axis))
+            self._spi_backend.snap_axes = snap
+            if hasattr(self._spi_backend, "_save_state_soon"):
+                self._spi_backend._save_state_soon()
         return self.microstep_status()
 
     async def move_to(self, axis: int, position: float, speed: float) -> MotorStatusResponse:
@@ -1007,6 +1020,20 @@ class MotorService:
                          axis)
                 return await self.get_status()
             self._ensure_not_estop("move_to")
+            snap_axes = getattr(self._spi_backend, "snap_axes", None) or set()
+            if int(axis) in snap_axes:
+                # '완전 균일' 축: 지령 거리(현재 위치 기준)를 가장 가까운
+                # 정수 스텝으로 스냅한다. 같은 거리를 반복 지령하는
+                # 클라이언트는 매회 정확히 같은 스텝 수를 얻는다(카운터가
+                # 항상 스텝 격자 위라 델타가 같으면 반올림도 같다). 절대
+                # 좌표 래더를 보내는 클라이언트에는 절대 그리드(±0.5 스텝
+                # 추종)로 자연 퇴화하며 폭주하지 않는다. mm 그리드와 스텝
+                # 그리드는 pi 때문에 통약 불가능하므로, 이 모드는 '평균
+                # 정확' 대신 '등간격'을 택한 것이다 — 실이동 위치가 응답에
+                # 그대로 보고된다.
+                current = self._spi_backend.positions.get(cs, 0) / spu
+                whole = round((float(position) - current) * spu)
+                position = current + whole / spu
             return await self._move_to_locked(axis, position, speed, cs, spu)
         finally:
             self._queue_lock.release()
