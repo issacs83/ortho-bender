@@ -103,3 +103,22 @@ async def test_normal_move_unaffected(svc):
     """정상 크기 이동(수백 스텝)은 이전과 동일하게 목표 ±1 스텝에 착지."""
     await svc.move_to(FEED_AXIS, 5.0, speed=50)
     assert abs(_pos(svc) - 5.0) * SPU <= 1.0
+
+
+@pytest.mark.parametrize("step_units", [0.03, 0.018])
+async def test_two_hundred_reps_all_move(svc, step_units):
+    """20회 x 10세트 = 200회 절대 그리드 반복 — 온전한 스텝이 남는 지령은
+    한 번도 빠짐없이 움직여야 한다 (사용자 요구 사양)."""
+    start = _pos(svc)
+    pos = start
+    zero_moves = 0
+    for i in range(1, 201):
+        target = start + step_units * i
+        before = pos
+        await svc.move_to(FEED_AXIS, target, speed=5)
+        pos = _pos(svc)
+        if abs(target - before) * SPU >= 1.0 and pos == before:
+            zero_moves += 1
+    assert zero_moves == 0, f"{zero_moves}/200 회 무동작"
+    err_steps = abs((pos - start) - step_units * 200) * SPU
+    assert err_steps <= 1.0, f"200회 누적 오차 {err_steps:.2f} step"
