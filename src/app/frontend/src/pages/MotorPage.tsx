@@ -109,9 +109,9 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
   const [mstep, setMstep] = useState<MicrostepMap | null>(null);
   const [mstepErr, setMstepErr] = useState<string | null>(null);
   useEffect(() => { motorApi.microstep().then(setMstep).catch(() => null); }, []);
-  function changeMicrostep(axis: number, microsteps: number) {
+  function changeMicrostep(axis: number, patch: { microsteps?: number; uniform?: boolean }) {
     setMstepErr(null);
-    motorApi.setMicrostep(axis, microsteps)
+    motorApi.setMicrostep(axis, patch)
       .then(setMstep)
       .catch((e) => setMstepErr(String((e as Error).message ?? e)));
   }
@@ -630,7 +630,7 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                   <div key={axis} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '6px 8px', background: BG_PRIMARY, border: `1px solid ${BORDER}`, borderRadius: 6 }}>
                     <span style={{ color: AXIS_COLORS[axis], fontWeight: 600, fontSize: 12, width: 58 }}>{AXIS_NAMES[axis]}</span>
                     <select value={m.microsteps}
-                      onChange={(e) => changeMicrostep(axis, Number(e.target.value))}
+                      onChange={(e) => changeMicrostep(axis, { microsteps: Number(e.target.value) })}
                       style={{ background: BG_PRIMARY, color: TEXT_SECONDARY, border: `1px solid ${BORDER}`, borderRadius: 4, fontSize: 12, padding: '2px 6px' }}>
                       {[8, 16, 32, 64].map((u) => (
                         <option key={u} value={u}>1/{u}</option>
@@ -639,6 +639,12 @@ function PositionControl({ motorStatus }: { motorStatus: MotorStatus | null }) {
                     <span style={{ fontSize: 11, color: TEXT_MUTED, fontFamily: 'monospace' }}>
                       {m.mm_per_step != null ? `${(m.mm_per_step).toFixed(4)} u/step` : '—'}
                     </span>
+                    <label style={{ fontSize: 11, color: TEXT_SECONDARY, display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}
+                           title="이동 지령의 거리(현재 위치 기준)를 가장 가까운 정수 스텝으로 스냅합니다. 같은 거리를 반복 지령하면 매회 정확히 같은 스텝 수가 나갑니다. 1회 이동량은 스텝 양자의 정수배가 되며(예: 0.1 지령 → 8스텝=0.1048), 실이동 위치가 그대로 보고됩니다.">
+                      <input type="checkbox" checked={m.uniform}
+                        onChange={(e) => changeMicrostep(axis, { uniform: e.target.checked })} />
+                      완전 균일
+                    </label>
                     <span style={{ fontSize: 11, color: TEXT_MUTED, fontFamily: 'monospace', marginLeft: 'auto' }}
                           title="속도 상한 = 8000 Hz ÷ steps/unit — 분주비를 올리면 그만큼 줄어듭니다">
                       ≤ {m.speed_limit != null ? m.speed_limit.toFixed(1) : '—'} u/s

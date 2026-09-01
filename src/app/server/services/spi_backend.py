@@ -294,6 +294,11 @@ class SpidevMotorBackend(MotorBackend):
         self.hold_cs: int = 8                       # 전 축 공통 기본값
         self.hold_cs_map: dict[int, int] = {}       # cs 별 재정의
 
+        # '완전 균일' 축 (axis id 기준, cs 아님 — move_to 정책이라 서비스
+        # 층 개념이지만 영속화를 위치 상태와 함께 하려고 여기 산다).
+        # None = 저장값 없음(첫 부팅) — main.py 가 기본값 {FEED} 를 넣는다.
+        self.snap_axes: set[int] | None = None
+
         # cs 별 마이크로스텝 분해능(DRVCTRL.MRES 코드, 0=1/256 … 4=1/16).
         # 비어 있으면 전 축이 DRVCTRL_DEFAULT(1/16)를 쓴다. FEED 처럼 분해능이
         # 속도보다 귀한 축만 main.py 가 골라서 올린다 — MRES 를 바꾸면
@@ -374,6 +379,8 @@ class SpidevMotorBackend(MotorBackend):
                     self.sg_filter = bool(d["sg_filter"])
                 self.mres_map = {int(k): int(v)
                                  for k, v in (d.get("mres") or {}).items()}
+                if "snap_axes" in d:
+                    self.snap_axes = {int(x) for x in d["snap_axes"]}
             except (TypeError, ValueError):
                 self.sgt_map = {}
             log.info("Restored motor positions from %s: %s (homed=%s)",
@@ -404,6 +411,7 @@ class SpidevMotorBackend(MotorBackend):
             # 분주비도 영속화한다 — 분주비를 바꾸면 위치 카운터와 캘리브레이션이
             # 같은 배율로 함께 바뀌므로, 이 셋은 재시작을 같이 살아남아야 한다.
             "mres": {str(k): int(v) for k, v in self.mres_map.items()},
+            "snap_axes": sorted(self.snap_axes or []),
         }
 
     def _write_state(self, data: dict) -> None:
