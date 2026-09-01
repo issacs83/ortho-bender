@@ -197,7 +197,35 @@ cd src/app/server && pytest      # 여전히 부분 실행 — 루트 tests/ 가
 한쪽만 따로 보고 싶을 때만 `test py-server` / `test py-root` 를 쓴다.
 진단용이며, 이 둘의 결과로 "통과"를 판단하지 않는다.
 
-## 8. 보드 IP
+## 8. 단축키 제안
+
+사용자 `keybindings.json` 에 추가한다 (`Ctrl+Shift+P` → *Preferences: Open
+Keyboard Shortcuts (JSON)*). `args` 는 `tools/dev.sh setup` 이 생성하는
+`.vscode/tasks.json` 의 레이블과 글자 단위로 일치해야 한다:
+
+```json
+[
+  { "key": "ctrl+alt+d", "command": "workbench.action.tasks.runTask",
+    "args": "배포: server + 서비스 재시작" },
+  { "key": "ctrl+alt+s", "command": "workbench.action.tasks.runTask",
+    "args": "보드: 상태 확인" },
+  { "key": "ctrl+alt+t", "command": "workbench.action.tasks.runTask",
+    "args": "테스트: python (mock)" },
+  { "key": "ctrl+alt+p", "command": "workbench.action.tasks.runTask",
+    "args": "보드: python 디버그 서비스 ON" }
+]
+```
+
+기본 그룹 단축키는 이미 배선돼 있다 — `Ctrl+Shift+B` 는 "빌드: tests
+(Debug)", *Run Test Task* 는 "테스트: python (mock)" 이 기본이다.
+
+디버그 서비스를 켰으면(`ctrl+alt+p`) 끝나고 반드시 "보드: python 디버그
+서비스 OFF" 를 실행할 것 — debugpy 아래에서는 백엔드 기동이 40–60 초라,
+켠 채 잊으면 다음 사람이 죽은 보드로 오인한다.
+
+---
+
+## 9. 보드 IP
 
 IP 는 움직인다. `tools/dev.sh` 는 `.board-ip` 캐시의 **:22(SSH)** 가 열려 있는지로
 판정하고, 닫혀 있으면 `tools/find-board.py` 로 다시 찾는다. `:8000` 을 기준으로
