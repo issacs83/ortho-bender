@@ -104,6 +104,20 @@ DEFAULT_PROFILE: dict = {
     "shape": "linear",
 }
 
+# 축별 "최적" 기본값 — 초기화 버튼이 되돌아가는 지점. 이 벤치의 실측
+# (2026-08~09 캠페인)에서 고른 값이며 DEFAULT_PROFILE 위에 겹쳐진다:
+#   FEED — 미세이송이 존재 이유인 축. 이송 실사용 10 mm/s, 상한 40.
+#   BEND — 토크 축. 가감속 80 (기존 운용값), 벤딩 속도 20, 상한 90
+#          (실측 스톨 여유는 347 이지만 벤딩 품질 여유로 후퇴).
+#   LIFT — 중력 축. 보수적 속도(5/25)에 제동(decel)을 가속의 2배로 —
+#          내려갈 때 관성+중력을 이겨야 한다.
+AXIS_OPTIMAL: dict[int, dict] = {
+    0: {"jog_speed": 10.0, "max_speed": 40.0, "accel": 40.0, "decel": 40.0},
+    1: {"jog_speed": 20.0, "max_speed": 90.0, "accel": 80.0, "decel": 80.0},
+    2: {},                                        # ROTATE 미장착 — 기본값
+    3: {"jog_speed": 5.0,  "max_speed": 25.0, "accel": 40.0, "decel": 80.0},
+}
+
 # 물리 단위 도입 이전의 상태 파일을 마이그레이션할 때 쓰는 기본 캘리브레이션
 # 가정값(accel_hz_s → accel). CalibrationService 의 기본값과 같다.
 _LEGACY_STEPS_PER_UNIT = 200.0
@@ -218,6 +232,7 @@ class MotionProfileService:
         """
         for axis in list(self._profiles.keys()):
             prof = dict(DEFAULT_PROFILE)
+            prof.update(AXIS_OPTIMAL.get(int(axis), {}))
             ceil = (speed_ceilings or {}).get(int(axis))
             if ceil:
                 prof["jog_speed"] = min(prof["jog_speed"], round(ceil, 3))

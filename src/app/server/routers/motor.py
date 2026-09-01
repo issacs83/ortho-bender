@@ -265,16 +265,30 @@ async def get_motion_profiles(request: Request) -> ApiResponse:
 
 @router.post("/profiles/reset", response_model=ApiResponse)
 async def reset_motion_profiles(request: Request) -> ApiResponse:
-    """전 축 모션 프로파일을 출고 기본값으로 초기화한다.
+    """모터 튜닝 전체를 축별 최적 기준선으로 초기화한다 (UI 초기화 버튼).
 
-    jog/max 속도는 현재 분주비의 속도 상한(8000 Hz / steps_per_unit)으로
-    함께 클램프된다 — UI 초기화 버튼의 백엔드.
+    1. 분주비·완전균일을 권장 기준으로: FEED 1/32 + 완전균일 ON (미세이송
+       0.0079 mm/step, 상한 62.8 mm/s), BEND/LIFT 1/16. 위치 카운터와
+       steps_per_unit 은 분주비 변경 규칙대로 같은 배율로 함께 조정된다.
+    2. 모션 프로파일을 축별 최적값(AXIS_OPTIMAL)으로. jog/max 는 1번 적용
+       후의 속도 상한으로 클램프된다.
+    보호 설정(리밋 가드·정지토크)은 안전 관련 사용자 선택이므로 건드리지
+    않는다. 모션 중에는 분주비 규칙에 따라 거부된다.
     """
+    svc: MotorService = request.app.state.motor_service
+    try:
+        # 분주비 기준선: FEED 1/32 + 완전균일, 나머지 1/16
+        await svc.set_microstep(0, microsteps=32, uniform=True)
+        await svc.set_microstep(1, microsteps=16)
+        await svc.set_microstep(3, microsteps=16)
+    except RuntimeError as exc:
+        return err(str(exc), "MICROSTEP_BUSY")
     cal = getattr(request.app.state, "calibration_service", None)
     ceilings = None
     if cal is not None:
         ceilings = {a: cal.speed_limit(a) for a in (0, 1, 2, 3)}
-    return ok({"profiles": _profiles(request).reset(ceilings)})
+    return ok({"profiles": _profiles(request).reset(ceilings),
+               "microstep": svc.microstep_status()})
 
 
 @router.put("/profiles/{axis}", response_model=ApiResponse)
