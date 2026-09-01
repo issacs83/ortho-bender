@@ -735,8 +735,15 @@ class MotorService:
                                     if hasattr(be, "run_cs_for") else 0,
             }
         lift_cs = self._axis_to_cs.get(int(AxisId.LIFT))
+        # 백엔드 guard_axes 는 cs 기준 — API 는 축 id 로 말한다.
+        cs_to_axis = {0: int(AxisId.LIFT), 1: int(AxisId.BEND),
+                      2: int(AxisId.FEED)}
+        guard_axis_ids = sorted(cs_to_axis[c]
+                                for c in getattr(be, "guard_axes", set())
+                                if c in cs_to_axis)
         return {
             "limit_stop": bool(getattr(be, "limit_guard", False)),
+            "guard_axes": guard_axis_ids,
             "cs_cap": int(getattr(be, "_cs_scale_cap", 0)),
             "cs_max": SAFETY_CS_MAX,
             "axes": axes,
@@ -747,7 +754,8 @@ class MotorService:
         }
 
     async def set_protection(self, limit_stop=None, hold_enabled=None,
-                             hold_cs=None, axes=None) -> dict:
+                             hold_cs=None, axes=None,
+                             guard_axes=None) -> dict:
         """보호 설정을 갱신한다.
 
         `axes` 는 축별 맵 {axis: {hold_enabled?, hold_cs?}} 이며, 이것 없이
@@ -759,6 +767,19 @@ class MotorService:
         be = self._spi_backend
         if limit_stop is not None:
             be.limit_guard = bool(limit_stop)
+        if guard_axes is not None:
+            # 축 id -> cs. 센서가 있는 축(LIFT, BEND)만 유효하다.
+            new_cs = set()
+            for a in guard_axes:
+                cs2 = self._axis_to_cs.get(int(a))
+                if cs2 is None or getattr(be, "_cs_to_limit", {}).get(cs2) is None:
+                    raise ValueError(
+                        f"axis {a} has no limit switch — cannot guard")
+                new_cs.add(cs2)
+            be.guard_axes = new_cs
+            be._guard_loaded = True
+            if hasattr(be, "_save_state_soon"):
+                be._save_state_soon()
 
         # 모든 요청을 축별 맵 하나로 정규화한다.
         patch: dict[int, dict] = {}
@@ -985,6 +1006,21 @@ class MotorService:
             if ratio != 1.0 and self._calibration:
                 self._calibration.update(
                     int(axis), self._calibration.steps_per_unit(int(axis)) * ratio)
+                # 상관 파라미터 연동: 새 속도 상한(8000/spu)을 넘는 프로파일
+                # 값(jog_speed/max_speed)은 함께 내린다 — 안 내리면 UI 가
+                # 도달 불가능한 속도를 설정값으로 계속 보여준다. 상한이
+                # '넓어질' 때는 사용자가 정한 값을 건드리지 않는다.
+                mp = getattr(self, "_motion_profiles", None)
+                if mp is not None:
+                    ceil = self._calibration.speed_limit(int(axis))
+                    prof = mp.get(int(axis)) or {}
+                    clamp = {k: round(float(ceil), 3)
+                             for k in ("jog_speed", "max_speed")
+                             if float(prof.get(k, 0.0)) > ceil}
+                    if clamp:
+                        mp.update(int(axis), clamp)
+                        log.info("axis %d profile clamped to new speed "
+                                 "ceiling %.1f: %s", axis, ceil, clamp)
         if uniform is not None:
             snap = set(getattr(self._spi_backend, "snap_axes", None) or set())
             (snap.add if uniform else snap.discard)(int(axis))
@@ -1076,6 +1112,15 @@ class MotorService:
                 break
             prev_gap = gap
             await self._run_motion(self._bench_pulse(int(axis), gap, speed))
+            if getattr(self._spi_backend, "guard_tripped", False):
+                # 리밋 가드가 이 이동을 세웠다 — 남은 거리를 다시 쫓지
+                # 않는다. 이게 없으면 보정 루프가 트립을 무시하고 창을
+                # 관통해 목표까지 재구동한다(2026-09-02 실사고).
+                log.warning("move_to axis=%d halted by limit guard at %.3f "
+                            "(target %.3f)", axis,
+                            self._spi_backend.positions.get(cs, 0) / spu,
+                            position)
+                break
         return await self.get_status()
 
     async def stop(self) -> MotorStatusResponse:

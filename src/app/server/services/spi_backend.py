@@ -238,6 +238,17 @@ class SpidevMotorBackend(MotorBackend):
         self._spi = None
         self._gpio_requests: dict[str, object] = {}     # chip_path -> LineRequest
         self._gpio_map: dict[str, tuple[str, int]] = {} # name -> (chip, offset)
+        # 직전 pulse_step 이 리밋 가드로 중단됐는지 — move_to 의 착지 보정
+        # 루프가 이걸 보고 이동 전체를 접는다. 없으면 보정 루프가 "아직
+        # 목표에 못 갔네" 하고 트립을 무시한 채 재구동한다(실제 사고:
+        # 2026-09-02, BEND +180° 가 트립 로그를 남기고도 완주).
+        self.guard_tripped: bool = False
+
+        # 리밋 에지 이벤트: chip_path -> {offset: 입력 이름}, 이름 -> 누적
+        # falling(=눌림) 횟수. 커널이 이벤트를 버퍼링하므로 10 ms 폴 사이에
+        # 스쳐 지나간 창도 놓치지 않는다.
+        self._edge_inputs: dict[str, dict[int, str]] = {}
+        self._limit_edge_falls: dict[str, int] = {}
 
         # 축별 위치 추적 (MotorBackend 인터페이스와의 호환)
         self.positions: dict[int, int] = {0: 0, 1: 0, 2: 0, 3: 0}
@@ -381,6 +392,9 @@ class SpidevMotorBackend(MotorBackend):
                                  for k, v in (d.get("mres") or {}).items()}
                 if "snap_axes" in d:
                     self.snap_axes = {int(x) for x in d["snap_axes"]}
+                if "guard_axes" in d:
+                    self.guard_axes = {int(x) for x in d["guard_axes"]}
+                    self._guard_loaded = True
             except (TypeError, ValueError):
                 self.sgt_map = {}
             log.info("Restored motor positions from %s: %s (homed=%s)",
@@ -412,6 +426,7 @@ class SpidevMotorBackend(MotorBackend):
             # 같은 배율로 함께 바뀌므로, 이 셋은 재시작을 같이 살아남아야 한다.
             "mres": {str(k): int(v) for k, v in self.mres_map.items()},
             "snap_axes": sorted(self.snap_axes or []),
+            "guard_axes": sorted(self.guard_axes),
         }
 
     def _write_state(self, data: dict) -> None:
@@ -518,6 +533,10 @@ class SpidevMotorBackend(MotorBackend):
         try:
             import gpiod
             from gpiod.line import Direction, Value
+            try:
+                from gpiod.line import Edge
+            except ImportError:          # gpiod < 2.1 — 폴링 전용
+                Edge = None
         except ImportError:
             log.error("gpiod >= 2.0 not available — install python3-gpiod")
             raise
@@ -534,10 +553,22 @@ class SpidevMotorBackend(MotorBackend):
             for name, offset in lines.items():
                 if name in self._gpio_inputs:
                     # 리밋 스위치: 입력, 바이어스 없음 — 레벨은 외부 분압기
-                    # (~500 Ω 테브냉)가 정한다.
-                    line_cfg[offset] = gpiod.LineSettings(
-                        direction=Direction.INPUT,
-                    )
+                    # (~500 Ω 테브냉)가 정한다. 에지 검출을 함께 걸어 커널이
+                    # 전이를 버퍼링하게 한다 — 폴링(10 ms) 사이에 창을 스쳐
+                    # 지나가는 빠른 통과를 가드가 놓치지 않기 위해서다.
+                    # 디바운스는 걸지 않는다: 고속 통과의 실제 펄스(~2 ms)가
+                    # 필터에 먹힐 수 있고, 레벨 판정 쪽에 이중 읽기가 있다.
+                    if Edge is not None:
+                        line_cfg[offset] = gpiod.LineSettings(
+                            direction=Direction.INPUT,
+                            edge_detection=Edge.BOTH,
+                        )
+                    else:
+                        line_cfg[offset] = gpiod.LineSettings(
+                            direction=Direction.INPUT,
+                        )
+                    self._edge_inputs.setdefault(chip_path, {})[offset] = name
+                    self._limit_edge_falls.setdefault(name, 0)
                 else:
                     # CS 라인은 평시 HIGH, DIR 은 평시 LOW
                     init_value = Value.ACTIVE if name.endswith('_cs') else Value.INACTIVE
@@ -818,6 +849,7 @@ class SpidevMotorBackend(MotorBackend):
             # finally 블록(침묵 + 위치 스냅샷)이 돌게 하기 위해서다. 이걸로
             # 750 ms 초기화 구간이 취소 가능해진다.
             self._pwm_killed = False   # 새 모션 — E-STOP kill 래치 해제
+            self.guard_tripped = False
             self._active_axis = axis
             await self._yield_held(axis)   # 공유 STEP: 유지 축을 풀어준다
             self._set_dir(axis, direction)
@@ -844,8 +876,7 @@ class SpidevMotorBackend(MotorBackend):
                 # 온전한 스텝이 있는 지령은 반드시 움직인다.
                 floor_hz = min(int(p_floor(profile)), freq_hz)
                 await self._pwm_ensure_exported()
-                guarded = self.limit_guard and axis in self.guard_axes
-                armed = guarded and self.limit_active(axis) is False
+                _mg, micro_guard = self.make_limit_guard(axis)
                 emitted = 0
                 t0 = time.monotonic()
                 await self._pwm_set_hz(floor_hz)
@@ -859,14 +890,11 @@ class SpidevMotorBackend(MotorBackend):
                         emitted = min(int((time.monotonic() - t0) * floor_hz),
                                       count)
                         self.positions[axis] = pos_before + emitted * direction
-                        if guarded:
-                            lim = self.limit_active(axis)
-                            if lim is False:
-                                armed = True
-                            elif lim and armed:
-                                log.warning("axis %d limit tripped in micro "
-                                            "move — stopping", axis)
-                                break
+                        if micro_guard():
+                            log.warning("axis %d limit tripped in micro "
+                                        "move — stopping", axis)
+                            self.guard_tripped = True
+                            break
                 finally:
                     await self._pwm_disable()
                     self.positions[axis] = pos_before + emitted * direction
@@ -897,23 +925,10 @@ class SpidevMotorBackend(MotorBackend):
             # 감속률: 프로파일을 존중하되 _RAMP_DOWN_MAX_S 보다 오래 끌지는
             # 않는다 — 정지는 항상 즉각적으로 느껴져야 한다.
             eff_decel = max(decel, span / _RAMP_DOWN_MAX_S) if span else decel
-            # 리밋 스위치 가드(에지 트리거, 축이 창 밖에 있을 때만 장전):
-            # 램프(10 ms 서브 폴링)와 순항 감시가 공유한다. 빠른 축은 ~0.7 u
-            # 창을 수십 ms 에 가로지른다 — 예전의 100 ms 단독 검사는 눈치도
-            # 못 채고 그대로 통과할 수 있었다.
-            guarded = self.limit_guard and axis in self.guard_axes
-            guard = {"armed": guarded and self.limit_active(axis) is False,
-                     "hit": False}
-
-            def guard_check() -> bool:
-                if not guarded or guard["hit"]:
-                    return guard["hit"]
-                lim = self.limit_active(axis)
-                if lim is False:
-                    guard["armed"] = True
-                elif lim and guard["armed"]:
-                    guard["hit"] = True
-                return guard["hit"]
+            # 리밋 스위치 가드 — 레벨 + 커널 에지 버퍼 병용 상태기계.
+            # 램프(10 ms 서브 폴링)와 순항 감시가 공유한다. 자세한 근거는
+            # make_limit_guard docstring 참조.
+            guard, guard_check = self.make_limit_guard(axis)
 
             # ---- 제동거리 제어 ------------------------------------------
             # 이동은 감속을 지령 거리 '안에' 포함해야 한다: "45 deg" 는 45 에서
@@ -977,7 +992,8 @@ class SpidevMotorBackend(MotorBackend):
                     if guard_check():
                         log.warning("axis %d limit switch tripped mid-motion "
                                     "— stopping (limit guard)", axis)
-                        break   # clean_end 는 True 유지 → 감속 정지
+                        self.guard_tripped = True
+                        break   # 즉시 정지 경로 (감속·트림 생략)
                     if elapsed < next_status_t:
                         continue
                     next_status_t = elapsed + 0.1
@@ -1073,6 +1089,8 @@ class SpidevMotorBackend(MotorBackend):
                                 short) * direction
                         log.debug("axis %d trim: %d steps at %d Hz",
                                   axis, short, floor_hz)
+            if guard["hit"]:
+                self.guard_tripped = True
         finally:
             # 어떤 경로로 나가든(성공, 취소, 폴트, 초기화 중 예외) 모터를
             # 안전하게 만든다: 중력 축은 저전류 유지로, 나머지는 침묵으로,
@@ -1251,6 +1269,67 @@ class SpidevMotorBackend(MotorBackend):
             return not self._gpio_get(name)
         except Exception:
             return None
+
+    def _drain_limit_edges(self) -> None:
+        """버퍼링된 리밋 에지 이벤트를 걷어 누적 카운터에 반영한다.
+
+        falling = ACTIVE LOW 스위치가 '눌림'으로 전이한 순간. 커널 버퍼
+        덕분에 두 폴 사이에 눌렸다 풀린 창도 여기서 반드시 잡힌다.
+        """
+        for chip_path, offsets in self._edge_inputs.items():
+            req = self._gpio_requests.get(chip_path)
+            if req is None:
+                continue
+            try:
+                while req.wait_edge_events(0):
+                    for ev in req.read_edge_events():
+                        name = offsets.get(ev.line_offset)
+                        if name is None:
+                            continue
+                        if ev.event_type == ev.Type.FALLING_EDGE:
+                            self._limit_edge_falls[name] = (
+                                self._limit_edge_falls.get(name, 0) + 1)
+            except Exception:
+                # 에지 미지원/일시 오류 — 레벨 폴링만으로 동작한다.
+                return
+
+    def _limit_falls(self, cs: int) -> int:
+        name = self._cs_to_limit.get(cs)
+        return self._limit_edge_falls.get(name, 0) if name else 0
+
+    def make_limit_guard(self, cs: int):
+        """리밋 가드 상태기계: (state, check) 를 돌려준다.
+
+        에지 트리거 의미는 유지하되(창 안에서 출발하면 창을 벗어날 때까지
+        비장전), 판정은 레벨 '또는' 장전 이후의 falling 에지 누적으로 한다.
+        레벨 폴링만으로는 10 ms 슬라이스 사이에 창을 스쳐 가는 고속 통과를
+        원리적으로 놓칠 수 있다 — 실제로 놓친 사례가 있어(2026-09-02) 커널
+        에지 버퍼를 판정에 넣었다. check() 는 동기·경량(ioctl 드레인)이라
+        램프 서브슬라이스에서 불러도 된다.
+        """
+        guarded = self.limit_guard and cs in self.guard_axes
+        st = {"hit": False, "armed": False, "base": 0}
+        if guarded:
+            self._drain_limit_edges()
+            if self.limit_active(cs) is False:
+                st["armed"] = True
+                st["base"] = self._limit_falls(cs)
+
+        def check() -> bool:
+            if not guarded or st["hit"]:
+                return st["hit"]
+            self._drain_limit_edges()
+            lim = self.limit_active(cs)
+            if not st["armed"]:
+                if lim is False:
+                    st["armed"] = True
+                    st["base"] = self._limit_falls(cs)
+                return False
+            if lim or self._limit_falls(cs) > st["base"]:
+                st["hit"] = True
+            return st["hit"]
+
+        return st, check
 
     def _limit_tripped_debounced(self, cs: int) -> bool:
         """연속 두 번 읽기가 일치해야 한다 — 단일 샘플 노이즈를 걸러낸다."""
