@@ -294,6 +294,14 @@ class SpidevMotorBackend(MotorBackend):
         self.hold_cs: int = 8                       # 전 축 공통 기본값
         self.hold_cs_map: dict[int, int] = {}       # cs 별 재정의
 
+        # cs 별 마이크로스텝 분해능(DRVCTRL.MRES 코드, 0=1/256 … 4=1/16).
+        # 비어 있으면 전 축이 DRVCTRL_DEFAULT(1/16)를 쓴다. FEED 처럼 분해능이
+        # 속도보다 귀한 축만 main.py 가 골라서 올린다 — MRES 를 바꾸면
+        # steps_per_unit 도 같은 배율로 바뀌어야 하므로(1/32 는 2배) 짝이
+        # 되는 캘리브레이션 기본값과 함께 움직여야 한다. 부팅 시 설정 전용:
+        # 런타임에 바꾸려면 재시작(칩 DRVCTRL 은 풀 초기화 때 한 번 쓰인다).
+        self.mres_map: dict[int, int] = {}
+
         # cs 별 StallGuard2 임계값 (SGCSCONF bits 8-14, 부호 있는 7비트).
         # 클수록 '덜' 민감하다. 모듈 기본값이 +63(최대 둔감)이라, 축을
         # 튜닝하기 전에는 SG_RESULT 가 쓸모 있게 움직인 적이 없었다.
@@ -1503,6 +1511,17 @@ class SpidevMotorBackend(MotorBackend):
             default_sgt -= 128
         return int(self.sgt_map.get(cs, default_sgt))
 
+    def _drvctrl_for(self, cs: int) -> int:
+        """한 축의 DRVCTRL: 축별 MRES 재정의 + DEDGE/INTPOL 비트 보존.
+
+        DEDGE 를 지우면 실효 스텝 레이트가 조용히 반토막 난다(과거 사고,
+        tmc260c_driver.set_microstep 주석 참조) — 마스크가 그것을 막는다.
+        """
+        mres = self.mres_map.get(cs)
+        if mres is None:
+            return DRVCTRL_DEFAULT
+        return (DRVCTRL_DEFAULT & ~0x0F) | (int(mres) & 0x0F)
+
     def _sgcs_on_value(self, cs: int | None = None) -> int:
         """한 축의 SGCSCONF: PSU 상한이 걸린 전류 스케일 + 그 축의 SGT.
 
@@ -1555,6 +1574,8 @@ class SpidevMotorBackend(MotorBackend):
             for _name, tag, value in _INIT_SEQ:
                 if tag == 0x06:  # SGCSCONF: PSU 상한 전류 + 축별 SGT
                     value = self._sgcs_on_value(cs)
+                elif tag == 0x00:  # DRVCTRL: 축별 MRES (DEDGE/INTPOL 보존)
+                    value = self._drvctrl_for(cs)
                 datagram = self._encode(tag, value)
                 tx = bytes([
                     (datagram >> 16) & 0xFF,

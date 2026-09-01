@@ -67,7 +67,7 @@ frontend bundle replaces `/opt/ortho-bender/frontend-dist/`.
 
 | Axis | ID | cs | Unit | `+` direction | Datum | steps/unit |
 |---|---|---|---|---|---|---|
-| FEED | 0 | 2 | **mm** of wire | feeds out | none — no switch | 25.4648 *(provisional)* |
+| FEED | 0 | 2 | **mm** of wire | feeds out | none — no switch | 127.324 *(provisional)* |
 | BEND | 1 | 1 | deg | clockwise | limit disc | 23.0167 *(measured)* |
 | ROTATE | 2 | — | — | — | not fitted | — |
 | LIFT | 3 | 0 | **mm** | **down** | top switch = 0 | 200 *(measured)* |
@@ -236,11 +236,13 @@ already.
   (1/16 microstepping with DEDGE, two microsteps per cycle); the roller
   diameter has never been measured. `tools/calibrate-feed.py` settles
   both with one measurement.
-- **FEED resolution is short of the 0.1 mm target.** One step is
-  0.039 mm at the provisional scale, so a 0.1 mm command is 2–3 steps
-  and carries ±0.04 mm. Needs ~4× — finer microstepping on FEED (which
-  means making `DRVCTRL` per-axis; it is one shared default today) or a
-  smaller roller.
+- **FEED microstepping is 1/32, per-axis.** `DRVCTRL` is per-axis now
+  (`mres_map` in `spi_backend`, wired in `main.py`) and FEED runs 1/32:
+  one step is 0.0079 mm at the provisional scale, a 0.1 mm command is
+  ~13 steps. The trade is the speed ceiling — 62.8 mm/s on FEED. If you
+  change an axis's MRES, change its `DEFAULT_STEPS_PER_UNIT` by the same
+  factor AND update the runtime calibration on the board (the state file
+  overrides code defaults).
 - **No simultaneous multi-axis motion.** One hardware PWM STEP line is
   shared. Coordinated motion needs a wiring split plus a device-tree
   pinmux change.

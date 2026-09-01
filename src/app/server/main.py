@@ -224,6 +224,12 @@ async def lifespan(app: FastAPI):
     # at every slot passage (rotary axis has no travel ends anyway).
     if hasattr(diag_backend, "guard_axes"):
         diag_backend.guard_axes = {0}
+    # FEED(cs=2)만 1/32 마이크로스텝 (MRES=3). 분해능 0.0157 → 0.0079 mm/step,
+    # 속도 상한 125.7 → 62.8 mm/s — 피드 실사용(≤20 mm/s)에는 여유 3배.
+    # 캘리브레이션 기본값(127.324 steps/unit)과 짝이다: MRES 를 바꾸면
+    # calibration_service.DEFAULT_STEPS_PER_UNIT 도 같은 배율로 바꿔야 한다.
+    if hasattr(diag_backend, "mres_map"):
+        diag_backend.mres_map = {2: 3}
     # Direction conventions: LIFT (cs 0) "+ is down"; FEED (cs 2) was
     # wired mirrored to BEND, so + / ▶ means clockwise on every axis.
     if hasattr(diag_backend, "invert_axes"):
