@@ -209,6 +209,25 @@ class MotionProfileService:
     def all(self) -> dict[int, dict]:
         return {a: dict(p) for a, p in self._profiles.items()}
 
+    def reset(self, speed_ceilings: dict[int, float] | None = None) -> dict:
+        """전 축을 출고 기본값(DEFAULT_PROFILE)으로 되돌린다.
+
+        speed_ceilings 가 주어지면(축별 8000/steps_per_unit) jog/max 를
+        그 상한으로 함께 클램프한다 — 기본 max(40)가 현재 분주비의 상한보다
+        클 수 있기 때문이다(예: 1/256 이면 상한 7.9).
+        """
+        for axis in list(self._profiles.keys()):
+            prof = dict(DEFAULT_PROFILE)
+            ceil = (speed_ceilings or {}).get(int(axis))
+            if ceil:
+                prof["jog_speed"] = min(prof["jog_speed"], round(ceil, 3))
+                prof["max_speed"] = min(prof["max_speed"], round(ceil, 3))
+            self._profiles[axis] = self._validate(prof)
+        self._save()
+        log.info("Motion profiles reset to defaults%s",
+                 " (ceiling-clamped)" if speed_ceilings else "")
+        return self.all()
+
     def update(self, axis: int, patch: dict) -> dict:
         axis = int(axis)
         if axis not in self._profiles:
